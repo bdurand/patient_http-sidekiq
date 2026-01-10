@@ -117,6 +117,7 @@ module Sidekiq
           raise "Cannot enqueue request: processor is #{state}"
         end
 
+        task.enqueued!
         @queue.push(task)
       end
 

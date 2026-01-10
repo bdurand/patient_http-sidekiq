@@ -14,9 +14,10 @@ module Sidekiq::AsyncHttp
     # Valid HTTP methods
     VALID_METHODS = %i[get post put patch delete].freeze
 
-    attr_reader :method, :url, :headers, :body, :timeout, :read_timeout, :open_timeout, :write_timeout
+    attr_reader :id, :method, :url, :headers, :body, :timeout, :read_timeout, :open_timeout, :write_timeout
 
     def initialize(method:, url:, headers: {}, body: nil, timeout: nil, read_timeout: nil, open_timeout: nil, write_timeout: nil)
+      @id = SecureRandom.uuid
       @method = method.is_a?(String) ? method.downcase.to_sym : method
       @url = url
       @headers = headers
@@ -58,7 +59,7 @@ module Sidekiq::AsyncHttp
     # @param success_worker [Class] Worker class (must include Sidekiq::Job) to call on successful response
     # @param error_worker [Class, nil] Worker class (must include Sidekiq::Job) to call on error.
     #   If nil, errors will be logged and the original job will be retried.
-    # @return [void]
+    # @return [String] the request ID
     def perform(sidekiq_job: nil, success_worker:, error_worker: nil)
       # Get current job if not provided
       @job = sidekiq_job || (defined?(Sidekiq::Context) ? Sidekiq::Context.current : nil)
@@ -100,6 +101,25 @@ module Sidekiq::AsyncHttp
       @original_worker_class = @job["class"]
       @original_args = @job_args.dup
       @enqueued_at = Time.now.to_f
+
+      # Check if processor is running
+      processor = Sidekiq::AsyncHttp.processor
+      unless processor.running?
+        raise Sidekiq::AsyncHttp::NotRunningError, "Cannot enqueue request: processor is not running"
+      end
+
+      # Create RequestTask and enqueue to processor
+      task = RequestTask.new(
+        request: self,
+        sidekiq_job: @job,
+        success_worker: success_worker,
+        error_worker: error_worker,
+        enqueued_at: @enqueued_at
+      )
+      processor.enqueue(task)
+
+      # Return the request ID
+      @id
     end
   end
 end

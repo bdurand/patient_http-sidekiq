@@ -6,13 +6,13 @@ module Sidekiq::AsyncHttp
     attr_reader :id, :request, :sidekiq_job, :success_worker, :error_worker,
       :enqueued_at, :started_at, :completed_at
 
-    def initialize(request:, sidekiq_job:, success_worker:, error_worker: nil)
+    def initialize(request:, sidekiq_job:, success_worker:, error_worker: nil, enqueued_at: nil)
       @id = SecureRandom.uuid
       @request = request
       @sidekiq_job = sidekiq_job
       @success_worker = success_worker
       @error_worker = error_worker
-      @enqueued_at = nil
+      @enqueued_at = enqueued_at
       @started_at = nil
       @completed_at = nil
       freeze

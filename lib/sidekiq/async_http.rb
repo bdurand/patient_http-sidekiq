@@ -7,6 +7,9 @@ require "concurrent-ruby"
 
 # Main module for the Sidekiq Async HTTP gem
 module Sidekiq::AsyncHttp
+  # Raised when trying to enqueue a request when the processor is not running
+  class NotRunningError < StandardError; end
+
   VERSION = File.read(File.join(__dir__, "../../VERSION")).strip
 
   # Autoload all components

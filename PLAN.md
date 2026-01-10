@@ -918,11 +918,9 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Using Sidekiq::Context.current when sidekiq_job not provided
           - Error worker optional (falls back to retry behavior)
 
-[ ] 7.2 Implement Request processing integration:
-        - Update Request#perform to enqueue to processor:
-          - Build internal request object from Client state and perform params
-          - Call Sidekiq::AsyncHttp.processor.enqueue(self)
-          - Return request.id
+[X] 7.2 Implement Request processing integration:
+        - Update Request#perform to enqueue a RequestTask to processor:
+          - Return the AsyncRequest id
         - Raise Sidekiq::AsyncHttp::NotRunningError if processor not running
         - Write specs for:
           - Successful enqueue to processor
