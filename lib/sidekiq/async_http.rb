@@ -11,6 +11,7 @@ module Sidekiq::AsyncHttp
 
   # Autoload all components
   autoload :Configuration, "sidekiq/async_http/configuration"
+  autoload :Builder, "sidekiq/async_http/configuration"
   autoload :Client, "sidekiq/async_http/client"
   autoload :ConnectionPool, "sidekiq/async_http/connection_pool"
   autoload :Error, "sidekiq/async_http/error"
@@ -69,8 +70,8 @@ module Sidekiq::AsyncHttp
 
     # Main public API: enqueue an async HTTP request
     # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete, :head, :options)
-    # @param url [String] full URL to request
-    # @param headers [Hash] request headers
+    # @param url [String, URI] full URL to request
+    # @param headers [Hash, HttpHeaders] request headers
     # @param body [String, nil] request body
     # @param json [Object, nil] JSON object to serialize as body
     # @param timeout [Float] request timeout in seconds
@@ -81,7 +82,7 @@ module Sidekiq::AsyncHttp
     # @param success_worker [String] worker class name for success callback
     # @param error_worker [String] worker class name for error callback
     # @return [String] request ID
-    def request(method:, url:,, headers: {}, body: nil, json: nil,
+    def request(method:, url:, headers: {}, body: nil, json: nil,
       timeout: nil, open_timeout: nil, read_timeout: nil, write_timeout: nil,
       sidekiq_job: nil, success_worker:, error_worker: nil)
       client = Client.new(timeout: timeout, open_timeout: open_timeout, read_timeout: read_timeout, write_timeout: write_timeout)

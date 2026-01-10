@@ -22,6 +22,7 @@ module Sidekiq
         @state = Concurrent::AtomicReference.new(:stopped)
         @reactor_thread = nil
         @shutdown_barrier = Concurrent::Event.new
+        @reactor_ready = Concurrent::Event.new
         @in_flight_requests = Concurrent::Hash.new
         @in_flight_lock = Mutex.new
       end
@@ -33,17 +34,20 @@ module Sidekiq
 
         @state.set(:running)
         @shutdown_barrier.reset
+        @reactor_ready.reset
 
         @reactor_thread = Thread.new do
           Thread.current.name = "async-http-processor"
           run_reactor
         rescue => e
           # Log error but don't crash
-          @config.effective_logger&.error("Async HTTP Processor error: #{e.message}")
-          @config.effective_logger&.error(e.backtrace.join("\n"))
+          @config.effective_logger&.error("Async HTTP Processor error: #{e.message}\n#{e.backtrace.join("\n")}")
         ensure
           @state.set(:stopped)
         end
+
+        # Block until the reactor is ready
+        @reactor_ready.wait
       end
 
       # Stop the processor
@@ -61,7 +65,7 @@ module Sidekiq
         if timeout && timeout > 0
           deadline = Time.now + timeout
           while @metrics.in_flight_count > 0 && Time.now < deadline
-            sleep(0.01)
+            sleep(0.001)
           end
         end
 
@@ -82,11 +86,11 @@ module Sidekiq
 
           # Log re-enqueue
           @config.effective_logger&.info(
-            "Re-enqueued incomplete request #{request.id} to #{request.original_worker_class}"
+            "Async HTTP re-enqueued incomplete request #{request.id} to #{request.original_worker_class}"
           )
         rescue => e
           @config.effective_logger&.error(
-            "Failed to re-enqueue request #{request.id}: #{e.class} - #{e.message}"
+            "Async HTTP failed to re-enqueue request #{request.id}: #{e.class} - #{e.message}"
           )
         end
 
@@ -149,12 +153,42 @@ module Sidekiq
         @state.get
       end
 
+      # Wait for the queue to be empty and all in-flight requests to complete.
+      # This is mainly for use in tests.
+      # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      # @return [Boolean] true if processing completed, false if timeout reached
+      # @api private
+      def wait_for_idle(timeout: 1)
+        deadline = Time.now + timeout
+        while Time.now <= deadline do
+          return true if @queue.empty? && @metrics.in_flight_count == 0
+          sleep(0.001)
+        end
+        false
+      end
+
+      # Wait for at least one request to start processing. This is mainly for use in tests.
+      # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      # @return [Boolean] true if a request started processing, false if timeout reached
+      # @api private
+      def wait_for_processing(timeout: 1)
+        deadline = Time.now + timeout
+        while Time.now <= deadline do
+          return true if @metrics.in_flight_count > 0
+          sleep(0.001)
+        end
+        false
+      end
+
       private
 
       # Run the async reactor loop
       # @return [void]
       def run_reactor
         Async do |task|
+          # Signal that the reactor is ready
+          @reactor_ready.set
+
           @config.effective_logger&.info("Async HTTP Processor started")
 
           loop do
@@ -169,14 +203,14 @@ module Sidekiq
 
             # Check if we're at max connections limit
             if @metrics.in_flight_count >= @config.max_connections
-              @config.effective_logger&.debug("Max connections reached, applying backpressure")
+              @config.effective_logger&.warn("Async HTTP max connections reached, applying backpressure")
 
               # Handle backpressure according to configured strategy
               begin
                 @connection_pool.check_capacity!(request)
               rescue Sidekiq::AsyncHttp::BackpressureError => e
                 # Request was dropped by backpressure strategy
-                @config.effective_logger&.warn("Request dropped by backpressure: #{e.message}")
+                @config.effective_logger&.error("Async HTTP request dropped by backpressure: #{e.message}")
                 next
               end
             end
@@ -185,18 +219,16 @@ module Sidekiq
             task.async do
               process_request(request)
             rescue => e
-              @config.effective_logger&.error("Error processing request: #{e.message}")
-              @config.effective_logger&.error(e.backtrace.join("\n"))
+              @config.effective_logger&.error("Async HTTP Error processing request: #{e.inspect}\n#{e.backtrace.join("\n")}")
             end
           end
 
           @config.effective_logger&.info("Async HTTP Processor stopped")
         rescue Async::Stop
           # Normal shutdown signal
-          @config.effective_logger&.debug("Reactor received stop signal")
+          @config.effective_logger&.info("Async HTTP Reactor received stop signal")
         rescue => e
-          @config.effective_logger&.error("Reactor loop error: #{e.message}")
-          @config.effective_logger&.error(e.backtrace.join("\n"))
+          @config.effective_logger&.error("Async HTTP Reactor loop error: #{e.inspect}\n#{e.backtrace.join("\n")}")
         end
       end
 
@@ -351,14 +383,14 @@ module Sidekiq
         worker_class.perform_async(response, *request.job_args)
 
         # Log success
-        @config.effective_logger&.debug(
-          "Request #{request.id} succeeded with status #{response[:status]}, " \
+        @config.effective_logger&.info(
+          "Async HTTP request #{request.id} succeeded with status #{response[:status]}, " \
           "enqueued #{request.success_worker_class}"
         )
       rescue => e
         # Log error but don't crash the processor
         @config.effective_logger&.error(
-          "Failed to enqueue success worker for request #{request.id}: #{e.class} - #{e.message}"
+          "Async HTTP failed to enqueue success worker for request #{request.id}: #{e.class} - #{e.message}"
         )
       end
 
@@ -378,13 +410,13 @@ module Sidekiq
 
         # Log error
         @config.effective_logger&.warn(
-          "Request #{request.id} failed with #{error.error_type} error (#{error.class_name}): #{error.message}, " \
+          "Async HTTP request #{request.id} failed with #{error.error_type} error (#{error.class_name}): #{error.message}, " \
           "enqueued #{request.error_worker_class}"
         )
       rescue => e
         # Log error but don't crash the processor
         @config.effective_logger&.error(
-          "Failed to enqueue error worker for request #{request.id}: #{e.class} - #{e.message}"
+          "Async HTTP failed to enqueue error worker for request #{request.id}: #{e.class} - #{e.message}"
         )
       end
 

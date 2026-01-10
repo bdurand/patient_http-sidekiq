@@ -869,36 +869,47 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ### Phase 7: Client (Public API)
 
 ```
-[ ] 7.1 Implement Client module methods on Sidekiq::AsyncHttp:
-        - Implement .request(**options):
-          - Validate required options: url, success_worker, sidekiq_job
-          - Build Request object with:
-            - method: options[:method] || :get
-            - url: options[:url]
-            - headers: options[:headers] || {}
-            - body: options[:body]
-            - timeout: options[:timeout] || configuration.default_request_timeout
-            - success_worker_class: options[:success_worker]
-            - error_worker_class: options[:error_worker]
-            - sidekiq_job: options[:sidekiq_job] defaults to Sidekiq::Context.current
-          - Call request.validate!
-          - Call processor.enqueue(request)
+[ ] 7.1 Implement Request validation and Sidekiq job handling:
+        - Update Request#perform to validate parameters:
+          - sidekiq_job: required hash with "class" and "args" keys minimum
+          - If sidekiq_job not provided, use Sidekiq::Context.current (Sidekiq 8+)
+          - success_worker: required string, worker class name for success callback
+          - error_worker: optional string, worker class name for error callback
+          - If no error_worker provided, log error and retry original job
+        - Add Request#validate! method:
+          - Validate request has method (symbol)
+          - Validate request has url (String or URI object)
+          - Raise ArgumentError with descriptive message if invalid
+        - Add validation to Client#async_request:
+          - Ensure method is a symbol
+          - Ensure uri is provided (String or URI)
+        - Write specs for:
+          - Valid request with all parameters
+          - Request validation (missing/invalid method, url)
+          - Perform validation (missing/invalid sidekiq_job, success_worker)
+          - Using Sidekiq::Context.current when sidekiq_job not provided
+          - Error worker optional (falls back to retry behavior)
+
+[ ] 7.2 Implement Request processing integration:
+        - Update Request#perform to enqueue to processor:
+          - Build internal request object from Client state and perform params
+          - Call Sidekiq::AsyncHttp.processor.enqueue(self)
           - Return request.id
         - Raise Sidekiq::AsyncHttp::NotRunningError if processor not running
         - Write specs for:
-          - Successful request enqueue
-          - Validation errors
-          - Not running error
+          - Successful enqueue to processor
+          - NotRunningError when processor not started
+          - Request ID returned
 
-[ ] 7.2 Implement convenience methods:
-        - .get(url, **options) → .request(method: :get, url:, **options)
-        - .post(url, **options) → .request(method: :post, url:, **options)
-        - .put(url, **options) → .request(method: :put, url:, **options)
-        - .patch(url, **options) → .request(method: :patch, url:, **options)
-        - .delete(url, **options) → .request(method: :delete, url:, **options)
-        - Write specs for each method
+[ ] 7.3 Update Client convenience methods (already implemented):
+        - async_get(uri, **options) → async_request(:get, uri, **options)
+        - async_post(uri, **options) → async_request(:post, uri, **options)
+        - async_put(uri, **options) → async_request(:put, uri, **options)
+        - async_patch(uri, **options) → async_request(:patch, uri, **options)
+        - async_delete(uri, **options) → async_request(:delete, uri, **options)
+        - Verify specs exist and pass
 
-[ ] 7.3 Implement accessor methods:
+[ ] 7.4 Add Sidekiq::AsyncHttp module accessor methods:
         - .metrics → returns processor.metrics
         - .processor → returns @processor (internal)
         - .running? → processor&.running? || false

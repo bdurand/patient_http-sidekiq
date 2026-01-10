@@ -2,6 +2,14 @@
 
 module Sidekiq::AsyncHttp
   # Build an HTTP request for asynchronous execution.
+  #
+  # Usage:
+  #   client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
+  #   request = client.async_get("/users")
+  #   request.perform(sidekiq_job: job_hash, success_worker: "SuccessWorker", error_worker: "ErrorWorker")
+  #
+  # The Client handles building HTTP requests with proper URL joining, header merging,
+  # and parameter encoding. Call perform() on the returned Request to execute it asynchronously.
   class Client
     attr_accessor :base_url, :headers, :timeout, :open_timeout, :read_timeout, :write_timeout
 
@@ -14,6 +22,14 @@ module Sidekiq::AsyncHttp
       @write_timeout = write_timeout
     end
 
+    # Build an async HTTP request. Returns a Request object that must have perform() called on it.
+    # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
+    # @param uri [String, URI] URI path to request (joined with base_url if relative)
+    # @param body [String, nil] request body
+    # @param json [Object, nil] JSON object to serialize (cannot use with body)
+    # @param headers [Hash] additional headers to merge with client headers
+    # @param params [Hash] query parameters to add to URL
+    # @return [Request] request object that must have perform() called
     def async_request(method, uri, body: nil, json: nil, headers: {}, params: {})
       full_uri = URI.join(@base_url, uri)
       if params.any?

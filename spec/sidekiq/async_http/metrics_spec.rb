@@ -304,7 +304,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
           requests_per_thread.times do |j|
             req = TestRequest.new(id: "req-#{i}-#{j}")
             metrics.record_request_start(req)
-            sleep(0.001) # Simulate work
             metrics.record_request_complete(req, rand(0.1..2.0))
           end
         end
@@ -390,7 +389,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
         num_operations.times do |i|
           req = TestRequest.new(id: "req-1-#{i}")
           metrics.record_request_start(req)
-          sleep(0.001)
         end
       end
 
