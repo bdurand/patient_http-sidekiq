@@ -1,4 +1,4 @@
-# SidekiqAsyncHttpRequests
+# SidekiqAsyncHttp
 
 :construction: NOT RELEASED :construction:
 

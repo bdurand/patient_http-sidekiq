@@ -2,7 +2,10 @@ source "https://rubygems.org"
 
 gemspec
 
-gem "rspec", "~> 3.0"
+gem "webmock", "~> 3.26"
+gem "async-rspec", "~> 1.17"
+
+gem "rspec", "~> 3.13"
 gem "rake"
 gem "irb"
 gem "standard", "~>1.0"
