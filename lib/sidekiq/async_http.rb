@@ -11,11 +11,13 @@ module Sidekiq::AsyncHttp
 
   # Autoload all components
   autoload :AsyncRequest, "sidekiq/async_http/async_request"
+  autoload :HttpRequest, "sidekiq/async_http/http_request"
   autoload :HttpHeaders, "sidekiq/async_http/http_headers"
   autoload :Request, "sidekiq/async_http/request"
   autoload :Response, "sidekiq/async_http/response"
   autoload :Error, "sidekiq/async_http/error"
   autoload :Configuration, "sidekiq/async_http/configuration"
+  autoload :Builder, "sidekiq/async_http/configuration"
   autoload :Metrics, "sidekiq/async_http/metrics"
   autoload :ConnectionPool, "sidekiq/async_http/connection_pool"
   autoload :Processor, "sidekiq/async_http/processor"
@@ -29,19 +31,25 @@ module Sidekiq::AsyncHttp
     attr_writer :configuration, :processor, :metrics
 
     # Configure the gem with a block
-    # @yield [Configuration] the configuration object
+    # @yield [Builder] the configuration builder
     # @return [Configuration]
     def configure
-      self.configuration ||= Configuration.new
-      yield(configuration) if block_given?
-      configuration.validate!
-      configuration
+      builder = Builder.new
+      yield(builder) if block_given?
+      @configuration = builder.build
     end
 
     # Ensure configuration is initialized
     # @return [Configuration]
     def configuration
       @configuration ||= Configuration.new.validate!
+    end
+
+    # Reset configuration to defaults (useful for testing)
+    # @return [Configuration]
+    def reset_configuration!
+      @configuration = nil
+      configuration
     end
 
     # Check if the processor is running

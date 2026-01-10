@@ -1,0 +1,2 @@
+- Run the test suite with `bundle exec rspec`.
+- Always include the # frozen_string_literal: true magic comment at the top of each ruby file.

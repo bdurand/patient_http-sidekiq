@@ -176,9 +176,7 @@ Global configuration with sensible defaults:
 
 ```ruby
 Configuration = Data.define(
-  :connection_limit_per_host,
-  :max_connections_total,
-  :max_in_flight_requests,
+  :max_connections,
   :idle_connection_timeout,
   :default_request_timeout,
   :shutdown_timeout,
@@ -188,9 +186,7 @@ Configuration = Data.define(
   :backpressure_strategy
 ) do
   def initialize(
-    connection_limit_per_host: 8,
-    max_connections_total: 256,
-    max_in_flight_requests: 1_000,
+    max_connections: 256,
     idle_connection_timeout: 60,
     default_request_timeout: 30,
     shutdown_timeout: 25,
@@ -203,9 +199,7 @@ Configuration = Data.define(
   end
 
   def validate!
-    raise ArgumentError, "connection_limit_per_host must be > 0" unless connection_limit_per_host > 0
-    raise ArgumentError, "max_connections_total must be > 0" unless max_connections_total > 0
-    raise ArgumentError, "max_in_flight_requests must be > 0" unless max_in_flight_requests > 0
+    raise ArgumentError, "max_connections must be > 0" unless max_connections > 0
     raise ArgumentError, "backpressure_strategy invalid" unless
       %i[block raise drop_oldest].include?(backpressure_strategy)
     self
@@ -213,7 +207,7 @@ Configuration = Data.define(
 end
 ```
 
-**Backpressure Strategies** (when `max_in_flight_requests` is reached):
+**Backpressure Strategies** (when `max_connections` is reached):
 
 | Strategy | Behavior |
 |----------|----------|
@@ -247,7 +241,7 @@ Wrapper around `Async::HTTP::Client` management:
 ```ruby
 # Responsibilities:
 # - Create and cache Async::HTTP::Client instances per host
-# - Respect connection_limit_per_host and max_connections_total
+# - Respect max_connections
 # - Track active connections per host
 # - Close connections idle longer than idle_connection_timeout
 # - Background fiber for periodic idle connection cleanup
@@ -408,9 +402,7 @@ With HTTP/2:    1000 concurrent requests to same host = ~10-50 connections
 **Small (default) - Development / Low traffic:**
 ```ruby
 Sidekiq::AsyncHttp.configure do |config|
-  config.connection_limit_per_host = 8
-  config.max_connections_total = 64
-  config.max_in_flight_requests = 100
+  config.max_connections = 64
   config.idle_connection_timeout = 60
 end
 # Requires: ulimit -n 1024 (default)
@@ -420,9 +412,7 @@ end
 **Medium - Standard production:**
 ```ruby
 Sidekiq::AsyncHttp.configure do |config|
-  config.connection_limit_per_host = 32
-  config.max_connections_total = 256
-  config.max_in_flight_requests = 1_000
+  config.max_connections = 256
   config.idle_connection_timeout = 120
 end
 # Requires: ulimit -n 4096
@@ -432,9 +422,7 @@ end
 **Large - High throughput:**
 ```ruby
 Sidekiq::AsyncHttp.configure do |config|
-  config.connection_limit_per_host = 64
-  config.max_connections_total = 1024
-  config.max_in_flight_requests = 10_000
+  config.max_connections = 1024
   config.idle_connection_timeout = 300
 end
 # Requires: ulimit -n 16384
@@ -444,9 +432,7 @@ end
 **Extra Large - Extreme throughput:**
 ```ruby
 Sidekiq::AsyncHttp.configure do |config|
-  config.connection_limit_per_host = 128
-  config.max_connections_total = 4096
-  config.max_in_flight_requests = 50_000
+  config.max_connections = 4096
   config.idle_connection_timeout = 300
 end
 # Requires: ulimit -n 65536, kernel tuning
@@ -655,18 +641,16 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ### Phase 3: Configuration
 
 ```
-[ ] 3.1 Implement Configuration using Data.define:
+[x] 3.1 Implement Configuration using Data.define:
         - Define with all attributes:
-          - connection_limit_per_host (default: 8)
-          - max_connections_total (default: 256)
-          - max_in_flight_requests (default: 1_000)
+          - max_connections (default: 256)
           - idle_connection_timeout (default: 60)
           - default_request_timeout (default: 30)
           - shutdown_timeout (default: 25)
           - logger (default: nil, will use Sidekiq.logger)
           - enable_http2 (default: true)
           - dns_cache_ttl (default: 300)
-          - backpressure_strategy (default: :block)
+          - backpressure_strategy (default: :raise)
         - Implement #validate! that raises ArgumentError for:
           - Non-positive numeric values
           - Invalid backpressure_strategy (must be :block, :raise, or :drop_oldest)
@@ -674,7 +658,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - Implement #logger that returns configured logger or Sidekiq.logger
         - Write specs for defaults, custom values, and validation errors
 
-[ ] 3.2 Add configuration DSL to main module:
+[x] 3.2 Add configuration DSL to main module:
         - Sidekiq::AsyncHttp.configure { |config| ... } - yields Config::Builder
         - Implement Config::Builder class that collects settings and builds
           immutable Configuration
@@ -686,7 +670,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ### Phase 4: Metrics
 
 ```
-[ ] 4.1 Implement Metrics class:
+[x] 4.1 Implement Metrics class:
         - Use Concurrent::AtomicFixnum for:
           - @total_requests
           - @error_count
@@ -727,7 +711,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ### Phase 5: Connection Pool
 
 ```
-[ ] 5.1 Implement ConnectionPool class:
+[x] 5.1 Implement ConnectionPool class:
         - Initialize with configuration
         - Use Concurrent::Map for @clients (host → Async::HTTP::Client)
         - Use Concurrent::Map for @connection_counts (host → AtomicFixnum)
@@ -739,7 +723,6 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - If at limit, handle according to backpressure_strategy
           - Create new Async::HTTP::Client with:
             - HTTP/2 support based on config.enable_http2
-            - Connection limit based on config.connection_limit_per_host
           - Cache and return client
         - Implement #with_client(uri, &block):
           - Acquire client
@@ -758,7 +741,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Each backpressure strategy
           - Idle connection cleanup
 
-[ ] 5.2 Implement backpressure handling in ConnectionPool:
+[x] 5.2 Implement backpressure handling in ConnectionPool:
         - For :block strategy:
           - Use Async::Condition to wait for available slot
           - Wake waiters when connection is released
@@ -809,7 +792,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - Create consumer fiber that loops:
           - Pop request from @queue (with timeout to check for shutdown)
           - Check state, break if stopping
-          - Check max_in_flight_requests limit
+          - Check max_connections limit
           - If at limit, handle backpressure
           - Spawn new fiber for request via task.async
         - Handle InterruptedError for clean shutdown
@@ -1024,17 +1007,17 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 
 [ ] 9.6 Write backpressure integration tests:
         - Test :block strategy:
-          - Set max_in_flight_requests = 2
+          - Set max_connections = 2
           - Start 5 requests with slow server
           - Verify only 2 fibers running initially
           - Verify all 5 eventually complete
         - Test :raise strategy:
-          - Set max_in_flight_requests = 2
+          - Set max_connections = 2
           - Set backpressure_strategy = :raise
           - Start 5 requests quickly
           - Verify BackpressureError raised for requests 3-5
         - Test :drop_oldest strategy:
-          - Set max_in_flight_requests = 2
+          - Set max_connections = 2
           - Set backpressure_strategy = :drop_oldest
           - Start 5 requests
           - Verify oldest requests get re-enqueued
@@ -1109,9 +1092,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 require "sidekiq-async_http/sidekiq"
 
 Sidekiq::AsyncHttp.configure do |config|
-  config.connection_limit_per_host = 16
-  config.max_connections_total = 256
-  config.max_in_flight_requests = 1_000
+  config.max_connections = 256
   config.default_request_timeout = 60
   config.shutdown_timeout = 25
   config.backpressure_strategy = :block
