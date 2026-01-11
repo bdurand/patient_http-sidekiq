@@ -123,15 +123,20 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       end
 
       it "sets enqueued_at on the task" do
-        expect(processor).to receive(:enqueue) do |task|
-          expect(task.enqueued_at).to be_a(Float)
-          expect(task.enqueued_at).to be > 0
+        captured_task = nil
+        allow(processor).to receive(:enqueue) do |task|
+          task.enqueued! # Manually call since we're intercepting
+          captured_task = task
         end
 
         request.perform(
           sidekiq_job: job_hash,
           success_worker: TestSuccessWorker
         )
+
+        expect(captured_task).not_to be_nil
+        expect(captured_task.enqueued_at).to be_a(Time)
+        expect(captured_task.enqueued_at).to be <= Time.now
       end
 
       it "works with nil error_worker" do

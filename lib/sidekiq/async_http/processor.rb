@@ -9,14 +9,15 @@ module Sidekiq
   module AsyncHttp
     # Core processor that handles async HTTP requests in a dedicated thread
     class Processor
+      include TimeHelper
+
       STATES = %i[stopped running draining stopping].freeze
 
-      attr_reader :config, :metrics, :connection_pool
+      attr_reader :config, :metrics
 
-      def initialize(config = nil, metrics: nil, connection_pool: nil)
+      def initialize(config = nil, metrics: nil)
         @config = config || Sidekiq::AsyncHttp.configuration
         @metrics = metrics || Metrics.new
-        @connection_pool = connection_pool || ConnectionPool.new(@config, metrics: @metrics)
 
         @queue = Thread::Queue.new
         @state = Concurrent::AtomicReference.new(:stopped)
@@ -24,7 +25,8 @@ module Sidekiq
         @shutdown_barrier = Concurrent::Event.new
         @reactor_ready = Concurrent::Event.new
         @in_flight_requests = Concurrent::Hash.new
-        @in_flight_lock = Mutex.new
+        @pending_tasks = Concurrent::Hash.new
+        @tasks_lock = Mutex.new
       end
 
       # Start the processor
@@ -63,17 +65,18 @@ module Sidekiq
 
         # Wait for in-flight requests to complete
         if timeout && timeout > 0
-          deadline = Time.now + timeout
-          while @metrics.in_flight_count > 0 && Time.now < deadline
+          deadline = monotonic_time + timeout
+          while @metrics.in_flight_count > 0 && monotonic_time < deadline
             sleep(0.001)
           end
         end
 
-        # Re-enqueue any remaining in-flight tasks
+        # Re-enqueue any remaining in-flight and pending tasks
         tasks_to_reenqueue = []
-        @in_flight_lock.synchronize do
-          tasks_to_reenqueue = @in_flight_requests.values
+        @tasks_lock.synchronize do
+          tasks_to_reenqueue = @in_flight_requests.values + @pending_tasks.values
           @in_flight_requests.clear
+          @pending_tasks.clear
         end
 
         # Re-enqueue each incomplete task
@@ -96,9 +99,6 @@ module Sidekiq
           @reactor_thread.join(5) # Give it 5 seconds to clean up
         end
 
-        # Close connection pool
-        @connection_pool.close_all
-
         @state.set(:stopped)
       end
 
@@ -110,11 +110,16 @@ module Sidekiq
 
       # Enqueue a request task for processing
       # @param task [RequestTask] the request task to enqueue
-      # @raise [RuntimeError] if processor is not running or draining
+      # @raise [RuntimeError] if processor is not running or if at capacity
       # @return [void]
       def enqueue(task)
-        unless running? || draining?
+        unless running?
           raise "Cannot enqueue request: processor is #{state}"
+        end
+
+        # Check capacity - raise error if at max connections
+        if @metrics.in_flight_count >= @config.max_connections
+          raise "Cannot enqueue request: at capacity (#{@metrics.in_flight_count}/#{@config.max_connections})"
         end
 
         task.enqueued!
@@ -157,8 +162,8 @@ module Sidekiq
       # @return [Boolean] true if processing completed, false if timeout reached
       # @api private
       def wait_for_idle(timeout: 1)
-        deadline = Time.now + timeout
-        while Time.now <= deadline do
+        deadline = monotonic_time + timeout
+        while monotonic_time <= deadline do
           return true if @queue.empty? && @metrics.in_flight_count == 0
           sleep(0.001)
         end
@@ -170,8 +175,8 @@ module Sidekiq
       # @return [Boolean] true if a request started processing, false if timeout reached
       # @api private
       def wait_for_processing(timeout: 1)
-        deadline = Time.now + timeout
-        while Time.now <= deadline do
+        deadline = monotonic_time + timeout
+        while monotonic_time <= deadline do
           return true if @metrics.in_flight_count > 0
           sleep(0.001)
         end
@@ -189,6 +194,7 @@ module Sidekiq
 
           @config.effective_logger&.info("Async HTTP Processor started")
 
+          # Main loop: monitor shutdown/drain and process requests
           loop do
             break if stopping? || @shutdown_barrier.set?
 
@@ -196,22 +202,13 @@ module Sidekiq
             request_task = dequeue_request(timeout: 0.1)
             next unless request_task
 
-            # Check state again after dequeue
-            break if stopping?
-
-            # Check if we're at max connections limit
-            if @metrics.in_flight_count >= @config.max_connections
-              @config.effective_logger&.warn("Async HTTP max connections reached, applying backpressure")
-
-              # Handle backpressure according to configured strategy
-              begin
-                @connection_pool.check_capacity!(request_task.request)
-              rescue Sidekiq::AsyncHttp::BackpressureError => e
-                # Request was dropped by backpressure strategy
-                @config.effective_logger&.error("Async HTTP request dropped by backpressure: #{e.message}")
-                next
-              end
+            # Track as pending immediately to avoid race condition with stop()
+            @tasks_lock.synchronize do
+              @pending_tasks[request_task.id] = request_task
             end
+
+            # If we've dequeued a task, we must process it even if stopping
+            # to avoid losing the request (shutdown will handle re-enqueuing if incomplete)
 
             # Spawn a new fiber to process this request task
             task.async do
@@ -234,10 +231,9 @@ module Sidekiq
       # @param timeout [Numeric] timeout in seconds
       # @return [RequestTask, nil] the request task or nil if timeout
       def dequeue_request(timeout:)
-        Timeout.timeout(timeout) do
-          @queue.pop
-        end
-      rescue Timeout::Error
+        @queue.pop(timeout: timeout)
+      rescue ThreadError
+        # Queue is empty and timeout expired
         nil
       end
 
@@ -248,59 +244,70 @@ module Sidekiq
         # Store task in fiber-local storage for error handling
         Fiber[:current_request] = task
 
-        # Track in-flight task
-        @in_flight_lock.synchronize do
+        # Move from pending to in-flight tracking
+        @tasks_lock.synchronize do
+          @pending_tasks.delete(task.id)
           @in_flight_requests[task.id] = task
         end
 
+        # Mark task as started
+        task.started!
+
         # Record request start
-        start_time = Time.now
         @metrics.record_request_start(task)
 
         begin
-          # Execute HTTP request with connection pool
-          @connection_pool.with_client(task.request.url) do |client|
-            # Build Async::HTTP::Request
-            http_request = build_http_request(task.request)
+          # Parse the URL to get the endpoint
+          uri = URI.parse(task.request.url)
+          endpoint = Async::HTTP::Endpoint.parse(uri.to_s)
 
-            # Execute with timeout
-            response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
-              async_response = client.call(http_request)
-              body = async_response.read
+          # Create or reuse a client for this endpoint
+          # Async::HTTP::Client handles connection pooling and reuse internally
+          client = Async::HTTP::Client.new(
+            endpoint,
+            protocol: @config.enable_http2 ? Async::HTTP::Protocol::HTTP2 : Async::HTTP::Protocol::HTTP1
+          )
 
-              # Build response object
-              {
-                status: async_response.status,
-                headers: async_response.headers.to_h,
-                body: body,
-                protocol: async_response.protocol
-              }
-            end
+          # Build Async::HTTP::Request
+          http_request = build_http_request(task.request)
 
-            # Calculate duration
-            duration = Time.now - start_time
+          # Execute with timeout
+          response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
+            async_response = client.call(http_request)
+            body = async_response.read
 
-            # Build Response object
-            response = build_response(task, response_data, duration)
-
-            # Record completion
-            @metrics.record_request_complete(task, duration)
-
-            # Handle success
-            handle_success(task, response)
+            # Build response object
+            {
+              status: async_response.status,
+              headers: async_response.headers.to_h,
+              body: body,
+              protocol: async_response.protocol
+            }
           end
+
+          # Mark task as completed
+          task.completed!
+
+          # Build Response object
+          response = build_response(task, response_data)
+
+          # Record completion
+          @metrics.record_request_complete(task, task.duration)
+
+          # Handle success
+          handle_success(task, response)
         rescue Async::TimeoutError => e
-          Time.now
+          task.completed!
           @metrics.record_error(task, :timeout)
           handle_error(task, e)
         rescue => e
-          Time.now
+          task.completed!
           error_type = classify_error(e)
           @metrics.record_error(task, error_type)
           handle_error(task, e)
         ensure
           # Remove from in-flight tracking
-          @in_flight_lock.synchronize do
+          @tasks_lock.synchronize do
             @in_flight_requests.delete(task.id)
           end
           Fiber[:current_request] = nil
@@ -336,16 +343,15 @@ module Sidekiq
       # Build a Response object from async response data
       # @param task [RequestTask] the original request task
       # @param response_data [Hash] the response data
-      # @param duration [Float] request duration in seconds
       # @return [Response] the response object
-      def build_response(task, response_data, duration)
+      def build_response(task, response_data)
         # For now, return a simple hash-based response
         # This will be replaced with proper Response Data.define object later
         {
           status: response_data[:status],
           headers: response_data[:headers],
           body: response_data[:body],
-          duration: duration,
+          duration: task.duration,
           request_id: task.id,
           protocol: response_data[:protocol],
           url: task.request.url,

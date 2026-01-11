@@ -10,12 +10,8 @@ module Sidekiq
       :shutdown_timeout,
       :logger,
       :enable_http2,
-      :dns_cache_ttl,
-      :backpressure_strategy
+      :dns_cache_ttl
     )
-      # Valid backpressure strategies
-      VALID_BACKPRESSURE_STRATEGIES = %i[block raise drop_oldest].freeze
-
       # Create a new Configuration with defaults
       def initialize(
         max_connections: 256,
@@ -24,8 +20,7 @@ module Sidekiq
         shutdown_timeout: 25,
         logger: nil,
         enable_http2: true,
-        dns_cache_ttl: 300,
-        backpressure_strategy: :raise
+        dns_cache_ttl: 300
       )
         super
       end
@@ -39,7 +34,6 @@ module Sidekiq
         validate_positive(:default_request_timeout)
         validate_positive(:shutdown_timeout)
         validate_positive(:dns_cache_ttl)
-        validate_backpressure_strategy
 
         self
       end
@@ -60,8 +54,7 @@ module Sidekiq
           "shutdown_timeout" => shutdown_timeout,
           "logger" => logger.inspect,
           "enable_http2" => enable_http2,
-          "dns_cache_ttl" => dns_cache_ttl,
-          "backpressure_strategy" => backpressure_strategy.to_s
+          "dns_cache_ttl" => dns_cache_ttl
         }
       end
 
@@ -73,20 +66,12 @@ module Sidekiq
           raise ArgumentError, "#{attribute} must be a positive number, got: #{value.inspect}"
         end
       end
-
-      def validate_backpressure_strategy
-        unless VALID_BACKPRESSURE_STRATEGIES.include?(backpressure_strategy)
-          raise ArgumentError,
-            "backpressure_strategy must be one of #{VALID_BACKPRESSURE_STRATEGIES.inspect}, " \
-            "got: #{backpressure_strategy.inspect}"
-        end
-      end
     end
 
     # Builder for creating Configuration instances via DSL
     class Builder
       attr_accessor :max_connections, :idle_connection_timeout, :default_request_timeout,
-        :shutdown_timeout, :logger, :enable_http2, :dns_cache_ttl, :backpressure_strategy
+        :shutdown_timeout, :logger, :enable_http2, :dns_cache_ttl
 
       def initialize
         @max_connections = 256
@@ -96,7 +81,6 @@ module Sidekiq
         @logger = nil
         @enable_http2 = true
         @dns_cache_ttl = 300
-        @backpressure_strategy = :raise
       end
 
       # Build and validate the configuration
@@ -109,8 +93,7 @@ module Sidekiq
           shutdown_timeout: @shutdown_timeout,
           logger: @logger,
           enable_http2: @enable_http2,
-          dns_cache_ttl: @dns_cache_ttl,
-          backpressure_strategy: @backpressure_strategy
+          dns_cache_ttl: @dns_cache_ttl
         ).validate!
       end
     end

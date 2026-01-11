@@ -95,13 +95,6 @@ module Sidekiq::AsyncHttp
         raise ArgumentError, "error_worker must be a class that includes Sidekiq::Job"
       end
 
-      @success_worker_class = success_worker.name
-      @error_worker_class = error_worker&.name
-      @job_args = @job["args"] || []
-      @original_worker_class = @job["class"]
-      @original_args = @job_args.dup
-      @enqueued_at = Time.now.to_f
-
       # Check if processor is running
       processor = Sidekiq::AsyncHttp.processor
       unless processor.running?
@@ -113,8 +106,7 @@ module Sidekiq::AsyncHttp
         request: self,
         sidekiq_job: @job,
         success_worker: success_worker,
-        error_worker: error_worker,
-        enqueued_at: @enqueued_at
+        error_worker: error_worker
       )
       processor.enqueue(task)
 

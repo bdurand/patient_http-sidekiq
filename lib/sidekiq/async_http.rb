@@ -12,6 +12,8 @@ module Sidekiq::AsyncHttp
 
   VERSION = File.read(File.join(__dir__, "../../VERSION")).strip
 
+  require_relative "async_http/time_helper"
+
   # Autoload all components
   autoload :Client, "sidekiq/async_http/client"
   autoload :Configuration, "sidekiq/async_http/configuration"

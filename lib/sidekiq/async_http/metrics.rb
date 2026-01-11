@@ -9,7 +9,6 @@ module Sidekiq
       def initialize
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
-        @backpressure_events = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @in_flight_requests = Concurrent::Map.new
         @errors_by_type = Concurrent::Map.new
@@ -51,12 +50,6 @@ module Sidekiq
           Concurrent::AtomicFixnum.new(0)
         end
         counter.increment
-      end
-
-      # Record a backpressure event
-      # @return [void]
-      def record_backpressure
-        @backpressure_events.increment
       end
 
       # Update connection count for a host
@@ -123,12 +116,6 @@ module Sidekiq
         result.freeze
       end
 
-      # Get backpressure events count
-      # @return [Integer]
-      def backpressure_events
-        @backpressure_events.value
-      end
-
       # Get a snapshot of all metrics
       # @return [Hash] hash with all metric values
       def to_h
@@ -138,8 +125,7 @@ module Sidekiq
           "average_duration" => average_duration,
           "error_count" => error_count,
           "errors_by_type" => errors_by_type,
-          "connections_per_host" => connections_per_host,
-          "backpressure_events" => backpressure_events
+          "connections_per_host" => connections_per_host
         }
       end
 
@@ -148,7 +134,6 @@ module Sidekiq
       def reset!
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
-        @backpressure_events = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @in_flight_requests = Concurrent::Map.new
         @errors_by_type = Concurrent::Map.new

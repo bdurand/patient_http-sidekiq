@@ -3,19 +3,49 @@
 module Sidekiq::AsyncHttp
   # Wrapper around a Request to allow it to be enqueued and processed asynchronously.
   class RequestTask
-    attr_reader :id, :request, :sidekiq_job, :success_worker, :error_worker,
-      :enqueued_at, :started_at, :completed_at
+    include TimeHelper
 
-    def initialize(request:, sidekiq_job:, success_worker:, error_worker: nil, enqueued_at: nil)
+    attr_reader :id, :request, :sidekiq_job, :success_worker, :error_worker
+
+    def initialize(request:, sidekiq_job:, success_worker:, error_worker: nil)
       @id = SecureRandom.uuid
       @request = request
       @sidekiq_job = sidekiq_job
       @success_worker = success_worker
       @error_worker = error_worker
-      @enqueued_at = enqueued_at
+      @enqueued_at = nil
       @started_at = nil
       @completed_at = nil
-      freeze
+    end
+
+    # Mark task as enqueued
+    # @return [void]
+    def enqueued!
+      @enqueued_at = monotonic_time
+    end
+
+    # Mark task as started
+    # @return [void]
+    def started!
+      @started_at = monotonic_time
+    end
+
+    # Mark task as completed
+    # @return [void]
+    def completed!
+      @completed_at = monotonic_time
+    end
+
+    def enqueued_at
+      wall_clock_time(@enqueued_at) if @enqueued_at
+    end
+
+    def started_at
+      wall_clock_time(@started_at) if @started_at
+    end
+
+    def completed_at
+      wall_clock_time(@completed_at) if @completed_at
     end
 
     # Enqueued duration in seconds.
@@ -23,15 +53,15 @@ module Sidekiq::AsyncHttp
     def enqueued_duration
       return nil unless @enqueued_at
 
-      (@started_at || Time.now.to_f) - @enqueued_at
+      (@started_at || monotonic_time) - @enqueued_at
     end
 
     # Execution duration in seconds.
     # @return [Float, nil] duration or nil if not started yet.
-    def execution_duration
+    def duration
       return nil unless @started_at
 
-      (@completed_at || Time.now.to_f) - @started_at
+      (@completed_at || monotonic_time) - @started_at
     end
 
     # Get the worker class name from the Sidekiq job

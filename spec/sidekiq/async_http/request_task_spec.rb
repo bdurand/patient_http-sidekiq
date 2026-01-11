@@ -77,15 +77,6 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(task.completed_at).to be_nil
     end
 
-    it "freezes the task object" do
-      task = described_class.new(
-        request: request,
-        sidekiq_job: sidekiq_job,
-        success_worker: success_worker
-      )
-
-      expect(task).to be_frozen
-    end
   end
 
   describe "#job_worker_class_name" do
@@ -136,7 +127,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
     end
   end
 
-  describe "#execution_duration" do
+  describe "#duration" do
     it "returns nil when not yet started" do
       task = described_class.new(
         request: request,
@@ -144,7 +135,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         success_worker: success_worker
       )
 
-      expect(task.execution_duration).to be_nil
+      expect(task.duration).to be_nil
     end
   end
 
