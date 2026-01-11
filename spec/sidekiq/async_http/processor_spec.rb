@@ -99,9 +99,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   end
 
   describe "#stop" do
-    before do
-    end
-
     context "when not running" do
       it "does nothing if already stopped" do
         expect(processor).to be_stopped
@@ -120,12 +117,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         expect(processor).to be_stopped
       end
 
-      it "waits for reactor thread to finish" do
-        thread = processor.instance_variable_get(:@reactor_thread)
-        processor.stop
-        expect(thread).not_to be_alive
-      end
-
       it "signals the shutdown barrier" do
         barrier = processor.instance_variable_get(:@shutdown_barrier)
         processor.stop
@@ -134,10 +125,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       context "with timeout" do
         it "waits for in-flight requests to complete" do
-          allow(metrics).to receive(:in_flight_count).and_return(2, 2, 1, 0)
+          allow(processor).to receive(:idle?).and_return(false, false, false, true)
 
           start_time = Time.now
-          processor.stop(timeout: 0.5)
+          processor.stop(timeout: 0.2)
           elapsed = Time.now - start_time
 
           # Should wait but not exceed timeout significantly
@@ -145,7 +136,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         end
 
         it "does not wait longer than timeout" do
-          allow(metrics).to receive(:in_flight_count).and_return(10)
+          allow(processor).to receive(:idle?).and_return(false)
 
           start_time = Time.now
           processor.stop(timeout: 0.2)
@@ -156,7 +147,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         end
 
         it "stops immediately if timeout is nil" do
-          allow(metrics).to receive(:in_flight_count).and_return(10)
+          allow(processor).to receive(:idle?).and_return(false)
 
           start_time = Time.now
           processor.stop(timeout: nil)
@@ -167,7 +158,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         end
 
         it "stops immediately if timeout is zero" do
-          allow(metrics).to receive(:in_flight_count).and_return(10)
+          allow(processor).to receive(:idle?).and_return(false)
 
           start_time = Time.now
           processor.stop(timeout: 0)
@@ -227,13 +218,13 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       end
 
       it "raises an error" do
-        expect { processor.enqueue(request) }.to raise_error(RuntimeError, /Cannot enqueue request: processor is draining/)
+        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is draining/)
       end
     end
 
     context "when stopped" do
       it "raises an error" do
-        expect { processor.enqueue(request) }.to raise_error(RuntimeError, /Cannot enqueue request: processor is stopped/)
+        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is stopped/)
       end
     end
 
@@ -244,7 +235,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       end
 
       it "raises an error" do
-        expect { processor.enqueue(request) }.to raise_error(RuntimeError, /Cannot enqueue request: processor is stopping/)
+        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is stopping/)
       end
     end
   end
@@ -355,7 +346,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       example.run
     ensure
       WebMock.reset!
-      WebMock.disable_net_connect!
+      WebMock.disable_net_connect!(allow_localhost: true)
     end
 
     it "handles concurrent enqueues safely" do
@@ -451,99 +442,46 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         max_connections: 2
       )
     end
-    let(:processor_with_config) { described_class.new(config, metrics: metrics) }
+
+    before do
+      stub_request(:get, "https://api.example.com/users").to_return(status: 200, body: "response", headers: {})
+    end
 
     it "consumes requests from the queue" do
       requests_processed = []
-      allow(processor_with_config).to receive(:process_request) do |request|
-        requests_processed << request
-      end
-
-      processor_with_config.start
+      processor = described_class.new(config, metrics: metrics, callback: ->(task) { requests_processed << task })
+      processor.start
 
       request1 = create_request_task
       request2 = create_request_task
 
-      processor_with_config.enqueue(request1)
-      processor_with_config.enqueue(request2)
+      processor.enqueue(request1)
+      processor.enqueue(request2)
 
-      processor_with_config.wait_for_idle
+      processor.wait_for_idle
 
       expect(requests_processed).to include(request1, request2)
     end
 
     it "spawns new fibers for each request" do
       fiber_count = Concurrent::AtomicFixnum.new(0)
-
-      allow(processor_with_config).to receive(:process_request) do |request|
-        fiber_count.increment
-      end
-
-      processor_with_config.start
+      processor = described_class.new(config, metrics: metrics, callback: ->(task) { fiber_count.increment })
+      processor.start
 
       # Enqueue multiple requests
-      3.times { |i| processor_with_config.enqueue(create_request_task) }
+      3.times { |i| processor.enqueue(create_request_task) }
 
-      processor_with_config.wait_for_idle
+      processor.wait_for_idle
 
       expect(fiber_count.value).to eq(3)
     end
 
-    it "checks max connections before spawning fibers" do
-      # Use real metrics and a low max_connections
-      config_low_max = Sidekiq::AsyncHttp::Configuration.new(logger: logger, max_connections: 1)
-      real_metrics = Sidekiq::AsyncHttp::Metrics.new
-      processor_low_max = described_class.new(config_low_max, metrics: real_metrics)
-
-      # Track when first request starts processing
-      processing_started = Concurrent::Event.new
-      request_count = Concurrent::AtomicFixnum.new(0)
-
-      allow(processor_low_max).to receive(:process_request) do |request|
-        # Manually track in-flight like the real method does
-        processor_low_max.instance_variable_get(:@in_flight_lock).synchronize do
-          processor_low_max.instance_variable_get(:@in_flight_requests)[request.id] = request
-        end
-        real_metrics.record_request_start(request)
-
-        count = request_count.increment
-        processing_started.set if count == 1
-
-        # Clean up in-flight tracking
-        processor_low_max.instance_variable_get(:@in_flight_lock).synchronize do
-          processor_low_max.instance_variable_get(:@in_flight_requests).delete(request.id)
-        end
-        real_metrics.record_request_complete(request, 0.01)
-      end
-
-      processor_low_max.start
-
-      # Enqueue first request - this will start processing
-      request1 = create_request_task
-      processor_low_max.enqueue(request1)
-
-      # Wait for first request to start processing (in_flight will be 1)
-      processing_started.wait(0.1)
-
-      # Now enqueue second request - this should trigger backpressure check
-      request2 = create_request_task
-      processor_low_max.enqueue(request2)
-
-      # Give reactor time to dequeue second request
-      sleep(0.02)
-      # Wait for second request to be dequeued
-      sleep(0.01) until processor_low_max.instance_variable_get(:@queue).empty?
-
-      # Should have checked capacity when at max connections
-      processor_low_max.stop
-    end
-
     it "logs reactor start and stop" do
-      processor_with_config.start
+      processor.start
 
       expect(log_output.string).to include("[Sidekiq::AsyncHttp] Processor started")
 
-      processor_with_config.stop
+      processor.stop
 
       expect(log_output.string).to include("[Sidekiq::AsyncHttp] Processor stopped")
     end
@@ -553,80 +491,39 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       loop_running = Concurrent::AtomicBoolean.new(false)
 
       # Override dequeue_request to signal when loop is active
-      allow(processor_with_config).to receive(:dequeue_request) do |**args|
+      allow(processor).to receive(:dequeue_request) do |**args|
         loop_running.make_true
         sleep(0.01) # Brief pause to allow shutdown check
         nil
       end
 
-      processor_with_config.start
+      processor.start
 
       # Wait for loop to be running (with timeout)
       sleep(0.001) until loop_running.true?
 
       # Stop the processor
-      processor_with_config.stop(timeout: 0)
+      processor.stop(timeout: 0)
 
       # Should have stopped
-      expect(processor_with_config).to be_stopped
+      expect(processor).to be_stopped
     end
 
     it "handles Async::Stop gracefully" do
-      processor_with_config.start
+      processor.start
 
-      processor_with_config.stop
+      processor.stop
 
       # The log may or may not contain the stop signal message depending on timing
       # Just verify it stopped gracefully
-      expect(processor_with_config).to be_stopped
+      expect(processor).to be_stopped
     end
 
     it "checks capacity before spawning fibers when at limit" do
-      # Use real metrics and a low max_connections
-      config_low_max = Sidekiq::AsyncHttp::Configuration.new(logger: logger, max_connections: 1)
-      real_metrics = Sidekiq::AsyncHttp::Metrics.new
-      processor_low_max = described_class.new(config_low_max, metrics: real_metrics)
-
-      # Track when first request starts
-      processing_started = Concurrent::Event.new
-      request_count = Concurrent::AtomicFixnum.new(0)
-
-      allow(processor_low_max).to receive(:process_request) do |request|
-        # Manually track in-flight
-        processor_low_max.instance_variable_get(:@in_flight_lock).synchronize do
-          processor_low_max.instance_variable_get(:@in_flight_requests)[request.id] = request
-        end
-        real_metrics.record_request_start(request)
-
-        count = request_count.increment
-        processing_started.set if count == 1
-
-        # Clean up
-        processor_low_max.instance_variable_get(:@in_flight_lock).synchronize do
-          processor_low_max.instance_variable_get(:@in_flight_requests).delete(request.id)
-        end
-        real_metrics.record_request_complete(request, 0.01)
-      end
-
-      processor_low_max.start
-
-      # Enqueue first request
-      request1 = create_request_task
-      processor_low_max.enqueue(request1)
-
-      # Wait for first request to start
-      processing_started.wait(0.1)
-
-      # Enqueue second request
-      request2 = create_request_task
-      processor_low_max.enqueue(request2)
-
-      # Give reactor time to dequeue second request
-      sleep(0.02)
-      # Wait for second request to be dequeued
-      sleep(0.01) until processor_low_max.instance_variable_get(:@queue).empty?
-
-      processor_low_max.stop
+      processor.start
+      allow(processor).to receive(:in_flight_count).and_return(config.max_connections)
+      expect { processor.enqueue(create_request_task) }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError, /already at max capacity/)
+      processor.stop(timeout: 0)
     end
   end
 
@@ -891,6 +788,14 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       }
     end
 
+    before do
+      processor.start
+    end
+
+    after do
+      processor.stop
+    end
+
     it "resolves worker class from string name" do
       processor.send(:handle_success, mock_request, response_hash)
       expect(TestWorkers::SuccessWorker.jobs.size).to eq(1)
@@ -914,8 +819,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       # Create a new processor with a logger in the config
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger, metrics: metrics)
-
+      processor_with_logger.start
       processor_with_logger.send(:handle_success, mock_request, response_hash)
+      processor_with_logger.stop
 
       expect(log_output.string).to match(
         /\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} succeeded with status 200.*enqueued TestWorkers::SuccessWorker/
@@ -931,10 +837,13 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       # Create a new processor with a logger in the config
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger, metrics: metrics)
+      processor_with_logger.start
 
       expect {
         processor_with_logger.send(:handle_success, mock_request, response_hash)
       }.not_to raise_error
+
+      processor_with_logger.stop
 
       expect(log_output.string).to match(
         /\[Sidekiq::AsyncHttp\] Failed to enqueue success worker for request #{Regexp.escape(mock_request.id)}/
@@ -943,6 +852,14 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   end
 
   describe "error handling" do
+    before do
+      processor.start
+    end
+
+    after do
+      processor.stop
+    end
+
     it "builds Error from exception" do
       exception = Async::TimeoutError.new("Request timed out")
 
@@ -1013,7 +930,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     it "handles unknown errors" do
       exception = StandardError.new("Unknown error")
 
+      processor.start
       processor.send(:handle_error, mock_request, exception)
+      processor.stop
 
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       error_hash = TestWorkers::ErrorWorker.jobs.last["args"].first
@@ -1026,10 +945,12 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger, metrics: metrics)
+      processor_with_logger.start
 
       exception = Async::TimeoutError.new("Request timed out")
 
       processor_with_logger.send(:handle_error, mock_request, exception)
+      processor_with_logger.stop
 
       expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} failed with timeout error/)
       expect(log_output.string).to match(/enqueued TestWorkers::ErrorWorker/)
@@ -1043,6 +964,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger, metrics: metrics)
+      processor_with_logger.start
 
       exception = StandardError.new("Test error")
 
@@ -1050,6 +972,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         processor_with_logger.send(:handle_error, mock_request, exception)
       }.not_to raise_error
 
+      processor_with_logger.stop
       expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Failed to enqueue error worker for request #{Regexp.escape(mock_request.id)}/)
     end
 

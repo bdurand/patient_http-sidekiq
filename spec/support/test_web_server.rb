@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "puma"
-require "rack"
 require "json"
 require "net/http"
 require "uri"
@@ -57,7 +56,7 @@ class TestWebServer
   end
 
   def run_server
-    server = Puma::Server.new(build_app, nil, {min_threads: 0, max_threads: 4})
+    server = Puma::Server.new(build_app, nil, {min_threads: 0, max_threads: 10, log_writer: Puma::LogWriter.null})
     server.add_tcp_listener("localhost", @port)
     @server = server
     server.run

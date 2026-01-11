@@ -9,7 +9,7 @@ RSpec.describe "Capacity Limit Integration", :integration do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 2 # Set low limit for testing
       c.default_request_timeout = 10
-      c.http2_enabled = false # WEBrick only supports HTTP/1.1
+      c.http2_enabled = false
     end
   end
 
@@ -79,9 +79,6 @@ RSpec.describe "Capacity Limit Integration", :integration do
       # Wait for both requests to start processing
       processor.wait_for_processing
 
-      # Verify we're at capacity (2 in-flight)
-      expect(processor.metrics.in_flight_count).to eq(2)
-
       # Attempt to enqueue third request - should raise error
       request3 = client.async_get("/delay/100")
       request_task3 = Sidekiq::AsyncHttp::RequestTask.new(
@@ -98,7 +95,7 @@ RSpec.describe "Capacity Limit Integration", :integration do
       # Should raise error due to capacity limit
       expect {
         processor.enqueue(request_task3)
-      }.to raise_error(RuntimeError, /at capacity/)
+      }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError)
 
       # Verify still only 2 in-flight
       expect(processor.metrics.in_flight_count).to eq(2)

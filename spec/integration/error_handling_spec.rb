@@ -9,7 +9,7 @@ RSpec.describe "Error Handling Integration", :integration do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 10
       c.default_request_timeout = 5
-      c.http2_enabled = false # WEBrick only supports HTTP/1.1
+      c.http2_enabled = false
     end
   end
 
@@ -29,7 +29,7 @@ RSpec.describe "Error Handling Integration", :integration do
   end
 
   after do
-    processor.stop(timeout: 1) if processor.running?
+    processor.stop(timeout: 0) if processor.running?
 
     # Re-enable WebMock
     WebMock.enable!
@@ -50,7 +50,7 @@ RSpec.describe "Error Handling Integration", :integration do
       )
 
       processor.enqueue(request_task)
-      processor.wait_for_idle(timeout: 1)
+      processor.wait_for_idle
 
       # Process enqueued jobs
       Sidekiq::Worker.drain_all

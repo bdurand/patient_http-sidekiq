@@ -15,7 +15,7 @@ module Sidekiq
 
       attr_reader :config, :metrics
 
-      def initialize(config = nil, metrics: nil)
+      def initialize(config = nil, metrics: nil, callback: nil)
         @config = config || Sidekiq::AsyncHttp.configuration
         @metrics = metrics || Metrics.new
 
@@ -27,6 +27,7 @@ module Sidekiq
         @in_flight_requests = Concurrent::Hash.new
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
+        @callback = callback
       end
 
       # Start the processor
@@ -34,9 +35,11 @@ module Sidekiq
       def start
         return if running?
 
-        @state.set(:running)
-        @shutdown_barrier.reset
-        @reactor_ready.reset
+        @tasks_lock.synchronize do
+          @state.set(:running)
+          @shutdown_barrier.reset
+          @reactor_ready.reset
+        end
 
         @reactor_thread = Thread.new do
           Thread.current.name = "async-http-processor"
@@ -45,7 +48,7 @@ module Sidekiq
           # Log error but don't crash
           @config.logger&.error("[Sidekiq::AsyncHttp] Processor error: #{e.message}\n#{e.backtrace.join("\n")}")
         ensure
-          @state.set(:stopped)
+          @state.set(:stopped) if @reactor_thread = Thread.current
         end
 
         # Block until the reactor is ready
@@ -66,7 +69,7 @@ module Sidekiq
         # Wait for in-flight requests to complete
         if timeout && timeout > 0
           deadline = monotonic_time + timeout
-          while @metrics.in_flight_count > 0 && monotonic_time < deadline
+          while !idle? && monotonic_time < deadline
             sleep(0.001)
           end
         end
@@ -74,6 +77,7 @@ module Sidekiq
         # Re-enqueue any remaining in-flight and pending tasks
         tasks_to_reenqueue = []
         @tasks_lock.synchronize do
+          @state.set(:stopped)
           tasks_to_reenqueue = @in_flight_requests.values + @pending_tasks.values
           @in_flight_requests.clear
           @pending_tasks.clear
@@ -94,12 +98,9 @@ module Sidekiq
           )
         end
 
-        # Wait for reactor thread to finish
-        if @reactor_thread&.alive?
-          @reactor_thread.join(5) # Give it 5 seconds to clean up
-        end
-
-        @state.set(:stopped)
+        @reactor_thread.join(1) if @reactor_thread&.alive?
+        @reactor_thread.kill if @reactor_thread&.alive?
+        @reactor_thread = nil
       end
 
       # Drain the processor (stop accepting new requests)
@@ -117,12 +118,12 @@ module Sidekiq
       # @return [void]
       def enqueue(task)
         unless running?
-          raise "Cannot enqueue request: processor is #{state}"
+          raise NotRunningError.new("Cannot enqueue request: processor is #{state}")
         end
 
         # Check capacity - raise error if at max connections
-        if @metrics.in_flight_count >= @config.max_connections
-          raise "Cannot enqueue request: at capacity (#{@metrics.in_flight_count}/#{@config.max_connections})"
+        if in_flight_count >= @config.max_connections
+          raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
 
         task.enqueued!
@@ -169,6 +170,10 @@ module Sidekiq
         @state.get
       end
 
+      def in_flight_count
+        @in_flight_requests.size
+      end
+
       # Wait for the queue to be empty and all in-flight requests to complete.
       # This is mainly for use in tests.
       # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
@@ -190,7 +195,7 @@ module Sidekiq
       def wait_for_processing(timeout: 1)
         deadline = monotonic_time + timeout
         while monotonic_time <= deadline
-          return true if @metrics.in_flight_count > 0
+          return true if !@in_flight_requests.empty? || !@pending_tasks.empty?
           sleep(0.001)
         end
         false
@@ -209,7 +214,7 @@ module Sidekiq
 
           # Main loop: monitor shutdown/drain and process requests
           loop do
-            break if stopping? || @shutdown_barrier.set?
+            break if stopping? || stopped?
 
             # Pop request task from queue with timeout to periodically check shutdown
             request_task = dequeue_request(timeout: 0.1)
@@ -304,11 +309,10 @@ module Sidekiq
           # Build Response object
           response = build_response(task, response_data)
 
-          # Record completion
-          @metrics.record_request_complete(task, task.duration)
-
           # Handle success
           handle_success(task, response)
+
+          @callback&.call(task)
         rescue Async::TimeoutError => e
           task.completed!
           @metrics.record_error(task, :timeout)
@@ -324,6 +328,7 @@ module Sidekiq
             @in_flight_requests.delete(task.id)
           end
           Fiber[:current_request] = nil
+          @metrics.record_request_complete(task, task.duration)
         end
       end
 
@@ -396,6 +401,11 @@ module Sidekiq
       # @param response [Hash] the response hash
       # @return [void]
       def handle_success(task, response)
+        if stopped?
+          @config.logger&.warn("[Sidekiq::AsyncHttp] Request #{task.id} succeeded after processor was stopped")
+          return
+        end
+
         # Get worker class from class name
         worker_class = resolve_worker_class(task.success_worker)
 
@@ -419,6 +429,11 @@ module Sidekiq
       # @param exception [Exception] the exception
       # @return [void]
       def handle_error(task, exception)
+        if stopped?
+          @config.logger&.warn("[Sidekiq::AsyncHttp] Request #{task.id} failed after processor was stopped")
+          return
+        end
+
         # Build Error object from exception
         error = Error.from_exception(exception, request_id: task.id)
 

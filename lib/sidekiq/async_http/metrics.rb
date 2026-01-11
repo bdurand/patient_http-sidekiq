@@ -10,7 +10,7 @@ module Sidekiq
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
-        @in_flight_requests = Concurrent::Map.new
+        @in_flight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
       end
 
@@ -18,7 +18,7 @@ module Sidekiq
       # @param task [RequestTask] the request task being started
       # @return [void]
       def record_request_start(request)
-        @in_flight_requests[request.id] = request
+        @in_flight_requests.increment
       end
 
       # Record the completion of a request
@@ -26,14 +26,15 @@ module Sidekiq
       # @param duration [Float] request duration in seconds
       # @return [void]
       def record_request_complete(request, duration)
-        @in_flight_requests.delete(request.id)
+        @in_flight_requests.decrement
         @total_requests.increment
 
-        # Atomically update total_duration
-        loop do
-          current = @total_duration.get
-          new_value = current + duration
-          break if @total_duration.compare_and_set(current, new_value)
+        if duration
+          loop do
+            current_total = @total_duration.get
+            new_total = current_total + duration
+            break if @total_duration.compare_and_set(current_total, new_total)
+          end
         end
       end
 
@@ -54,13 +55,7 @@ module Sidekiq
       # Get the number of in-flight requests
       # @return [Integer]
       def in_flight_count
-        @in_flight_requests.size
-      end
-
-      # Get a snapshot of in-flight requests
-      # @return [Array<Request>] frozen array of requests
-      def in_flight_requests
-        @in_flight_requests.values.freeze
+        @in_flight_requests.value
       end
 
       # Get total number of requests processed
@@ -112,7 +107,7 @@ module Sidekiq
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
-        @in_flight_requests = Concurrent::Map.new
+        @in_flight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
       end
     end

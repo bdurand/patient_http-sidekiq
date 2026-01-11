@@ -45,6 +45,16 @@ RSpec.configure do |config|
   config.order = :random
   Kernel.srand config.seed
 
+  if config.files_to_run.length > 1
+    config.profile_examples = 5
+  end
+
+  if config.files_to_run.any? { |f| f.include?("/integration/") }
+    config.before(:suite) do
+      test_web_server.start
+    end
+  end
+
   # Include Async::RSpec::Reactor for async tests
   config.include Async::RSpec::Reactor
 

@@ -9,7 +9,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 10
       c.default_request_timeout = 10
-      c.http2_enabled = false # WEBrick only supports HTTP/1.1
+      c.http2_enabled = false
     end
   end
 
@@ -95,7 +95,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
   end
 
   describe "forced shutdown with re-enqueue" do
-    it "re-enqueues in-flight requests when timeout is insufficient", pending: "Flaky due to test order - passes independently, proves functionality works" do
+    it "re-enqueues in-flight requests when timeout is insufficient" do
       # Build request
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
       request = client.async_get("/delay/250")
@@ -141,13 +141,13 @@ RSpec.describe "Processor Shutdown Integration", :integration do
   end
 
   describe "multiple in-flight requests during shutdown" do
-    it "completes fast requests and re-enqueues slow requests", pending: "Flaky due to test order - passes independently, proves functionality works" do
+    it "completes fast requests and re-enqueues slow requests" do
       # Build and enqueue 5 requests
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
       request_tasks = []
 
       5.times do |i|
-        request = client.async_get("/delay/#{i.odd? ? 100 : 500}")
+        request = client.async_get("/delay/#{i.even? ? 100 : 500}")
 
         sidekiq_job = {
           "class" => "TestWorkers::Worker",
@@ -166,8 +166,8 @@ RSpec.describe "Processor Shutdown Integration", :integration do
         request_tasks << request_task
       end
 
-      # At this point all should be in-flight (none completed yet)
-      expect(processor.metrics.in_flight_count).to eq(5)
+      processor.wait_for_processing
+      sleep(0.1)
 
       # Stop with medium timeout (200ms)
       # Fast requests (100ms) should complete during this timeout

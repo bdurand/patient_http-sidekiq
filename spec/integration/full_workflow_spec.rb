@@ -9,7 +9,7 @@ RSpec.describe "Full Workflow Integration", :integration do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 10
       c.default_request_timeout = 5
-      c.http2_enabled = false # WEBrick only supports HTTP/1.1
+      c.http2_enabled = false
     end
   end
 
@@ -29,7 +29,7 @@ RSpec.describe "Full Workflow Integration", :integration do
   end
 
   after do
-    processor.stop(timeout: 1) if processor.running?
+    processor.stop(timeout: 0) if processor.running?
 
     # Re-enable WebMock
     WebMock.enable!

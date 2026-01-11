@@ -10,6 +10,8 @@ module Sidekiq::AsyncHttp
   # Raised when trying to enqueue a request when the processor is not running
   class NotRunningError < StandardError; end
 
+  class MaxCapacityError < StandardError; end
+
   VERSION = File.read(File.join(__dir__, "../../VERSION")).strip
 
   require_relative "async_http/time_helper"

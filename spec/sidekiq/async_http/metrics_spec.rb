@@ -29,7 +29,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     end
 
     it "initializes with empty collections" do
-      expect(metrics.in_flight_requests).to eq([])
       expect(metrics.errors_by_type).to eq({})
     end
   end
@@ -39,7 +38,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.record_request_start(request)
 
       expect(metrics.in_flight_count).to eq(1)
-      expect(metrics.in_flight_requests).to include(request)
     end
 
     it "tracks multiple in-flight requests" do
@@ -52,7 +50,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.record_request_start(request3)
 
       expect(metrics.in_flight_count).to eq(3)
-      expect(metrics.in_flight_requests).to contain_exactly(request1, request2, request3)
     end
   end
 
@@ -65,7 +62,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.record_request_complete(request, 0.5)
 
       expect(metrics.in_flight_count).to eq(0)
-      expect(metrics.in_flight_requests).to be_empty
     end
 
     it "increments total requests" do
@@ -129,26 +125,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
 
       expect(metrics.errors_by_type.keys).to match_array(error_types)
       expect(metrics.error_count).to eq(5)
-    end
-  end
-
-  describe "#in_flight_requests" do
-    it "returns frozen array" do
-      result = metrics.in_flight_requests
-
-      expect(result).to be_frozen
-    end
-
-    it "returns snapshot at time of call" do
-      request1 = create_request_task
-      request2 = create_request_task
-
-      metrics.record_request_start(request1)
-      snapshot = metrics.in_flight_requests
-      metrics.record_request_start(request2)
-
-      expect(snapshot.size).to eq(1)
-      expect(metrics.in_flight_requests.size).to eq(2)
     end
   end
 
@@ -221,7 +197,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     it "clears all collections" do
       metrics.reset!
 
-      expect(metrics.in_flight_requests).to be_empty
       expect(metrics.errors_by_type).to be_empty
     end
   end
