@@ -323,8 +323,11 @@ module Sidekiq
       def build_http_request(request)
         uri = URI.parse(request.url)
 
-        # Create headers
-        headers = (request.headers || {}).dup
+        # Create headers - must be a Protocol::HTTP::Headers object, not a Hash
+        headers = Protocol::HTTP::Headers.new
+        (request.headers || {}).each do |key, value|
+          headers.add(key, value)
+        end
 
         # Set body if present
         body_content = if request.body

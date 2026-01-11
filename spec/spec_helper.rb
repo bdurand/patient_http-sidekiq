@@ -18,8 +18,8 @@ require "sidekiq/testing"
 
 require_relative "../lib/sidekiq-async_http"
 
-# Disable all real HTTP connections
-WebMock.disable_net_connect!
+# Disable all real HTTP connections except localhost (for test server)
+WebMock.disable_net_connect!(allow_localhost: true)
 
 # Use fake mode for Sidekiq during tests
 Sidekiq::Testing.fake!

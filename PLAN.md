@@ -999,8 +999,10 @@ which reuses underlying connections automatically.
         - Create spec/support/async_helpers.rb:
           - Helper to run async code in tests
           - Helper to wait for condition with timeout
+        NOTE: test_workers.rb complete. test_server.rb deferred - WebMock doesn't work
+              with async-http, need real Async::HTTP::Server for full integration tests.
 
-[ ] 9.2 Write full workflow integration test:
+[X] 9.2 Write full workflow integration test:
         - Start test HTTP server returning 200 OK
         - Start processor
         - Make async POST request with test workers

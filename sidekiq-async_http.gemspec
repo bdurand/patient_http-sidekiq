@@ -50,4 +50,5 @@ Gem::Specification.new do |spec|
   spec.add_development_dependency "simplecov", "~> 0.22"
   spec.add_development_dependency "webmock", "~> 3.0"
   spec.add_development_dependency "async-rspec", "~> 1.0"
+  spec.add_development_dependency "webrick", "~> 1.8"
 end
