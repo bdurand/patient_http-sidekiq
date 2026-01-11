@@ -988,7 +988,7 @@ which reuses underlying connections automatically.
 ### Phase 9: Integration Tests
 
 ```
-[ ] 9.1 Create test support helpers:
+[X] 9.1 Create test support helpers:
         - Create spec/support/test_workers.rb:
           - TestWorkers::SuccessWorker (records calls to class variable)
           - TestWorkers::ErrorWorker (records calls to class variable)
