@@ -28,8 +28,8 @@ This gem (`sidekiq-async-http`) provides a mechanism to offload long-running HTT
 │                       │  └───────┼───────────┼───────────┼─────────────┘ │ │
 │                       │          ▼           ▼           ▼               │ │
 │                       │  ┌─────────────────────────────────────────────┐ │ │
-│                       │  │     Connection Pool (per-host keep-alive)   │ │ │
-│                       │  │     HTTP/1.1, HTTP/2, TLS                   │ │ │
+│                       │  │     Async::HTTP::Client (per request)       │ │ │
+│                       │  │     Internal pooling, HTTP/1.1, HTTP/2, TLS │ │ │
 │                       │  └─────────────────────────────────────────────┘ │ │
 │                       │                       │                          │ │
 │                       │                       ▼                          │ │
@@ -273,32 +273,9 @@ Thread-safe metrics collection using `Concurrent::AtomicFixnum` and `Concurrent:
 # - average_duration: Float (computed: total_duration / total_requests)
 # - error_count: Integer
 # - errors_by_type: Hash<Symbol, Integer>
-# - connections_per_host: Hash<String, Integer>
-# - connection_wait_time: Float (moving average)
-# - backpressure_events: Integer
-# - queue_depth: Integer (requests waiting to be sent)
 ```
 
-### 6. `Sidekiq::AsyncHttp::ConnectionPool`
-
-Wrapper around `Async::HTTP::Client` management:
-
-```ruby
-# Responsibilities:
-# - Create and cache Async::HTTP::Client instances per host
-# - Respect max_connections
-# - Track active connections per host
-# - Close connections idle longer than idle_connection_timeout
-# - Background fiber for periodic idle connection cleanup
-#
-# Methods:
-# - #acquire(url) - returns client, blocks/raises if at limit
-# - #release(url, client) - returns client to pool
-# - #close_idle - close connections exceeding idle timeout
-# - #stats - returns connection statistics
-```
-
-### 7. `Sidekiq::AsyncHttp::Processor`
+### 6. `Sidekiq::AsyncHttp::Processor`
 
 The heart of the gem. Runs in a dedicated thread and manages the async reactor:
 
@@ -307,9 +284,9 @@ The heart of the gem. Runs in a dedicated thread and manages the async reactor:
 # - Starts an Async reactor in a background thread
 # - Consumes requests from a Thread::Queue
 # - Spawns a Fiber for each HTTP request
-# - Manages connection pool via ConnectionPool
-# - Implements backpressure strategies
-# - Tracks in-flight requests
+# - Creates Async::HTTP::Client per request (pooling handled internally)
+# - Checks capacity at enqueue time (raises CapacityError if at max_connections)
+# - Tracks in-flight and pending requests
 # - Collects metrics
 # - Handles graceful shutdown
 # - Re-enqueues in-flight requests on shutdown
@@ -373,7 +350,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 5. Worker returns immediately (Sidekiq job completes)
 6. Processor's reactor loop picks up request
 7. New Fiber spawned for this request
-8. Fiber makes HTTP request via ConnectionPool → Async::HTTP::Client
+8. Fiber makes HTTP request via Async::HTTP::Client (creates per-request client)
 9. Response received, Fiber builds Response object
 10. Processor enqueues success_worker_class.perform_async(response.to_h, *original_args)
 11. Metrics updated
@@ -592,7 +569,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 2. **Integration tests**: Test full request → response → callback flow
 3. **Shutdown tests**: Test graceful shutdown and re-enqueue behavior
 4. **Metrics tests**: Verify metrics accuracy under concurrent load
-5. **Backpressure tests**: Verify each backpressure strategy works correctly
+5. **Capacity tests**: Verify CapacityError raised at max_connections
 
 ---
 

@@ -12,7 +12,6 @@ module Sidekiq
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @in_flight_requests = Concurrent::Map.new
         @errors_by_type = Concurrent::Map.new
-        @connections_per_host = Concurrent::Map.new
       end
 
       # Record the start of a request
@@ -50,17 +49,6 @@ module Sidekiq
           Concurrent::AtomicFixnum.new(0)
         end
         counter.increment
-      end
-
-      # Update connection count for a host
-      # @param host [String] the host name
-      # @param delta [Integer] the change in connection count (positive or negative)
-      # @return [void]
-      def update_connections(host, delta)
-        counter = @connections_per_host.compute_if_absent(host) do
-          Concurrent::AtomicFixnum.new(0)
-        end
-        counter.update { |v| [v + delta, 0].max }
       end
 
       # Get the number of in-flight requests
@@ -106,16 +94,6 @@ module Sidekiq
         result.freeze
       end
 
-      # Get connections per host
-      # @return [Hash<String, Integer>] frozen hash of host to connection count
-      def connections_per_host
-        result = {}
-        @connections_per_host.each_pair do |host, count|
-          result[host] = count.value
-        end
-        result.freeze
-      end
-
       # Get a snapshot of all metrics
       # @return [Hash] hash with all metric values
       def to_h
@@ -124,8 +102,7 @@ module Sidekiq
           "total_requests" => total_requests,
           "average_duration" => average_duration,
           "error_count" => error_count,
-          "errors_by_type" => errors_by_type,
-          "connections_per_host" => connections_per_host
+          "errors_by_type" => errors_by_type
         }
       end
 
@@ -137,7 +114,6 @@ module Sidekiq
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @in_flight_requests = Concurrent::Map.new
         @errors_by_type = Concurrent::Map.new
-        @connections_per_host = Concurrent::Map.new
       end
     end
   end
