@@ -62,6 +62,18 @@ module Sidekiq::AsyncHttp
       !!@processor&.running?
     end
 
+    def draining?
+      !!@processor&.draining?
+    end
+
+    def stopping?
+      !!@processor&.stopping?
+    end
+
+    def stopped?
+      @processor.nil? || @processor.stopped?
+    end
+
     # Returns the processor instance (internal accessor)
     # @return [Processor, nil]
     # @api private

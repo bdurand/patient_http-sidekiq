@@ -1314,6 +1314,10 @@ metrics = Sidekiq::AsyncHttp.metrics.to_h
 
 ## Future Enhancements
 
+0. **Default Headers**
+  - keep-alive
+  - encoding/decoding
+  - user-agent (add to configuration)
 1. **Request prioritization** - Priority queue for urgent requests
 2. **Circuit breaker** - Per-host circuit breakers for failing endpoints
 3. **Retry with backoff** - Built-in retry logic for transient failures

@@ -283,9 +283,6 @@ RSpec.describe Sidekiq::AsyncHttp do
     end
 
     it "supports full start -> quiet -> stop lifecycle" do
-      # NOTE: This test currently skipped due to a race condition that needs investigation
-      skip "Race condition in test needs investigation"
-
       described_class.reset_configuration!
       described_class.configure do |c|
         c.shutdown_timeout = 10
@@ -298,12 +295,12 @@ RSpec.describe Sidekiq::AsyncHttp do
 
       # Quiet
       described_class.quiet
-      expect(described_class).to be_running
+      expect(described_class).to be_draining
       expect(described_class.processor).to be_draining
 
       # Stop
       described_class.stop
-      expect(described_class).not_to be_running
+      expect(described_class).to be_stopped
       expect(described_class.processor).to be_nil
     end
 

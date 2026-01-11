@@ -532,12 +532,20 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     let(:client) { instance_double(Async::HTTP::Client) }
     let(:async_response) { instance_double(Async::HTTP::Protocol::Response) }
+    let(:response_body) { instance_double(Protocol::HTTP::Body::Buffered) }
 
     before do
       allow(Async::HTTP::Client).to receive(:new).and_return(client)
       allow(metrics).to receive(:record_request_start)
       allow(metrics).to receive(:record_request_complete)
       allow(metrics).to receive(:record_error)
+    end
+
+    # Helper to stub async_response with a body
+    def stub_async_response_body(body_content)
+      allow(async_response).to receive(:body).and_return(response_body)
+      allow(response_body).to receive(:read).and_return(body_content)
+      allow(async_response).to receive(:close)
     end
 
     it "stores request in Fiber-local storage" do
@@ -547,7 +555,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         captured_fiber_request = Fiber[:current_request]
         async_response
       end
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -561,7 +569,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "records request start in metrics" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -580,7 +588,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         expected_request = req
         async_response
       end
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -598,18 +606,18 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({"Content-Type" => "application/json"})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
-      allow(async_response).to receive(:read).and_return('{"result":"success"}')
+      stub_async_response_body('{"result":"success"}')
 
       Async do
         processor.send(:process_request, mock_request)
       end
 
-      expect(async_response).to have_received(:read)
+      expect(response_body).to have_received(:read)
     end
 
     it "records request completion with duration" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -623,7 +631,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "builds response with all attributes" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(201)
       allow(async_response).to receive(:headers).and_return({"X-Custom" => "value"})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -647,7 +655,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "calls handle_success on successful response" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -713,7 +721,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "cleans up Fiber storage in ensure block" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -749,7 +757,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         captured_request = req
         async_response
       end
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(201)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -763,7 +771,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "uses connection pool with_client" do
       allow(client).to receive(:call).and_return(async_response)
-      allow(async_response).to receive(:read).and_return("response body")
+      stub_async_response_body("response body")
       allow(async_response).to receive(:status).and_return(200)
       allow(async_response).to receive(:headers).and_return({})
       allow(async_response).to receive(:protocol).and_return("HTTP/2")
@@ -1014,7 +1022,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       # Set up HTTP client mock
       allow(Async::HTTP::Client).to receive(:new).and_return(mock_client)
       allow(mock_client).to receive(:call).and_return(mock_async_response)
-      allow(mock_async_response).to receive(:read).and_return("response body")
+      allow(mock_async_response).to receive(:body).and_return("response body")
 
       processor.start
 

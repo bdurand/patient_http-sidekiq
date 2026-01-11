@@ -88,17 +88,28 @@ class TestWebServer
     path = env["PATH_INFO"]
     query_string = env["QUERY_STRING"] || ""
     headers = extract_headers(env)
+
+    # Ensure request body is fully consumed before sending response
+    # This is important for POST/PUT requests with bodies
     body = read_body(env)
+
     status_code = path.sub(%r{\A/test/}, "").to_i
 
-    response_body = {
+    response_body = JSON.generate({
       status: status_code,
       body: body,
       headers: headers,
       query_string: query_string
-    }
+    })
 
-    [status_code, {"Content-Type" => "application/json"}, [JSON.generate(response_body)]]
+    [
+      status_code,
+      {
+        "Content-Type" => "application/json",
+        "Content-Length" => response_body.bytesize.to_s
+      },
+      [response_body]
+    ]
   end
 
   def delay_response(delay)
@@ -106,16 +117,34 @@ class TestWebServer
   end
 
   def extract_headers(env)
-    env.each_with_object({}) do |(key, value), headers|
+    headers = {}
+
+    # Extract HTTP_* headers
+    env.each do |key, value|
       if key.start_with?("HTTP_")
         header_name = key.sub(/^HTTP_/, "").downcase.tr("_", "-")
         headers[header_name] = value
       end
     end
+
+    # Rack stores some headers without HTTP_ prefix
+    headers["content-type"] = env["CONTENT_TYPE"] if env["CONTENT_TYPE"]
+    headers["content-length"] = env["CONTENT_LENGTH"] if env["CONTENT_LENGTH"]
+
+    headers
   end
 
   def read_body(env)
-    env["rack.input"].read
+    input = env["rack.input"]
+    return "" unless input
+
+    # Read and return the entire body
+    body = input.read
+
+    # Rewind the input stream in case it needs to be read again
+    input.rewind if input.respond_to?(:rewind)
+
+    body || ""
   end
 
   def server_ready?

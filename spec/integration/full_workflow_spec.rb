@@ -37,7 +37,7 @@ RSpec.describe "Full Workflow Integration", :integration do
   end
 
   describe "successful POST request workflow" do
-    it "makes async POST request and calls success worker with response and original args", pending: "WEBrick/async-http incompatibility with POST bodies" do
+    it "makes async POST request and calls success worker with response and original args" do
       # Build request
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
       request = client.async_post(
@@ -81,7 +81,13 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Verify response hash contains correct status, body
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
       expect(response.status).to eq(200)
-      expect(response.body).to eq('{"success":true,"id":"webhook-123"}')
+
+      # Parse the response body JSON
+      response_data = JSON.parse(response.body)
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["body"]).to eq('{"event":"user.created","user_id":123}')
+      expect(response_data["headers"]["content-type"]).to eq("application/json")
+
       expect(response.headers["content-type"]).to eq("application/json")
       expect(response.success?).to be true
 

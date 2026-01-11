@@ -292,7 +292,10 @@ module Sidekiq
           # Execute with timeout
           response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
             async_response = client.call(http_request)
-            body = async_response.read
+
+            # Read the body to completion - this allows the connection to be reused
+            # The async-http client handles connection pooling and keep-alive internally
+            body = async_response.body.read if async_response.body
 
             # Build response object
             {
@@ -344,9 +347,11 @@ module Sidekiq
           headers.add(key, value)
         end
 
-        # Set body if present
+        # Set body if present - use Protocol::HTTP::Body::Buffered for proper handling
         body_content = if request.body
-          [request.body]
+          body_bytes = request.body.to_s
+          # Protocol::HTTP::Body::Buffered will automatically set Content-Length
+          Protocol::HTTP::Body::Buffered.wrap([body_bytes])
         end
 
         # Build the request with correct parameter order: scheme, authority, method, path, version, headers, body
