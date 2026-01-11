@@ -43,7 +43,7 @@ module Sidekiq
           run_reactor
         rescue => e
           # Log error but don't crash
-          @config.effective_logger&.error("Async HTTP Processor error: #{e.message}\n#{e.backtrace.join("\n")}")
+          @config.logger&.error("Async HTTP Processor error: #{e.message}\n#{e.backtrace.join("\n")}")
         ensure
           @state.set(:stopped)
         end
@@ -85,11 +85,11 @@ module Sidekiq
           task.reenqueue_job
 
           # Log re-enqueue
-          @config.effective_logger&.info(
+          @config.logger&.info(
             "Async HTTP re-enqueued incomplete request #{task.id} to #{task.job_worker_class.name}"
           )
         rescue => e
-          @config.effective_logger&.error(
+          @config.logger&.error(
             "Async HTTP failed to re-enqueue request #{task.id}: #{e.class} - #{e.message}"
           )
         end
@@ -192,7 +192,7 @@ module Sidekiq
           # Signal that the reactor is ready
           @reactor_ready.set
 
-          @config.effective_logger&.info("Async HTTP Processor started")
+          @config.logger&.info("Async HTTP Processor started")
 
           # Main loop: monitor shutdown/drain and process requests
           loop do
@@ -214,16 +214,16 @@ module Sidekiq
             task.async do
               process_request(request_task)
             rescue => e
-              @config.effective_logger&.error("Async HTTP Error processing request: #{e.inspect}\n#{e.backtrace.join("\n")}")
+              @config.logger&.error("Async HTTP Error processing request: #{e.inspect}\n#{e.backtrace.join("\n")}")
             end
           end
 
-          @config.effective_logger&.info("Async HTTP Processor stopped")
+          @config.logger&.info("Async HTTP Processor stopped")
         rescue Async::Stop
           # Normal shutdown signal
-          @config.effective_logger&.info("Async HTTP Reactor received stop signal")
+          @config.logger&.info("Async HTTP Reactor received stop signal")
         rescue => e
-          @config.effective_logger&.error("Async HTTP Reactor loop error: #{e.inspect}\n#{e.backtrace.join("\n")}")
+          @config.logger&.error("Async HTTP Reactor loop error: #{e.inspect}\n#{e.backtrace.join("\n")}")
         end
       end
 
@@ -265,7 +265,7 @@ module Sidekiq
           # Async::HTTP::Client handles connection pooling and reuse internally
           client = Async::HTTP::Client.new(
             endpoint,
-            protocol: @config.enable_http2 ? Async::HTTP::Protocol::HTTP2 : Async::HTTP::Protocol::HTTP1
+            protocol: @config.http2_enabled? ? Async::HTTP::Protocol::HTTP2 : Async::HTTP::Protocol::HTTP1
           )
 
           # Build Async::HTTP::Request
@@ -387,13 +387,13 @@ module Sidekiq
         worker_class.perform_async(response, *task.job_args)
 
         # Log success
-        @config.effective_logger&.info(
+        @config.logger&.info(
           "Async HTTP request #{task.id} succeeded with status #{response[:status]}, " \
           "enqueued #{task.success_worker}"
         )
       rescue => e
         # Log error but don't crash the processor
-        @config.effective_logger&.error(
+        @config.logger&.error(
           "Async HTTP failed to enqueue success worker for request #{task.id}: #{e.class} - #{e.message}"
         )
       end
@@ -413,13 +413,13 @@ module Sidekiq
         worker_class.perform_async(error.to_h, *task.job_args)
 
         # Log error
-        @config.effective_logger&.warn(
+        @config.logger&.warn(
           "Async HTTP request #{task.id} failed with #{error.error_type} error (#{error.class_name}): #{error.message}, " \
           "enqueued #{task.error_worker}"
         )
       rescue => e
         # Log error but don't crash the processor
-        @config.effective_logger&.error(
+        @config.logger&.error(
           "Async HTTP failed to enqueue error worker for request #{task.id}: #{e.class} - #{e.message}"
         )
       end

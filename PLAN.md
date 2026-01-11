@@ -228,25 +228,24 @@ A module providing monotonic time utilities for accurate duration tracking:
 Global configuration with sensible defaults:
 
 ```ruby
-Configuration = Data.define(
-  :max_connections,
-  :idle_connection_timeout,
-  :default_request_timeout,
-  :shutdown_timeout,
-  :logger,
-  :enable_http2,
-  :dns_cache_ttl
-) do
-  def initialize(
-    max_connections: 256,
-    idle_connection_timeout: 60,
-    default_request_timeout: 30,
-    shutdown_timeout: 25,
-    logger: nil,
-    enable_http2: true,
-    dns_cache_ttl: 300
-  )
-    super
+# Plain Ruby object with attr_accessor attributes:
+class Configuration
+  attr_accessor :max_connections
+  attr_accessor :idle_connection_timeout
+  attr_accessor :default_request_timeout
+  attr_accessor :shutdown_timeout
+  attr_accessor :logger
+  attr_accessor :http2_enabled
+  attr_accessor :dns_cache_ttl
+
+  def initialize
+    @max_connections = 256
+    @idle_connection_timeout = 60
+    @default_request_timeout = 30
+    @shutdown_timeout = 25
+    @logger = nil
+    @http2_enabled = true
+    @dns_cache_ttl = 300
   end
 
   def validate!
@@ -427,6 +426,7 @@ With HTTP/2:    1000 concurrent requests to same host = ~10-50 connections
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = 64
   config.idle_connection_timeout = 60
+  config.http2_enabled = true
 end
 # Requires: ulimit -n 1024 (default)
 # Memory: ~100MB overhead
@@ -437,6 +437,7 @@ end
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = 256
   config.idle_connection_timeout = 120
+  config.http2_enabled = true
 end
 # Requires: ulimit -n 4096
 # Memory: ~300MB overhead
@@ -447,6 +448,7 @@ end
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = 1024
   config.idle_connection_timeout = 300
+  config.http2_enabled = true
 end
 # Requires: ulimit -n 16384
 # Memory: ~2.5GB overhead
@@ -457,6 +459,7 @@ end
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = 4096
   config.idle_connection_timeout = 300
+  config.http2_enabled = true
 end
 # Requires: ulimit -n 65536, kernel tuning
 # Memory: ~12GB overhead
@@ -689,15 +692,16 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ### Phase 3: Configuration
 
 ```
-[x] 3.1 Implement Configuration using Data.define:
-        - Define with all attributes:
+[x] 3.1 Implement Configuration as plain Ruby object:
+        - Define class with attr_accessor for all attributes:
           - max_connections (default: 256)
           - idle_connection_timeout (default: 60)
           - default_request_timeout (default: 30)
           - shutdown_timeout (default: 25)
           - logger (default: nil, will use Sidekiq.logger)
-          - enable_http2 (default: true)
+          - http2_enabled (default: true)
           - dns_cache_ttl (default: 300)
+        - Set defaults in #initialize
         - Implement #validate! that raises ArgumentError for:
           - Non-positive numeric values
         - Implement #to_h for inspection
@@ -706,10 +710,9 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - NOTE: backpressure_strategy removed - capacity checking happens at enqueue time
 
 [x] 3.2 Add configuration DSL to main module:
-        - Sidekiq::AsyncHttp.configure { |config| ... } - yields Config::Builder
-        - Implement Config::Builder class that collects settings and builds
-          immutable Configuration
-        - Sidekiq::AsyncHttp.configuration - returns current frozen config
+        - Sidekiq::AsyncHttp.configure { |config| ... } - yields Configuration instance
+        - Configuration is mutable and can be modified directly
+        - Sidekiq::AsyncHttp.configuration - returns current configuration
         - Sidekiq::AsyncHttp.reset_configuration! - resets to defaults (for testing)
         - Write specs for DSL usage and reset behavior
 ```
@@ -934,7 +937,7 @@ which reuses underlying connections automatically.
           - NotRunningError when processor not started
           - Request ID returned
 
-[ ] 7.3 Update Client convenience methods (already implemented):
+[X] 7.3 Update Client convenience methods (already implemented):
         - async_get(uri, **options) → async_request(:get, uri, **options)
         - async_post(uri, **options) → async_request(:post, uri, **options)
         - async_put(uri, **options) → async_request(:put, uri, **options)
@@ -942,7 +945,7 @@ which reuses underlying connections automatically.
         - async_delete(uri, **options) → async_request(:delete, uri, **options)
         - Verify specs exist and pass
 
-[ ] 7.4 Add Sidekiq::AsyncHttp module accessor methods:
+[X] 7.4 Add Sidekiq::AsyncHttp module accessor methods:
         - .metrics → returns processor.metrics
         - .processor → returns @processor (internal)
         - .running? → processor&.running? || false

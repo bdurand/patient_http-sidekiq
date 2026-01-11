@@ -67,8 +67,14 @@ RSpec.configure do |config|
   end
 
   config.after do
-    if defined?(Sidekiq::AsyncHttp) && Sidekiq::AsyncHttp.running?
-      Sidekiq::AsyncHttp.processor.shutdown
+    Sidekiq::AsyncHttp.processor.shutdown if Sidekiq::AsyncHttp.running?
+  end
+
+  config.around do |example|
+    start_time = Time.now
+    example.run
+    if Time.now - start_time > 1
+      puts "WARNING: Example #{example.full_description} took more than 1 second to run."
     end
   end
 end

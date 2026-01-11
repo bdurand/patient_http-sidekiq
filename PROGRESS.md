@@ -468,7 +468,7 @@ Enhanced the Processor class with a complete async reactor loop for consuming an
    - Clean shutdown without orphaned requests
 
 6. **Logging Integration:**
-   - Uses `@config.effective_logger` throughout
+   - Uses `@config.logger` throughout
    - Log levels:
      - `info`: Start/stop messages
      - `debug`: Backpressure detection, stop signal
@@ -497,7 +497,7 @@ Enhanced the Processor class with a complete async reactor loop for consuming an
 9. **Integration Points:**
    - **Metrics**: Reads `in_flight_count` for capacity decisions
    - **ConnectionPool**: Calls `check_capacity!` for backpressure
-   - **Configuration**: Uses `max_connections`, `effective_logger`
+   - **Configuration**: Uses `max_connections`, `logger`
    - **Process Request**: Placeholder method ready for step 6.3
 
 **Flow Diagram:**
@@ -608,7 +608,7 @@ Created `Sidekiq::AsyncHttp::Processor` class with state management and threadin
    - Logs reactor loop errors
 
 6. **Error Handling:**
-   - Reactor thread catches all errors and logs via `config.effective_logger`
+   - Reactor thread catches all errors and logs via `config.logger`
    - Ensures state transitions to `:stopped` in ensure block
    - Per-request errors logged without crashing reactor
    - Graceful degradation on errors

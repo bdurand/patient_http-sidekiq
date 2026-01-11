@@ -27,25 +27,24 @@ module Sidekiq::AsyncHttp
   autoload :Response, "sidekiq/async_http/response"
 
   @processor = nil
-  @metrics = nil
   @configuration = nil
 
   class << self
-    attr_writer :configuration, :processor, :metrics
+    attr_writer :configuration, :processor
 
     # Configure the gem with a block
-    # @yield [Builder] the configuration builder
+    # @yield [Configuration] the configuration object
     # @return [Configuration]
     def configure
-      builder = Builder.new
-      yield(builder) if block_given?
-      @configuration = builder.build
+      configuration = Configuration.new
+      yield(configuration) if block_given?
+      @configuration = configuration
     end
 
     # Ensure configuration is initialized
     # @return [Configuration]
     def configuration
-      @configuration ||= Configuration.new.validate!
+      @configuration ||= Configuration.new
     end
 
     # Reset configuration to defaults (useful for testing)
@@ -61,16 +60,17 @@ module Sidekiq::AsyncHttp
       !!@processor&.running?
     end
 
-    # Ensure processor is initialized
-    # @return [Processor]
+    # Returns the processor instance (internal accessor)
+    # @return [Processor, nil]
+    # @api private
     def processor
-      @processor ||= Processor.new(configuration)
+      @processor
     end
 
-    # Ensure metrics is initialized
-    # @return [Metrics]
+    # Returns the metrics from the processor
+    # @return [Metrics, nil]
     def metrics
-      @metrics ||= Metrics.new
+      processor&.metrics
     end
 
     # Main public API: enqueue an async HTTP request
@@ -139,22 +139,22 @@ module Sidekiq::AsyncHttp
     # Start the processor
     # @return [void]
     def start!
-      processor.start
+      @processor ||= Processor.new(configuration)
+      @processor.start
     end
 
     # Stop the processor
     # @return [void]
     def shutdown
-      processor&.shutdown
+      @processor&.stop
     end
 
     # Reset all state (useful for testing)
     # @return [void]
     # @api private
     def reset!
-      @processor&.shutdown
+      @processor&.stop
       @processor = nil
-      @metrics = nil
       @configuration = nil
     end
   end
