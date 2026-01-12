@@ -15,11 +15,12 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
 
   describe ".from_exception" do
     let(:request_id) { "req_123" }
+    let(:url) { "https://example.com" }
 
     context "with Async::TimeoutError" do
       it "classifies as :timeout" do
         exception = Async::TimeoutError.new("Request timeout")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Async::TimeoutError")
         expect(error.message).to eq("Request timeout")
@@ -32,7 +33,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     context "with OpenSSL::SSL::SSLError" do
       it "classifies as :ssl" do
         exception = OpenSSL::SSL::SSLError.new("SSL error")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("OpenSSL::SSL::SSLError")
         expect(error.message).to eq("SSL error")
@@ -44,7 +45,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     context "with connection errors" do
       it "classifies Errno::ECONNREFUSED as :connection" do
         exception = Errno::ECONNREFUSED.new("Connection refused")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Errno::ECONNREFUSED")
         expect(error.message).to eq("Connection refused - Connection refused")
@@ -54,7 +55,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
 
       it "classifies Errno::ECONNRESET as :connection" do
         exception = Errno::ECONNRESET.new("Connection reset")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Errno::ECONNRESET")
         expect(error.error_type).to eq(:connection)
@@ -62,7 +63,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
 
       it "classifies Errno::EHOSTUNREACH as :connection" do
         exception = Errno::EHOSTUNREACH.new("Host unreachable")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Errno::EHOSTUNREACH")
         expect(error.error_type).to eq(:connection)
@@ -75,7 +76,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
         exception = StandardError.new("Protocol error")
         allow(exception.class).to receive(:name).and_return("Async::HTTP::Protocol::Error")
 
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Async::HTTP::Protocol::Error")
         expect(error.message).to eq("Protocol error")
@@ -87,7 +88,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     context "with ResponseTooLargeError" do
       it "classifies as :response_too_large" do
         exception = Sidekiq::AsyncHttp::ResponseTooLargeError.new("Response too large")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("Sidekiq::AsyncHttp::ResponseTooLargeError")
         expect(error.message).to eq("Response too large")
@@ -99,7 +100,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     context "with unknown exception" do
       it "classifies as :unknown" do
         exception = StandardError.new("Unknown error")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.class_name).to eq("StandardError")
         expect(error.message).to eq("Unknown error")
@@ -112,7 +113,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
       it "captures the backtrace" do
         exception = StandardError.new("Error with backtrace")
         exception.set_backtrace(["line 1", "line 2", "line 3"])
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.backtrace).to eq(["line 1", "line 2", "line 3"])
       end
@@ -121,7 +122,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     context "without backtrace" do
       it "uses empty array" do
         exception = StandardError.new("Error without backtrace")
-        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0)
+        error = described_class.from_exception(exception, request_id: request_id, duration: 1.0, url: url, method: :get)
 
         expect(error.backtrace).to eq([])
       end
@@ -136,7 +137,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
         backtrace: ["line 1", "line 2"],
         request_id: "req_123",
         error_type: :timeout,
-        duration: 2.5
+        duration: 2.5,
+        url: "https://example.com",
+        method: :get
       )
     end
 
@@ -149,7 +152,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
         "backtrace" => ["line 1", "line 2"],
         "request_id" => "req_123",
         "error_type" => "timeout",
-        "duration" => 2.5
+        "duration" => 2.5,
+        "url" => "https://example.com",
+        "method" => "get"
       })
     end
 
@@ -166,7 +171,10 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
         "message" => "Test error",
         "backtrace" => ["line 1", "line 2"],
         "request_id" => "req_123",
-        "error_type" => "timeout"
+        "error_type" => "timeout",
+        "duration" => 2.5,
+        "url" => "https://example.com",
+        "method" => "get"
       }
     end
 
@@ -178,6 +186,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
       expect(error.backtrace).to eq(["line 1", "line 2"])
       expect(error.request_id).to eq("req_123")
       expect(error.error_type).to eq(:timeout)
+      expect(error.duration).to eq(2.5)
+      expect(error.url).to eq("https://example.com")
+      expect(error.method).to eq(:get)
     end
 
     it "converts error_type string to symbol" do
@@ -194,7 +205,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
         backtrace: ["foo.rb:10", "bar.rb:20"],
         request_id: "req_456",
         error_type: :ssl,
-        duration: 1.0
+        duration: 1.0,
+        url: "https://example.com",
+        method: :get
       )
     end
 
@@ -207,6 +220,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
       expect(restored_error.backtrace).to eq(original_error.backtrace)
       expect(restored_error.request_id).to eq(original_error.request_id)
       expect(restored_error.error_type).to eq(original_error.error_type)
+      expect(restored_error.duration).to eq(original_error.duration)
+      expect(restored_error.url).to eq(original_error.url)
+      expect(restored_error.method).to eq(original_error.method)
     end
   end
 
@@ -219,7 +235,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
           backtrace: [],
           request_id: "req_123",
           error_type: :unknown,
-          duration: 1.0
+          duration: 1.0,
+          url: "https://example.com",
+          method: :get
         )
 
         expect(error.error_class).to eq(StandardError)
@@ -232,7 +250,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
           backtrace: [],
           request_id: "req_123",
           error_type: :ssl,
-          duration: 1.0
+          duration: 1.0,
+          url: "https://example.com",
+          method: :get
         )
 
         expect(error.error_class).to eq(OpenSSL::SSL::SSLError)

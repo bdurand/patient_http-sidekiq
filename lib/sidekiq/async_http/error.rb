@@ -2,20 +2,25 @@
 
 module Sidekiq
   module AsyncHttp
-    # Immutable error object representing an exception from an HTTP request
+    # Error object representing an exception from an HTTP request. Note that this
+    # is not for HTTP error responses (4xx/5xx), but for actual exceptions raised
+    # during the request (timeouts, connection errors, SSL errors, etc).
     class Error
       # Valid error types
       ERROR_TYPES = %i[timeout connection ssl protocol response_too_large unknown].freeze
 
-      attr_reader :class_name, :message, :backtrace, :request_id, :error_type, :duration
+      attr_reader :class_name, :message, :backtrace, :error_type, :duration, :request_id, :url, :method
 
-      def initialize(class_name:, message:, backtrace:, request_id:, error_type:, duration:)
+      def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, method:)
         @class_name = class_name
         @message = message
         @backtrace = backtrace
-        @request_id = request_id
         @error_type = error_type
         @duration = duration
+        @request_id = request_id
+        @url = url
+        @method = method&.to_sym
+        freeze
       end
 
       # Create an Error from an exception using pattern matching
@@ -23,7 +28,7 @@ module Sidekiq
       # @param exception [Exception] the exception to convert
       # @param request_id [String] the request ID
       # @return [Error] the error object
-      def self.from_exception(exception, request_id:, duration:)
+      def self.from_exception(exception, duration:, request_id:, url:, method:)
         error_type = case exception
         in Async::TimeoutError
           :timeout
@@ -48,7 +53,9 @@ module Sidekiq
           backtrace: exception.backtrace || [],
           request_id: request_id,
           error_type: error_type,
-          duration: duration
+          duration: duration,
+          url: url,
+          method: method
         )
       end
 
@@ -61,7 +68,9 @@ module Sidekiq
           "backtrace" => backtrace,
           "request_id" => request_id,
           "error_type" => error_type.to_s,
-          "duration" => duration
+          "duration" => duration,
+          "url" => url,
+          "method" => method.to_s
         }
       end
 
@@ -75,7 +84,9 @@ module Sidekiq
           backtrace: hash["backtrace"],
           request_id: hash["request_id"],
           error_type: hash["error_type"]&.to_sym,
-          duration: hash["duration"]
+          duration: hash["duration"],
+          url: hash["url"],
+          method: hash["method"]
         )
       end
 

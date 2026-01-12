@@ -268,7 +268,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       task.completed!
 
       exception = StandardError.new("Something went wrong")
-      error = Sidekiq::AsyncHttp::Error.from_exception(exception, request_id: task.id, duration: task.duration)
+      error = Sidekiq::AsyncHttp::Error.from_exception(exception, request_id: task.id, duration: task.duration, url: request.url, method: request.method)
 
       task.error!(exception)
       expect(task.error).to eq(exception)
