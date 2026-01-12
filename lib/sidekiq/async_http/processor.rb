@@ -15,14 +15,15 @@ module Sidekiq
 
       attr_reader :config, :metrics
 
+      # Callback to invoke after each request. Only available in testing mode.
+      # @api private
+      attr_accessor :testing_callback
+
       # Initialize the processor.
       #
       # @param config [Configuration] the configuration object
-      # @param callback [Proc, nil] optional callback to invoke after each request.
-      #   The callback will be called with the RequestTask as argument. This is intended
-      #   for testing purposes.
       # @return [void]
-      def initialize(config = nil, callback: nil)
+      def initialize(config = nil)
         @config = config || Sidekiq::AsyncHttp.configuration
         @metrics = Metrics.new
         @queue = Thread::Queue.new
@@ -33,7 +34,7 @@ module Sidekiq
         @in_flight_requests = Concurrent::Hash.new
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
-        @callback = callback
+        @testing_callback = nil
       end
 
       # Start the processor
@@ -355,20 +356,19 @@ module Sidekiq
           task.completed!
           response = build_response(task, response_data)
           handle_success(task, response)
-
-          @callback&.call(task)
         rescue => e
           task.completed!
           error_type = classify_error(e)
           @metrics.record_error(error_type)
           handle_error(task, e)
-          @callback&.call(task)
         ensure
           # Remove from in-flight tracking
           @tasks_lock.synchronize do
             @in_flight_requests.delete(task.id)
           end
           @metrics.record_request_complete(task.duration)
+
+          @testing_callback&.call(task) if AsyncHttp.testing?
         end
       end
 

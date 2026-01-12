@@ -449,7 +449,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "consumes requests from the queue" do
       requests_processed = []
-      processor = described_class.new(config, callback: ->(task) { requests_processed << task })
+      processor = described_class.new(config)
+      processor.testing_callback = ->(task) { requests_processed << task }
       processor.start
 
       request1 = create_request_task
@@ -465,7 +466,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "spawns new fibers for each request" do
       fiber_count = Concurrent::AtomicFixnum.new(0)
-      processor = described_class.new(config, callback: ->(task) { fiber_count.increment })
+      processor = described_class.new(config)
+      processor.testing_callback = ->(task) { fiber_count.increment }
       processor.start
 
       # Enqueue multiple requests
