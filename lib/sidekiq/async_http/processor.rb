@@ -24,7 +24,7 @@ module Sidekiq
       # @return [void]
       def initialize(config = nil, callback: nil)
         @config = config || Sidekiq::AsyncHttp.configuration
-        @metrics = Metrics.new(@config)
+        @metrics = Metrics.new
         @queue = Thread::Queue.new
         @state = Concurrent::AtomicReference.new(:stopped)
         @reactor_thread = nil
@@ -223,13 +223,23 @@ module Sidekiq
 
           @config.logger&.info("[Sidekiq::AsyncHttp] Processor started")
 
+          last_inflight_update = monotonic_time - 5
           # Main loop: monitor shutdown/drain and process requests
           loop do
             break if stopping? || stopped?
 
+            # Update inflight stats every 5 seconds
+            if monotonic_time - last_inflight_update >= 5
+              Stats.instance.update_inflight(in_flight_count, @config.max_connections)
+              last_inflight_update = monotonic_time
+            end
+
             # Pop request task from queue with timeout to periodically check shutdown
             request_task = dequeue_request(timeout: 0.1)
-            next unless request_task
+            unless request_task
+              sleep(0.01)
+              next
+            end
 
             # Track as pending immediately to avoid race condition with stop()
             @tasks_lock.synchronize do

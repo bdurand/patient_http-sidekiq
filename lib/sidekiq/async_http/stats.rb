@@ -7,22 +7,16 @@ require "singleton"
 module Sidekiq
   module AsyncHttp
     # Stores processor statistics in Redis with automatic expiration.
-    #
-    # Tracks three types of stats:
-    # 1. Hourly stats (30 days): requests, duration, errors, refused
-    # 2. Running totals (30 days): requests, duration, errors, refused
-    # 3. Per-process inflight counts (300 seconds): current inflight by host
     class Stats
       include Singleton
 
       # Redis key prefixes
-      HOURLY_PREFIX = "sidekiq:async_http:hourly"
       TOTALS_KEY = "sidekiq:async_http:totals"
       INFLIGHT_PREFIX = "sidekiq:async_http:inflight"
       MAX_CONNECTIONS_PREFIX = "sidekiq:async_http:max_connections"
+      PROCESS_SET_KEY = "sidekiq:async_http:processes"
 
       # TTLs
-      HOURLY_TTL = 30 * 24 * 60 * 60 # 30 days in seconds
       TOTALS_TTL = 30 * 24 * 60 * 60 # 30 days in seconds
       INFLIGHT_TTL = 300 # 5 minutes in seconds
 
@@ -36,16 +30,8 @@ module Sidekiq
       # @param duration [Float] request duration in seconds
       # @return [void]
       def record_request(duration)
-        hour_key = current_hour_key
-
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            # Increment hourly counters
-            transaction.hincrby(hour_key, "requests", 1)
-            transaction.hincrbyfloat(hour_key, "duration", duration.to_f)
-            transaction.expire(hour_key, HOURLY_TTL)
-
-            # Increment total counters
             transaction.hincrby(TOTALS_KEY, "requests", 1)
             transaction.hincrbyfloat(TOTALS_KEY, "duration", duration.to_f)
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
@@ -56,16 +42,9 @@ module Sidekiq
       # Record a request error
       #
       # @return [void]
-      def record_error
-        hour_key = current_hour_key
-
+      def record_error(error_type)
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            # Increment hourly error counter
-            transaction.hincrby(hour_key, "errors", 1)
-            transaction.expire(hour_key, HOURLY_TTL)
-
-            # Increment total error counter
             transaction.hincrby(TOTALS_KEY, "errors", 1)
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
@@ -76,15 +55,8 @@ module Sidekiq
       #
       # @return [void]
       def record_refused
-        hour_key = current_hour_key
-
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            # Increment hourly refused counter
-            transaction.hincrby(hour_key, "refused", 1)
-            transaction.expire(hour_key, HOURLY_TTL)
-
-            # Increment total refused counter
             transaction.hincrby(TOTALS_KEY, "refused", 1)
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
@@ -99,32 +71,15 @@ module Sidekiq
       def update_inflight(count, max_connections)
         inflight_key = "#{INFLIGHT_PREFIX}:#{@hostname}:#{@pid}"
         max_connections_key = "#{MAX_CONNECTIONS_PREFIX}:#{@hostname}:#{@pid}"
+        process_id = "#{@hostname}:#{@pid}"
 
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
             transaction.set(inflight_key, count, ex: INFLIGHT_TTL)
             transaction.set(max_connections_key, max_connections, ex: INFLIGHT_TTL)
+            transaction.sadd(PROCESS_SET_KEY, process_id)
           end
         end
-      end
-
-      # Get hourly stats for a specific hour
-      #
-      # @param time [Time] the time to get stats for (defaults to current hour)
-      # @return [Hash] hash with requests, duration, errors, refused
-      def get_hourly_stats(time = Time.now)
-        hour_key = hour_key_for_time(time)
-
-        stats = Sidekiq.redis do |redis|
-          redis.hgetall(hour_key)
-        end
-
-        {
-          "requests" => (stats["requests"] || 0).to_i,
-          "duration" => (stats["duration"] || 0).to_f,
-          "errors" => (stats["errors"] || 0).to_i,
-          "refused" => (stats["refused"] || 0).to_i
-        }
       end
 
       # Get running totals
@@ -135,7 +90,7 @@ module Sidekiq
           stats = redis.hgetall(TOTALS_KEY)
           {
             "requests" => (stats["requests"] || 0).to_i,
-            "duration" => (stats["duration"] || 0).to_f,
+            "duration" => (stats["duration"] || 0).to_f.round(6),
             "errors" => (stats["errors"] || 0).to_i,
             "refused" => (stats["refused"] || 0).to_i
           }
@@ -147,14 +102,25 @@ module Sidekiq
       # @return [Hash] hash of "hostname:pid" => count
       def get_all_inflight
         Sidekiq.redis do |redis|
-          keys = redis.keys("#{INFLIGHT_PREFIX}:*")
+          process_ids = redis.smembers(PROCESS_SET_KEY)
           result = {}
-          keys.each do |key|
-            # Extract hostname:pid from key
-            identifier = key.sub("#{INFLIGHT_PREFIX}:", "")
-            count = redis.get(key).to_i
-            result[identifier] = count
+          stale_process_ids = []
+
+          process_ids.each do |process_id|
+            inflight_key = "#{INFLIGHT_PREFIX}:#{process_id}"
+            count = redis.get(inflight_key)
+
+            if count.nil?
+              # Mark for removal if the key doesn't exist
+              stale_process_ids << process_id
+            else
+              result[process_id] = count.to_i
+            end
           end
+
+          # Remove stale process IDs from the set
+          redis.srem(PROCESS_SET_KEY, stale_process_ids) unless stale_process_ids.empty?
+
           result
         end
       end
@@ -164,11 +130,25 @@ module Sidekiq
       # @return [Integer] sum of max connections from all active processes
       def get_total_max_connections
         Sidekiq.redis do |redis|
-          keys = redis.keys("#{MAX_CONNECTIONS_PREFIX}:*")
+          process_ids = redis.smembers(PROCESS_SET_KEY)
           total = 0
-          keys.each do |key|
-            total += redis.get(key).to_i
+          stale_process_ids = []
+
+          process_ids.each do |process_id|
+            max_connections_key = "#{MAX_CONNECTIONS_PREFIX}:#{process_id}"
+            max_connections = redis.get(max_connections_key)
+
+            if max_connections.nil?
+              # Mark for removal if the key doesn't exist
+              stale_process_ids << process_id
+            else
+              total += max_connections.to_i
+            end
           end
+
+          # Remove stale process IDs from the set
+          redis.srem(PROCESS_SET_KEY, stale_process_ids) unless stale_process_ids.empty?
+
           total
         end
       end
@@ -179,11 +159,13 @@ module Sidekiq
       def cleanup_process_keys
         inflight_key = "#{INFLIGHT_PREFIX}:#{@hostname}:#{@pid}"
         max_connections_key = "#{MAX_CONNECTIONS_PREFIX}:#{@hostname}:#{@pid}"
+        process_id = "#{@hostname}:#{@pid}"
 
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
             transaction.del(inflight_key)
             transaction.del(max_connections_key)
+            transaction.srem(PROCESS_SET_KEY, process_id)
           end
         end
       end
@@ -200,10 +182,6 @@ module Sidekiq
       # @return [void]
       def reset!
         Sidekiq.redis do |redis|
-          # Delete all hourly keys
-          hourly_keys = redis.keys("#{HOURLY_PREFIX}:*")
-          redis.del(*hourly_keys) unless hourly_keys.empty?
-
           # Delete totals
           redis.del(TOTALS_KEY)
 
@@ -214,25 +192,10 @@ module Sidekiq
           # Delete all max_connections keys
           max_connections_keys = redis.keys("#{MAX_CONNECTIONS_PREFIX}:*")
           redis.del(*max_connections_keys) unless max_connections_keys.empty?
+
+          # Clear the process set
+          redis.del(PROCESS_SET_KEY)
         end
-      end
-
-      private
-
-      # Get the Redis key for the current hour
-      #
-      # @return [String]
-      def current_hour_key
-        hour_key_for_time(Time.now)
-      end
-
-      # Get the Redis key for a specific hour
-      #
-      # @param time [Time]
-      # @return [String]
-      def hour_key_for_time(time)
-        timestamp = time.utc.strftime("%Y%m%d%H")
-        "#{HOURLY_PREFIX}:#{timestamp}"
       end
     end
   end

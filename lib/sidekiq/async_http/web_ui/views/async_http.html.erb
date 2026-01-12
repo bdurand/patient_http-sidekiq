@@ -1,0 +1,78 @@
+<div class="async-http-dashboard">
+  <div class="section">
+    <h2><%= t('async_http.title') %></h2>
+
+    <div class="async-http-stats">
+      <!-- Summary Cards -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label"><%= t('async_http.total_requests') %></div>
+          <div class="stat-value" id="total-requests">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('async_http.average_duration') %></div>
+          <div class="stat-value" id="avg-duration">0ms</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('async_http.total_errors') %></div>
+          <div class="stat-value error" id="total-errors">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('async_http.requests_refused') %></div>
+          <div class="stat-value" id="total-refused">0</div>
+        </div>
+      </div>
+
+      <!-- Capacity Information -->
+      <div class="capacity-section">
+        <h3><%= t('async_http.connection_capacity') %></h3>
+        <div class="capacity-cards">
+          <div class="capacity-card">
+            <div class="capacity-label"><%= t('async_http.max_capacity') %></div>
+            <div class="capacity-value" id="max-capacity">0</div>
+            <div class="capacity-unit"><%= t('async_http.connections') %></div>
+          </div>
+          <div class="capacity-card">
+            <div class="capacity-label"><%= t('async_http.currently_inflight') %></div>
+            <div class="capacity-value" id="current-inflight">0</div>
+            <div class="capacity-unit"><%= t('async_http.requests') %></div>
+          </div>
+          <div class="capacity-card">
+            <div class="capacity-label"><%= t('async_http.capacity_utilization') %></div>
+            <div class="capacity-value" id="utilization-percent">0%</div>
+            <div class="capacity-unit"><%= t('async_http.used') %></div>
+          </div>
+        </div>
+
+        <div class="capacity-bar-container">
+          <div class="capacity-bar">
+            <div class="capacity-bar-used" id="capacity-bar-fill" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Process Breakdown -->
+        <div class="process-breakdown">
+          <h4><%= t('async_http.per_process_details') %></h4>
+          <table class="table">
+            <thead>
+              <tr>
+                <th><%= t('async_http.process') %></th>
+                <th><%= t('async_http.inflight') %></th>
+                <th><%= t('async_http.max_capacity') %></th>
+                <th><%= t('async_http.utilization') %></th>
+              </tr>
+            </thead>
+            <tbody id="process-list">
+              <tr class="empty-state">
+                <td colspan="4"><%= t('async_http.no_active_processes') %></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<% style_tag("async-http/css/async_http.css") %>
+<%= script_tag("async-http/js/async_http.js") %>

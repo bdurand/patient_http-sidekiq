@@ -4,6 +4,8 @@ require "sidekiq"
 require "async"
 require "async/http"
 require "concurrent-ruby"
+require "json"
+require "uri"
 
 # Main module for the Sidekiq Async HTTP gem
 module Sidekiq::AsyncHttp
@@ -31,6 +33,12 @@ module Sidekiq::AsyncHttp
   autoload :RequestTask, File.join(__dir__, "async_http/request_task")
   autoload :Response, File.join(__dir__, "async_http/response")
   autoload :Stats, File.join(__dir__, "async_http/stats")
+
+  # Load Web UI extension if Sidekiq::Web is available
+  # This is done after all other requires to ensure dependencies are loaded
+  def self.load_web_ui
+    require_relative "async_http/web_ui" if defined?(Sidekiq::Web)
+  end
 
   @processor = nil
   @configuration = nil

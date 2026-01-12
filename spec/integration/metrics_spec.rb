@@ -12,7 +12,7 @@ RSpec.describe "Metrics Integration", :integration do
     end
   end
 
-  let!(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+  let!(:processor) { Sidekiq::AsyncHttp::Processor.new }
 
   before do
     # Clear any pending Sidekiq jobs first

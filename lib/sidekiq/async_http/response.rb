@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-
 module Sidekiq
   module AsyncHttp
     # Immutable response object representing an HTTP response

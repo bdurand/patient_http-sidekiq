@@ -342,8 +342,14 @@
             const delay = formData.get('delay');
             const timeout = formData.get('timeout');
             showToast(`Successfully enqueued ${count} jobs (${delay}s delay, ${timeout}s timeout)!`);
-            // Reset last update time to keep polling active
+            // Reset last update time and restart polling if stopped
             lastUpdateTime = Date.now();
+            if (!isPolling) {
+              startPolling();
+              const statusEl = document.getElementById('polling-status');
+              statusEl.textContent = 'Polling active';
+              statusEl.className = 'polling-indicator active';
+            }
           } else {
             showToast('Failed to enqueue jobs');
           }

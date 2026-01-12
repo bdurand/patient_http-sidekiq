@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::Metrics do
-  let(:metrics) { described_class.new(config) }
+  let(:metrics) { described_class.new }
   let(:stats) { Sidekiq::AsyncHttp::Stats.instance }
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
 

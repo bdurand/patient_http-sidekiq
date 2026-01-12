@@ -26,6 +26,25 @@ task :test_app do
   exec "ruby test_app/run.rb"
 end
 
+namespace :test_app do
+  desc "Stop the running test application"
+  task :stop do
+    # Find processes using port 9292 (the test app's web server)
+    pids = `lsof -ti :9292`.split("\n").map(&:strip).reject(&:empty?)
+
+    if pids.empty?
+      puts "No running test application found (port 9292 is not in use)"
+    else
+      pids.each do |pid|
+        puts "Killing process #{pid}..."
+        system("kill #{pid}")
+      end
+      sleep 1
+      puts "Test application stopped"
+    end
+  end
+end
+
 desc "Open an interactive console with test workers loaded"
 task :console do
   exec "ruby test_app/console.rb"

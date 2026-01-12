@@ -8,15 +8,13 @@ module Sidekiq
     #
     # @api private
     class Metrics
-      def initialize(config)
-        @config = config
+      def initialize
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @in_flight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
-        @last_inflight_update = Concurrent::AtomicReference.new(Time.now.to_f)
       end
 
       # Record the start of a request
@@ -25,7 +23,6 @@ module Sidekiq
       # @return [void]
       def record_request_start
         @in_flight_requests.increment
-        update_inflight_stats
       end
 
       # Record the completion of a request
@@ -46,8 +43,6 @@ module Sidekiq
           # Record in stats if available
           Stats.instance.record_request(duration)
         end
-
-        update_inflight_stats
       end
 
       # Record an error
@@ -64,7 +59,7 @@ module Sidekiq
         counter.increment
 
         # Record in stats if available
-        Stats.instance.record_error
+        Stats.instance.record_error(error_type)
       end
 
       # Record a refused request (max capacity reached)
@@ -137,25 +132,6 @@ module Sidekiq
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @last_inflight_update = Concurrent::AtomicReference.new(Time.now.to_f)
         Stats.instance.reset!
-      end
-
-      private
-
-      # Update inflight stats (throttled to avoid excessive Redis calls)
-      # Updates every 10 seconds
-      #
-      # @return [void]
-      def update_inflight_stats
-        now = Time.now.to_f
-        last_update = @last_inflight_update.get
-
-        # Only update every 10 seconds
-        if now - last_update >= 10
-          if @last_inflight_update.compare_and_set(last_update, now)
-            count = in_flight_count
-            Stats.instance.update_inflight(count, @config.max_connections)
-          end
-        end
       end
     end
   end

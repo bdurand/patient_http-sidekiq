@@ -7,6 +7,9 @@ require "securerandom"
 require "rack/session"
 require_relative "../lib/sidekiq-async_http"
 
+# Load the Web UI extension after Sidekiq::Web is available
+Sidekiq::AsyncHttp.load_web_ui
+
 require_relative "../lib/sidekiq/async_http/sidekiq"
 
 # Redis URL from environment or default to localhost
