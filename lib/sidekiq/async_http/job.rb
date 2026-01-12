@@ -80,7 +80,7 @@ module Sidekiq::AsyncHttp
       error_worker ||= self.class.error_callback_worker
 
       request_task = client.async_request(method, url, **options)
-      request_task.perform(completion_worker: completion_worker, error_worker: error_worker)
+      request_task.execute(completion_worker: completion_worker, error_worker: error_worker)
     end
 
     def async_get(url, **options)

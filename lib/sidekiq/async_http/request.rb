@@ -70,7 +70,7 @@ module Sidekiq::AsyncHttp
     # @param error_worker [Class, nil] Worker class (must include Sidekiq::Job) to call on error.
     #   If nil, errors will be logged and the original job will be retried.
     # @return [String] the request ID
-    def perform(completion_worker:, sidekiq_job: nil, error_worker: nil)
+    def execute(completion_worker:, sidekiq_job: nil, error_worker: nil)
       # Get current job if not provided
       @job = sidekiq_job || (defined?(Sidekiq::AsyncHttp::Context) ? Sidekiq::AsyncHttp::Context.current_job : nil)
 

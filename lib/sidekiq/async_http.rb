@@ -119,7 +119,7 @@ module Sidekiq::AsyncHttp
       sidekiq_job: nil, error_worker: nil)
       client = Client.new(timeout: timeout, connect_timeout: connect_timeout, read_timeout: read_timeout, write_timeout: write_timeout)
       request = client.async_request(method, url, body: body, json: json, headers: headers)
-      request.perform(sidekiq_job: sidekiq_job, completion_worker_class: completion_worker, error_worker_class: error_worker)
+      request.execute(sidekiq_job: sidekiq_job, completion_worker_class: completion_worker, error_worker_class: error_worker)
       request.id
     end
 

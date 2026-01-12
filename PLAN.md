@@ -295,7 +295,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 ```
 1. Worker creates a Sidekiq::AsyncHttp::Request to set headers, base URL, etc.
 2. Worker calls async_request on the request to create an async request for a URL
-3. Worker calls perform on the async request specifying the success and error worker callback classes
+3. Worker calls execute on the async request specifying the success and error worker callback classes
 4. Request pushed to Thread::Queue
 5. Worker returns immediately (Sidekiq job completes)
 6. Processor's reactor loop picks up request
@@ -854,20 +854,11 @@ which reuses underlying connections automatically.
           - Clean shutdown (all requests complete)
           - Timeout shutdown (requests re-enqueued)
           - Multiple in-flight requests during shutdown
-[ ] 6.7 Implement Processor - callback hooks
-        - Define hooks for:
-          - on_request_start(request)
-          - on_request_complete(request, response)
-          - on_request_error(request, error)
-        - Allow users to set hooks via configuration
-        - Call hooks at appropriate points in request lifecycle
-        - Write specs verifying hooks are called
-```
 
 ### Phase 7: Client (Public API)
 
 [X] 7.1 Implement Request validation and Sidekiq job handling:
-        - Update Request#perform to validate parameters:
+        - Update Request#execute to validate parameters:
           - sidekiq_job: required hash with "class" and "args" keys minimum
           - If sidekiq_job not provided, use Sidekiq::Context.current
           - completion_worker: required class that includes Sidekiq::Job
@@ -888,7 +879,7 @@ which reuses underlying connections automatically.
           - Error worker optional (falls back to retry behavior)
 
 [X] 7.2 Implement Request processing integration:
-        - Update Request#perform to enqueue a RequestTask to processor:
+        - Update Request#execute to enqueue a RequestTask to processor:
           - Return the AsyncRequest id
         - Raise Sidekiq::AsyncHttp::NotRunningError if processor not running
         - Write specs for:

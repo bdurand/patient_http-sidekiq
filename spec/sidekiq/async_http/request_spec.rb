@@ -94,7 +94,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
     end
   end
 
-  describe "#perform" do
+  describe "#execute" do
     let(:request) { described_class.new(method: :get, url: "https://example.com") }
     let(:job_hash) { {"class" => "TestWorker", "args" => [1, 2, 3]} }
     let(:processor) { instance_double(Sidekiq::AsyncHttp::Processor) }
@@ -110,7 +110,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       end
 
       it "returns the request ID" do
-        result = request.perform(
+        result = request.execute(
           sidekiq_job: job_hash,
           completion_worker: TestWorkers::CompletionWorker,
           error_worker: TestWorkers::ErrorWorker
@@ -129,7 +129,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
           expect(task.error_worker).to eq(TestWorkers::ErrorWorker)
         end
 
-        request.perform(
+        request.execute(
           sidekiq_job: job_hash,
           completion_worker: TestWorkers::CompletionWorker,
           error_worker: TestWorkers::ErrorWorker
@@ -143,7 +143,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
           captured_task = task
         end
 
-        request.perform(
+        request.execute(
           sidekiq_job: job_hash,
           completion_worker: TestWorkers::CompletionWorker
         )
@@ -158,7 +158,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
           expect(task.error_worker).to be_nil
         end
 
-        request.perform(
+        request.execute(
           sidekiq_job: job_hash,
           completion_worker: TestWorkers::CompletionWorker,
           error_worker: nil
@@ -173,7 +173,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
 
       it "raises NotRunningError" do
         expect do
-          request.perform(
+          request.execute(
             sidekiq_job: job_hash,
             completion_worker: TestWorkers::CompletionWorker
           )
@@ -184,7 +184,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
         expect(processor).not_to receive(:enqueue)
 
         begin
-          request.perform(
+          request.execute(
             sidekiq_job: job_hash,
             completion_worker: TestWorkers::CompletionWorker
           )
@@ -201,31 +201,31 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
 
       it "validates completion_worker is required" do
         expect do
-          request.perform(sidekiq_job: job_hash, completion_worker: nil)
+          request.execute(sidekiq_job: job_hash, completion_worker: nil)
         end.to raise_error(ArgumentError, "completion_worker is required")
       end
 
       it "validates completion_worker is a class that includes Sidekiq::Job" do
         expect do
-          request.perform(sidekiq_job: job_hash, completion_worker: String)
+          request.execute(sidekiq_job: job_hash, completion_worker: String)
         end.to raise_error(ArgumentError, "completion_worker must be a class that includes Sidekiq::Job")
       end
 
       it "validates sidekiq_job is a Hash" do
         expect do
-          request.perform(sidekiq_job: "not a hash", completion_worker: TestWorkers::CompletionWorker)
+          request.execute(sidekiq_job: "not a hash", completion_worker: TestWorkers::CompletionWorker)
         end.to raise_error(ArgumentError, "sidekiq_job must be a Hash, got: String")
       end
 
       it "validates sidekiq_job has 'class' key" do
         expect do
-          request.perform(sidekiq_job: {"args" => []}, completion_worker: TestWorkers::CompletionWorker)
+          request.execute(sidekiq_job: {"args" => []}, completion_worker: TestWorkers::CompletionWorker)
         end.to raise_error(ArgumentError, "sidekiq_job must have 'class' key")
       end
 
       it "validates sidekiq_job has 'args' array" do
         expect do
-          request.perform(sidekiq_job: {"class" => "Worker"}, completion_worker: TestWorkers::CompletionWorker)
+          request.execute(sidekiq_job: {"class" => "Worker"}, completion_worker: TestWorkers::CompletionWorker)
         end.to raise_error(ArgumentError, "sidekiq_job must have 'args' array")
       end
     end
