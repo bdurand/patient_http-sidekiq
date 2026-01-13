@@ -13,6 +13,7 @@ PORT = ENV.fetch("PORT", "9292").to_i
 # Configure Sidekiq to use Valkey from docker-compose
 Sidekiq.configure_server do |config|
   config.redis = {url: REDIS_URL}
+  config.concurrency = 10
 end
 
 Sidekiq.configure_client do |config|
@@ -29,7 +30,7 @@ end
 
 # Start the Sidekiq::AsyncHttp processor
 Sidekiq::AsyncHttp.configure do |config|
-  config.max_connections = 10
+  config.max_connections = ENV.fetch("MAX_CONNECTIONS", "20").to_i
 end
 
 Sidekiq::AsyncHttp.start
@@ -47,7 +48,7 @@ puts ""
 sidekiq_thread = Thread.new do
   require "sidekiq/cli"
   cli = Sidekiq::CLI.instance
-  cli.parse(["-r", "./test_app/workers.rb", "-c", "5"])
+  cli.parse(["-r", "./test_app/workers.rb"])
   begin
     cli.run
   rescue Interrupt
@@ -60,7 +61,7 @@ require "rack"
 app = Rack::Builder.parse_file(File.expand_path("config.ru", __dir__))
 
 # Start Puma server
-server = Puma::Server.new(app, nil, {min_threads: 0, max_threads: 16, log_writer: Puma::LogWriter.stdio})
+server = Puma::Server.new(app, nil, {min_threads: 0, max_threads: 24, log_writer: Puma::LogWriter.stdio})
 server.add_tcp_listener("127.0.0.1", PORT)
 
 begin

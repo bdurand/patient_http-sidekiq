@@ -27,6 +27,10 @@ end
 # Load test workers
 require_relative "workers"
 
+Dir.glob(File.join(__dir__, "actions/*.rb")).each do |file|
+  require file
+end
+
 # Generate or load session secret for Sidekiq::Web
 session_key_file = File.expand_path(".session.key", __dir__)
 unless File.exist?(session_key_file)
@@ -42,92 +46,22 @@ end
 
 # Root path with form
 map "/" do
-  run lambda { |env|
-    [
-      200,
-      {"Content-Type" => "text/html"},
-      [File.read(File.expand_path("index.html", __dir__))]
-    ]
-  }
+  run IndexAction.new
 end
 
 # Handle job submission
 map "/run_jobs" do
-  run lambda { |env|
-    request = Rack::Request.new(env)
-    return method_not_allowed_response unless request.post?
-
-    count = request.params["count"].to_i.clamp(1, 1000)
-    delay = request.params["delay"].to_f
-    timeout = request.params["timeout"].to_f
-    randomize = request.params["randomize"] == "true"
-
-    # Build the test URL for this application
-    port = ENV.fetch("PORT", "9292")
-    test_url = "http://localhost:#{port}/test?delay=#{delay}"
-    test_url += "&randomize=true" if randomize
-
-    count.times do
-      ExampleWorker.perform_async("GET", test_url, timeout, delay)
-    end
-    [204, {}, []]
-  }
+  run RunJobsAction.new
 end
 
 map "/test" do
-  run lambda { |env|
-    request = Rack::Request.new(env)
-    delay = request.params["delay"]&.to_f
-    randomize = request.params["randomize"] == "true"
-
-    [
-      200,
-      {"Content-Type" => "text/plain; charset=utf-8"},
-      TestAppStreamingBody.new(delay, randomize)
-    ]
-  }
+  run TestAction.new
 end
 
 map "/status" do
-  run lambda { |env|
-    sidekiq_stats = Sidekiq::Stats.new
-    status = ExampleWorker.status.merge(
-      enqueued: sidekiq_stats.enqueued,
-      processed: sidekiq_stats.processed,
-      failed: sidekiq_stats.failed
-    )
-
-    [
-      200,
-      {"Content-Type" => "application/json; charset=utf-8"},
-      [JSON.generate(status)]
-    ]
-  }
+  run StatusAction.new
 end
 
 map "/favicon.ico" do
-  run lambda { |env|
-    [204, {}, []]
-  }
-end
-
-def method_not_allowed_response
-  [405, {"Content-Type" => "text/plain"}, ["Method Not Allowed"]]
-end
-
-class TestAppStreamingBody
-  def initialize(delay, randomize = false)
-    @delay = delay
-    @randomize = randomize
-  end
-
-  def each
-    yield "start"
-    yield "..."
-    if @delay > 0
-      actual_delay = @randomize ? rand((@delay / 2)..(@delay * 1.5)) : @delay
-      sleep(actual_delay) if actual_delay > 0
-    end
-    yield "end"
-  end
+  run lambda { |env| [204, {}, []] }
 end
