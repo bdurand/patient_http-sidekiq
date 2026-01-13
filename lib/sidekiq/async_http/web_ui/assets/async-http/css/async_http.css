@@ -142,11 +142,6 @@
 
 .capacity-bar-used {
   height: 100%;
-  background: linear-gradient(
-    to right,
-    var(--async-http-primary),
-    var(--async-http-warning)
-  );
   transition: width 0.3s ease;
   display: flex;
   align-items: center;
@@ -155,6 +150,30 @@
   color: white;
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.capacity-bar-used.low {
+  background: linear-gradient(
+    to right,
+    var(--async-http-success),
+    var(--async-http-primary)
+  );
+}
+
+.capacity-bar-used.medium {
+  background: linear-gradient(
+    to right,
+    var(--async-http-warning),
+    var(--async-http-primary)
+  );
+}
+
+.capacity-bar-used.high {
+  background: linear-gradient(
+    to right,
+    var(--async-http-error),
+    var(--async-http-warning)
+  );
 }
 
 /* Process Breakdown Table */

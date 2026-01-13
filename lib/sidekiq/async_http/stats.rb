@@ -97,24 +97,30 @@ module Sidekiq
         end
       end
 
-      # Get all inflight counts across all processes
+      # Get all inflight counts across all processes and the number of max connections.
       #
-      # @return [Hash] hash of "hostname:pid" => count
+      # @return [Hash] hash of "hostname:pid" => {count: Integer, max: Integer}
       def get_all_inflight
         Sidekiq.redis do |redis|
           process_ids = redis.smembers(PROCESS_SET_KEY)
+          return {} if process_ids.empty?
+
+          inflight_keys = process_ids.map { |pid| "#{INFLIGHT_PREFIX}:#{pid}" }
+          max_keys = process_ids.map { |pid| "#{MAX_CONNECTIONS_PREFIX}:#{pid}" }
+
+          inflight_values = redis.mget(*inflight_keys)
+          max_values = redis.mget(*max_keys)
+
           result = {}
           stale_process_ids = []
 
-          process_ids.each do |process_id|
-            inflight_key = "#{INFLIGHT_PREFIX}:#{process_id}"
-            count = redis.get(inflight_key)
+          process_ids.zip(inflight_values, max_values).each do |process_id, count, max_conn|
 
-            if count.nil?
-              # Mark for removal if the key doesn't exist
+            if count.nil? || max_conn.nil?
+              # Mark for removal if either key doesn't exist
               stale_process_ids << process_id
             else
-              result[process_id] = count.to_i
+              result[process_id] = {count: count.to_i, max: max_conn.to_i}
             end
           end
 
@@ -174,7 +180,7 @@ module Sidekiq
       #
       # @return [Integer] total number of inflight requests
       def get_total_inflight
-        get_all_inflight.values.sum
+        get_all_inflight.values.sum { |h| h[:count] }
       end
 
       # Reset all stats (useful for testing)

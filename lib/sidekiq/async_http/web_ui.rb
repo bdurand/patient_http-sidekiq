@@ -14,9 +14,41 @@ module Sidekiq
       class << self
         # This method is called by Sidekiq::Web when registering the extension
         def registered(app)
+          require_relative "web_ui/helpers/helpers"
+          app.helpers Sidekiq::AsyncHttp::WebUI::Helpers
+
           # GET route for the main Async HTTP dashboard page
           app.get "/async-http" do
-            erb(:async_http, views: Sidekiq::AsyncHttp::WebUI::VIEWS)
+            stats = Sidekiq::AsyncHttp::Stats.instance
+
+            # Get process-level inflight and capacity data
+            all_inflight = stats.get_all_inflight
+            processes = all_inflight.transform_values do |data|
+              {
+                inflight: data[:count],
+                max_capacity: data[:max]
+              }
+            end
+
+            # Get totals and calculate derived values
+            totals = stats.get_totals
+            total_requests = totals['requests'] || 0
+            avg_duration = total_requests > 0 ? ((totals['duration'] || 0) / total_requests * 1000).round : 0
+
+            # Capacity metrics
+            max_capacity = stats.get_total_max_connections
+            current_inflight = stats.get_total_inflight
+            utilization = max_capacity > 0 ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
+
+            erb(:async_http, views: Sidekiq::AsyncHttp::WebUI::VIEWS, locals: {
+              totals: totals,
+              total_requests: total_requests,
+              avg_duration: avg_duration,
+              max_capacity: max_capacity,
+              current_inflight: current_inflight,
+              utilization: utilization,
+              processes: processes
+            })
           end
 
           # API endpoint for fetching stats as JSON
@@ -25,17 +57,11 @@ module Sidekiq
 
             # Get process-level inflight and capacity data
             all_inflight = stats.get_all_inflight
-            processes = {}
-
-            Sidekiq.redis do |redis|
-              all_inflight.each do |identifier, inflight|
-                max_conn_key = "#{Sidekiq::AsyncHttp::Stats::MAX_CONNECTIONS_PREFIX}:#{identifier}"
-                max_connections = redis.get(max_conn_key).to_i
-                processes[identifier] = {
-                  inflight: inflight,
-                  max_capacity: max_connections
-                }
-              end
+            processes = all_inflight.transform_values do |data|
+              {
+                inflight: data[:count],
+                max_capacity: data[:max]
+              }
             end
 
             # Compile response

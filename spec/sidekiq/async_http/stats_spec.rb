@@ -41,7 +41,7 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       stats.update_inflight(5, 10)
 
       all_inflight = stats.get_all_inflight
-      expect(all_inflight.values.first).to eq(5)
+      expect(all_inflight.values.first).to eq(count: 5, max: 10)
     end
 
     it "overwrites previous value" do
@@ -49,7 +49,7 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       stats.update_inflight(3, 10)
 
       all_inflight = stats.get_all_inflight
-      expect(all_inflight.values.first).to eq(3)
+      expect(all_inflight.values.first).to eq(count: 3, max: 10)
     end
   end
 
@@ -77,12 +77,13 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
   end
 
   describe "#get_all_inflight" do
-    it "returns all inflight counts" do
+    it "returns all inflight counts and max connections" do
       stats.update_inflight(5, 10)
 
       all_inflight = stats.get_all_inflight
       expect(all_inflight).to be_a(Hash)
-      expect(all_inflight.values).to include(5)
+      expect(all_inflight.values.map { |h| h[:count] }).to include(5)
+      expect(all_inflight.values.map { |h| h[:max] }).to include(10)
     end
 
     it "returns empty hash when no inflight data" do
@@ -124,7 +125,7 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       stats.update_inflight(5, 10)
 
       # Verify data exists
-      expect(stats.get_all_inflight.values).to include(5)
+      expect(stats.get_all_inflight.values.map { |h| h[:count] }).to include(5)
       expect(stats.get_total_max_connections).to eq(10)
 
       # Cleanup
@@ -171,7 +172,7 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       stats.update_inflight(5, 10)
 
       all_inflight = stats.get_all_inflight
-      expect(all_inflight.values).to include(5)
+      expect(all_inflight.values).to include({count: 5, max: 10})
     end
   end
 end
