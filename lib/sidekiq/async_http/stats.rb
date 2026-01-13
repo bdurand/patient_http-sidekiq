@@ -115,7 +115,6 @@ module Sidekiq
           stale_process_ids = []
 
           process_ids.zip(inflight_values, max_values).each do |process_id, count, max_conn|
-
             if count.nil? || max_conn.nil?
               # Mark for removal if either key doesn't exist
               stale_process_ids << process_id

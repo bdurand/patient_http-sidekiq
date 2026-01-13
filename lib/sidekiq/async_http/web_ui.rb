@@ -32,13 +32,13 @@ module Sidekiq
 
             # Get totals and calculate derived values
             totals = stats.get_totals
-            total_requests = totals['requests'] || 0
-            avg_duration = total_requests > 0 ? ((totals['duration'] || 0) / total_requests * 1000).round : 0
+            total_requests = totals["requests"] || 0
+            avg_duration = (total_requests > 0) ? ((totals["duration"] || 0) / total_requests * 1000).round : 0
 
             # Capacity metrics
             max_capacity = stats.get_total_max_connections
             current_inflight = stats.get_total_inflight
-            utilization = max_capacity > 0 ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
+            utilization = (max_capacity > 0) ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
 
             erb(:async_http, views: Sidekiq::AsyncHttp::WebUI::VIEWS, locals: {
               totals: totals,
