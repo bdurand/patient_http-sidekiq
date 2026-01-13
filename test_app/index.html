@@ -239,17 +239,23 @@
 
       <div class="form-group">
         <label for="delay">Delay (seconds)</label>
-        <input
-          type="number"
-          id="delay"
-          name="delay"
-          value="0.0"
-          min="0.0"
-          max="10.0"
-          step="any"
-          autocomplete="off"
-        >
-        <div class="help-text">HTTP endpoint delay in seconds (e.g., 1.0, 2.5)</div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input
+            type="number"
+            id="delay"
+            name="delay"
+            value="0.0"
+            min="0.0"
+            max="10.0"
+            step="any"
+            autocomplete="off"
+          >
+          <label style="display: flex; align-items: center; gap: 5px; font-weight: normal; margin-bottom: 0; white-space: nowrap;">
+            <input type="checkbox" id="randomize" name="randomize" value="true">
+            Randomize by ±50%
+          </label>
+        </div>
+        <div class="help-text">HTTP endpoint delay in seconds</div>
       </div>
 
       <div class="form-group">
@@ -258,7 +264,7 @@
           type="number"
           id="timeout"
           name="timeout"
-          value="1.0"
+          value="10.0"
           min="0.1"
           max="60.0"
           step="any"
@@ -341,7 +347,9 @@
             const count = formData.get('count');
             const delay = formData.get('delay');
             const timeout = formData.get('timeout');
-            showToast(`Successfully enqueued ${count} jobs (${delay}s delay, ${timeout}s timeout)!`);
+            const randomize = formData.get('randomize') === 'true';
+            const randomizeText = randomize ? ' (randomized)' : '';
+            showToast(`Successfully enqueued ${count} jobs (${delay}s delay${randomizeText}, ${timeout}s timeout)!`);
             // Reset last update time and restart polling if stopped
             lastUpdateTime = Date.now();
             if (!isPolling) {

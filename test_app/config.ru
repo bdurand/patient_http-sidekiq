@@ -60,10 +60,12 @@ map "/run_jobs" do
     count = request.params["count"].to_i.clamp(1, 1000)
     delay = request.params["delay"].to_f
     timeout = request.params["timeout"].to_f
+    randomize = request.params["randomize"] == "true"
 
     # Build the test URL for this application
     port = ENV.fetch("PORT", "9292")
     test_url = "http://localhost:#{port}/test?delay=#{delay}"
+    test_url += "&randomize=true" if randomize
 
     count.times do
       ExampleWorker.perform_async("GET", test_url, timeout, delay)
@@ -76,11 +78,12 @@ map "/test" do
   run lambda { |env|
     request = Rack::Request.new(env)
     delay = request.params["delay"]&.to_f
+    randomize = request.params["randomize"] == "true"
 
     [
       200,
       {"Content-Type" => "text/plain; charset=utf-8"},
-      TestAppStreamingBody.new(delay)
+      TestAppStreamingBody.new(delay, randomize)
     ]
   }
 end
@@ -113,13 +116,18 @@ def method_not_allowed_response
 end
 
 class TestAppStreamingBody
-  def initialize(delay)
+  def initialize(delay, randomize = false)
     @delay = delay
+    @randomize = randomize
   end
 
   def each
-    yield "start..."
-    sleep(@delay) if @delay > 0
+    yield "start"
+    yield "..."
+    if @delay > 0
+      actual_delay = @randomize ? rand((@delay / 2)..(@delay * 1.5)) : @delay
+      sleep(actual_delay) if actual_delay > 0
+    end
     yield "end"
   end
 end
