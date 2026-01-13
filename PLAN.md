@@ -70,22 +70,27 @@ The **`async-http`** gem (part of the `socketry/async` ecosystem) is the best ch
 
 ### 1. `Sidekiq::AsyncHttp::Request`
 
-An immutable value object representing the HTTP request details:
+An immutable value object representing the HTTP request details. Created by Client class.
+Requires calling execute() with callback workers to enqueue the request:
 
 ```ruby
 # Attributes:
 # - method: :get, :post, :put, :patch, :delete
 # - url: Full URL string or URI object
-# - headers: Hash of headers
+# - headers: HttpHeaders object (header management)
 # - body: String or nil
 # - timeout: Float (seconds), default from configuration
 # - read_timeout: Float (seconds), optional
 # - connect_timeout: Float (seconds), optional
 # - write_timeout: Float (seconds), optional
+#
+# Methods:
+# - #execute(completion_worker:, sidekiq_job: nil, error_worker: nil) - enqueue request for processing
 ```
 
 **Note**: The Request class contains only HTTP-specific parameters. It does not include
 callback information or Sidekiq job context. Those belong to the RequestTask wrapper.
+**API Pattern**: Requests are built by Client, then execute() is called to enqueue them.
 
 ### 1a. `Sidekiq::AsyncHttp::RequestTask`
 
@@ -96,14 +101,16 @@ A wrapper around Request that includes callback and job context for the Processo
 # - id: UUID for tracking (auto-generated)
 # - request: Request object (the HTTP request details)
 # - sidekiq_job: Hash (the Sidekiq job hash with class, jid, args, etc.)
-# - completion_worker: String (class name for success callback)
-# - error_worker: String (class name for error callback, optional)
+# - completion_worker: String or Class (class name/object for success callback)
+# - error_worker: String or Class (class name/object for error callback, optional)
+# - response: Response object (set after successful completion)
+# - error: Exception object (set after error)
 # - @enqueued_at_monotonic: Float (monotonic time when task was enqueued)
 # - @started_at_monotonic: Float (monotonic time when HTTP request started)
 # - @completed_at_monotonic: Float (monotonic time when HTTP request completed)
 #
 # Methods:
-# - #job_worker_class_name - returns the original worker class name
+# - #job_worker_class - returns the original worker class object
 # - #jid - returns the job ID
 # - #job_args - returns the job arguments
 # - #reenqueue_job - re-enqueues the original Sidekiq job
@@ -115,6 +122,11 @@ A wrapper around Request that includes callback and job context for the Processo
 # - #started_at - returns Time object (wall clock time)
 # - #completed_at - returns Time object (wall clock time)
 # - #duration - time between start and completion (Float seconds)
+# - #enqueued_duration - time between enqueue and start (Float seconds)
+# - #success!(response) - called on successful completion, enqueues completion worker
+# - #error!(exception) - called on error, enqueues error worker or retries job
+# - #success? - returns true if response was received
+# - #error? - returns true if error occurred
 ```
 
 **Design Rationale**: Separating Request and RequestTask allows the Request object to focus
@@ -132,22 +144,30 @@ An immutable value object representing the HTTP response:
 ```ruby
 # Attributes:
 # - status: Integer (HTTP status code)
-# - headers: Hash
-# - body: String
+# - headers: HttpHeaders object
+# - body: String (decoded from Payload)
 # - duration: Float (seconds)
 # - request_id: UUID (links back to request)
 # - protocol: String ("HTTP/1.1", "HTTP/2", etc.)
+# - url: String (request URL)
+# - method: Symbol (HTTP method)
 #
 # Methods:
 # - #success? (status 200-299)
 # - #redirect? (status 300-399)
 # - #client_error? (status 400-499)
 # - #server_error? (status 500-599)
+# - #error? (status 400-599)
+# - #json - parse body as JSON (raises if not application/json)
+# - #to_h - serialize to hash with string keys
+# - .from_h(hash) - deserialize from hash
+#
+# Note: Body is stored as Payload (compressed/encoded) internally but exposed as decoded string.
 ```
 
 ### 3. `Sidekiq::AsyncHttp::Error`
 
-A serializable error representation using `Data.define`:
+A serializable error representation (plain Ruby class):
 
 ```ruby
 # Attributes:
@@ -155,10 +175,17 @@ A serializable error representation using `Data.define`:
 # - message: String
 # - backtrace: Array<String>
 # - request_id: UUID
-# - error_type: Symbol (:timeout, :connection, :ssl, :protocol, :unknown)
+# - error_type: Symbol (:timeout, :connection, :ssl, :protocol, :response_too_large, :unknown)
+# - duration: Float (request duration in seconds)
+# - url: String (request URL)
+# - method: Symbol (HTTP method)
 #
 # Class methods:
-# - .from_exception(exception, request_id:) - uses pattern matching for classification
+# - .from_exception(exception, request_id:, duration:, url:, method:) - uses pattern matching for classification
+# - .from_h(hash) - reconstruct from hash
+#
+# Instance methods:
+# - #to_h - convert to hash with string keys
 ```
 
 ### 3a. `Sidekiq::AsyncHttp::TimeHelper`
@@ -175,6 +202,56 @@ A module providing monotonic time utilities for accurate duration tracking:
 # Public interfaces expose wall clock Time objects for compatibility.
 ```
 
+### 3b. `Sidekiq::AsyncHttp::Context`
+
+Provides thread-local context for Sidekiq jobs (NEW - not in original plan):
+
+```ruby
+# Class methods:
+# - .current_job - returns current Sidekiq job hash from thread storage
+# - .with_job(job) { block } - sets job context for block duration
+#
+# Middleware:
+# Context::Middleware - Sidekiq server middleware that automatically tracks job context
+#
+# Purpose: Allows Request#execute to automatically detect the current Sidekiq job
+# without explicit passing, when the middleware is active.
+```
+
+### 3c. `Sidekiq::AsyncHttp::ClassHelper`
+
+Helper module for class name resolution (NEW - not in original plan):
+
+```ruby
+# Module methods:
+# - resolve_class_name(class_name) - converts string class name to Class object
+#
+# Purpose: Safely resolves worker class names ("MyApp::MyWorker") to Class objects,
+# handling module namespaces correctly. Used by RequestTask for callback workers.
+```
+
+### 3d. `Sidekiq::AsyncHttp::Payload`
+
+Handles encoding and compression of response bodies (NEW - not in original plan):
+
+```ruby
+# Class methods:
+# - .encode(value, mimetype) - encodes based on MIME type, returns [encoding, encoded_value]
+# - .decode(encoded_value, encoding) - decodes based on encoding type
+# - .from_h(hash) - reconstructs from hash
+#
+# Instance methods:
+# - #value - returns decoded data
+# - #to_h - converts to hash
+#
+# Encoding strategies:
+# - :text - plain text (small or incompressible)
+# - :gzipped - gzip + base64 (for large compressible text)
+# - :binary - base64 (for non-text content)
+#
+# Purpose: Optimize storage/transmission of response bodies by compressing text when beneficial.
+```
+
 ### 4. `Sidekiq::AsyncHttp::Configuration`
 
 Global configuration with sensible defaults:
@@ -188,6 +265,8 @@ class Configuration
   attr_accessor :shutdown_timeout
   attr_accessor :logger
   attr_accessor :dns_cache_ttl
+  attr_accessor :user_agent
+  attr_accessor :max_response_size  # in bytes, default 1MB
 
   def initialize
     @max_connections = 256
@@ -197,6 +276,8 @@ class Configuration
     @logger = nil
     @http2_enabled = true
     @dns_cache_ttl = 300
+    @user_agent = nil  # defaults to async-http's user agent
+    @max_response_size = 1024 * 1024  # 1MB
   end
 
   def validate!
@@ -207,8 +288,10 @@ end
 ```
 
 **Capacity Management**: When `max_connections` is reached, new requests are rejected
-immediately at enqueue time (synchronous boundary) by raising `Sidekiq::AsyncHttp::CapacityError`.
+immediately at enqueue time (synchronous boundary) by raising `Sidekiq::AsyncHttp::MaxCapacityError`.
 This prevents the reactor from being overwhelmed and provides clear backpressure to callers.
+
+**Response Size Limit**: When `max_response_size` is exceeded, raises `Sidekiq::AsyncHttp::ResponseTooLargeError`.
 
 ### 5. `Sidekiq::AsyncHttp::Metrics`
 
@@ -223,6 +306,57 @@ Thread-safe metrics collection using `Concurrent::AtomicFixnum` and `Concurrent:
 # - average_duration: Float (computed: total_duration / total_requests)
 # - error_count: Integer
 # - errors_by_type: Hash<Symbol, Integer>
+```
+
+### 5a. `Sidekiq::AsyncHttp::Stats`
+
+Redis-backed statistics storage (NEW - not in original plan):
+
+```ruby
+# Singleton class that stores processor metrics in Redis with TTL
+#
+# Methods:
+# - #record_request(duration) - record completed request
+# - #record_error(error_type) - record error
+# - #record_refused - record capacity rejection
+# - #update_inflight(count, max_connections) - update process stats
+# - #get_totals - returns { requests, duration, errors, refused }
+# - #get_all_inflight - returns hash of "hostname:pid" => { count, max }
+# - #get_total_inflight - total inflight across all processes
+# - #get_total_max_connections - sum of max connections across processes
+# - #cleanup_process_keys - remove process stats (called on shutdown)
+# - #reset! - clear all stats (for testing)
+#
+# Redis keys:
+# - sidekiq:async_http:totals (hash with 30-day TTL)
+# - sidekiq:async_http:inflight:<hostname>:<pid> (30s TTL)
+# - sidekiq:async_http:max_connections:<hostname>:<pid> (30s TTL)
+# - sidekiq:async_http:processes (set of active process IDs)
+#
+# Purpose: Persist metrics across restarts, aggregate stats from multiple processes,
+# provide data for Web UI dashboard.
+```
+
+### 5b. `Sidekiq::AsyncHttp::WebUI`
+
+Sidekiq Web extension for monitoring (NEW - not in original plan):
+
+```ruby
+# Routes:
+# - GET /async-http - main dashboard showing stats and process info
+# - GET /api/async-http/stats - JSON API endpoint for stats
+#
+# Features:
+# - Total requests, errors, refused counts
+# - Average request duration
+# - Current capacity utilization
+# - Per-process inflight counts and max connections
+# - Auto-refresh with live updates
+#
+# Auto-registration: Registers with Sidekiq::Web if available
+# Localization: Supports multiple languages via YAML files
+#
+# Purpose: Provide visibility into async HTTP request processing across all Sidekiq processes.
 ```
 
 ### 6. `Sidekiq::AsyncHttp::Processor`
@@ -244,30 +378,87 @@ The heart of the gem. Runs in a dedicated thread and manages the async reactor:
 # States: :stopped, :running, :draining, :stopping
 ```
 
-### 8. `Sidekiq::AsyncHttp::Client`
+### 7. `Sidekiq::AsyncHttp::Job`
 
-The public API that Sidekiq workers use:
+Mixin module providing callback DSL for Sidekiq jobs (NEW - not in original plan):
 
 ```ruby
-# Main method:
-# Sidekiq::AsyncHttp.request(
-#   method: :post,
-#   url: "https://api.example.com/webhooks",
+# Class methods:
+# - client(**options) - configure HTTP client for this job class
+# - success_callback(options = {}, &block) - define success callback inline
+# - error_callback(options = {}, &block) - define error callback inline
+# - success_callback_worker - get/set success callback worker class
+# - error_callback_worker - get/set error callback worker class
+#
+# Instance methods (when included):
+# - async_request(method, uri, **options) - build request using job's client
+# - async_get(uri, **options)
+# - async_post(uri, **options)
+# - async_put(uri, **options)
+# - async_patch(uri, **options)
+# - async_delete(uri, **options)
+#
+# Purpose: Simplify async HTTP usage in workers with declarative callback definitions.
+# Callbacks are defined as inline blocks that are converted to worker classes.
+#
+# Example:
+# class MyWorker
+#   include Sidekiq::AsyncHttp::Job
+#
+#   client base_url: "https://api.example.com"
+#
+#   success_callback do |response, *args|
+#     # handle response
+#   end
+#
+#   error_callback do |error, *args|
+#     # handle error
+#   end
+#
+#   def perform(id)
+#     async_get("/users/#{id}").execute
+#   end
+# end
+```
+
+### 8. `Sidekiq::AsyncHttp::Client`
+
+The builder class for creating HTTP requests. Creates Request objects that must call execute():
+
+```ruby
+# Initialization:
+# client = Sidekiq::AsyncHttp::Client.new(
+#   base_url: "https://api.example.com",
+#   headers: { "Authorization" => "Bearer token" },
+#   timeout: 30
+# )
+#
+# Building requests (returns Request object):
+# request = client.async_request(:post, "/webhooks",
 #   headers: { "Content-Type" => "application/json" },
 #   body: payload.to_json,
-#   completion_worker: "WebhookCompletionWorker",
-#   error_worker: "WebhookErrorWorker",
-#   original_args: [webhook_id, attempt],
+#   json: data_hash,  # alternative to body, auto-sets Content-Type
+#   params: { key: "value" },  # query parameters
 #   timeout: 60
 # )
 #
+# Executing the request:
+# request.execute(
+#   completion_worker: WebhookCompletionWorker,
+#   error_worker: WebhookErrorWorker,  # optional
+#   sidekiq_job: job_hash  # optional, auto-detected if Context middleware active
+# )
+#
 # Convenience methods:
-# - Sidekiq::AsyncHttp.get(url, **options)
-# - Sidekiq::AsyncHttp.post(url, **options)
-# - Sidekiq::AsyncHttp.put(url, **options)
-# - Sidekiq::AsyncHttp.patch(url, **options)
-# - Sidekiq::AsyncHttp.delete(url, **options)
+# - client.async_get(uri, **options)
+# - client.async_post(uri, **options)
+# - client.async_put(uri, **options)
+# - client.async_patch(uri, **options)
+# - client.async_delete(uri, **options)
 ```
+
+**Note**: The Client/Request split allows for flexible request building before execution.
+The execute() method validates parameters and enqueues to the processor.
 
 ### 9. `Sidekiq::AsyncHttp::Lifecycle`
 
@@ -279,12 +470,18 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 #   config.on(:quiet) { Sidekiq::AsyncHttp.quiet }     # Stop accepting new requests
 #   config.on(:shutdown) { Sidekiq::AsyncHttp.stop }   # Graceful shutdown
 # end
+#
+# Also adds Context middleware for automatic job tracking:
+# config.server_middleware do |chain|
+#   chain.add Sidekiq::AsyncHttp::Context::Middleware
+# end
 ```
 
 **Shutdown behavior**:
 1. On `:quiet` - Stop accepting new requests, mark processor as draining
 2. On `:shutdown` - Wait up to `shutdown_timeout` seconds for in-flight requests
 3. For any remaining in-flight requests, re-enqueue the original worker with original args
+4. Clean up Redis stats keys for this process
 
 ---
 
@@ -293,30 +490,40 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 ### Happy Path
 
 ```
-1. Worker creates a Sidekiq::AsyncHttp::Request to set headers, base URL, etc.
-2. Worker calls async_request on the request to create an async request for a URL
-3. Worker calls execute on the async request specifying the success and error worker callback classes
-4. Request pushed to Thread::Queue
+1. Worker creates a Sidekiq::AsyncHttp::Client (optional, for configuration reuse)
+2. Worker calls client.async_request (or async_get/async_post/etc) to build a Request
+3. Worker calls request.execute() with completion_worker and optional error_worker
+   - Context middleware provides sidekiq_job automatically if not passed
+   - Request validates all parameters
+   - Creates RequestTask wrapping the Request
+4. Request pushes RequestTask to Thread::Queue
 5. Worker returns immediately (Sidekiq job completes)
-6. Processor's reactor loop picks up request
-7. New Fiber spawned for this request
-8. Fiber makes HTTP request via Async::HTTP::Client (creates per-request client)
-9. Response received, Fiber builds Response object
-10. Processor enqueues completion_worker_class.perform_async(response.to_h, *original_args)
-11. Metrics updated
-12. Fiber completes
+6. Processor's reactor loop picks up RequestTask from queue
+7. Task added to @pending_tasks
+8. New Fiber spawned for this request
+9. Task moved from @pending_tasks to @in_flight_requests
+10. Fiber makes HTTP request via Async::HTTP::Client (creates per-request client)
+11. Response received, Fiber builds Response object with Payload encoding
+12. Task.success!(response) called
+13. RequestTask resolves completion_worker class and enqueues it with response.to_h
+14. Metrics updated, Stats recorded to Redis
+15. Fiber completes
 ```
 
 ### Error Path
 
 ```
-1-6. Same as happy path
-7. HTTP request raises exception (timeout, connection refused, etc.)
-8. Exception caught and classified via pattern matching
-9. Error object built with .from_exception
-10. Processor enqueues error_worker_class.perform_async(error.to_h, *original_args)
-11. Metrics updated (error_count, errors_by_type)
-12. Fiber completes
+1-9. Same as happy path
+10. HTTP request raises exception (timeout, connection refused, etc.)
+11. Exception caught in Fiber
+12. Task.error!(exception) called
+13. If error_worker set:
+    - Error object built with Error.from_exception(exception, duration:, url:, method:)
+    - RequestTask resolves error_worker class and enqueues it with error.to_h
+14. If error_worker nil:
+    - Task.retry_job called (increments retry_count and re-enqueues original job)
+15. Metrics updated (error_count, errors_by_type), Stats recorded to Redis
+16. Fiber completes
 ```
 
 ### Shutdown Path
@@ -324,15 +531,17 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 ```
 1. SIGTERM received by Sidekiq
 2. Sidekiq fires :quiet event → Sidekiq::AsyncHttp.quiet called
-3. Processor stops accepting new requests (returns error for new requests)
+3. Processor stops accepting new requests (state = :draining)
 4. Sidekiq fires :shutdown event → Sidekiq::AsyncHttp.stop called
 5. Processor waits up to shutdown_timeout for in-flight requests
-6. For any remaining in-flight requests:
-   a. Cancel the HTTP request
-   b. Enqueue original_worker_class.perform_async(*original_args)
-7. Connection pool closed
-8. Processor thread joins
-9. Shutdown complete
+6. For any remaining in-flight and pending requests:
+   a. Collect all tasks from @in_flight_requests and @pending_tasks
+   b. For each task, call task.reenqueue_job
+   c. Log re-enqueue at info level
+7. Clean up Redis stats keys for this process (Stats.instance.cleanup_process_keys)
+8. Reactor thread terminates
+9. Processor state set to :stopped
+10. Shutdown complete
 ```
 
 ---
@@ -435,18 +644,28 @@ sidekiq-async-http/
 ├── lib/
 │   ├── sidekiq-async_http.rb
 │   └── sidekiq-async_http/
+│       ├── class_helper.rb (NEW - class name resolution utilities)
+│       ├── client.rb
 │       ├── configuration.rb
-│       ├── async_request.rb
-│       ├── request.rb
-|       ├── http_headers.rb
-│       ├── response.rb
+│       ├── context.rb (NEW - Sidekiq job context tracking with middleware)
 │       ├── error.rb
-│       ├── processor.rb
-│       ├── request_task.rb
-│       ├── time_helper.rb
+│       ├── http_headers.rb
+│       ├── job.rb (NEW - mixin module for callback DSL)
 │       ├── metrics.rb
-│       ├── lifecycle.rb
-│       └── client.rb
+│       ├── payload.rb (NEW - response body encoding/compression)
+│       ├── processor.rb
+│       ├── request.rb
+│       ├── request_task.rb
+│       ├── response.rb
+│       ├── sidekiq.rb (lifecycle hooks)
+│       ├── stats.rb (NEW - Redis-backed statistics)
+│       ├── time_helper.rb
+│       ├── web_ui.rb (NEW - Sidekiq Web integration)
+│       └── web_ui/ (NEW - Web UI assets and views)
+│           ├── assets/
+│           ├── helpers/
+│           ├── locales/
+│           └── views/
 ├── spec/
 │   ├── spec_helper.rb
 │   ├── sidekiq-async_http/
@@ -1108,19 +1327,25 @@ class WebhookDeliveryWorker
   def perform(webhook_id, payload)
     webhook = Webhook.find(webhook_id)
 
-    Sidekiq::AsyncHttp.post(
-      webhook.url,
-      headers: {
-        "Content-Type" => "application/json",
-        "X-Webhook-Signature" => sign(payload)
-      },
-      body: payload.to_json,
-      timeout: 30,
-      completion_worker: "WebhookCompletionWorker",
-      error_worker: "WebhookErrorWorker",
-      original_worker: self.class.name,
-      original_args: [webhook_id, payload],
-      metadata: { attempt: 1 }
+    # Build a client (optional, for reusable configuration)
+    client = Sidekiq::AsyncHttp::Client.new(
+      base_url: webhook.url,
+      headers: { "X-Webhook-Signature" => sign(payload) },
+      timeout: 30
+    )
+
+    # Build and execute request
+    request = client.async_post(
+      "/",
+      headers: { "Content-Type" => "application/json" },
+      json: payload  # automatically serializes and sets Content-Type
+    )
+
+    # Execute with callbacks
+    request.execute(
+      completion_worker: WebhookCompletionWorker,
+      error_worker: WebhookErrorWorker
+      # sidekiq_job auto-detected via Context middleware
     )
 
     # Worker returns immediately - doesn't wait for HTTP response
@@ -1129,7 +1354,46 @@ class WebhookDeliveryWorker
   private
 
   def sign(payload)
-    OpenSSL::HMAC.hexdigest("SHA256", ENV["WEBHOOK_SECRET"], payload)
+    OpenSSL::HMAC.hexdigest("SHA256", ENV["WEBHOOK_SECRET"], payload.to_json)
+  end
+end
+```
+
+### Alternative: Using Job Mixin DSL
+
+```ruby
+class WebhookDeliveryWorker
+  include Sidekiq::AsyncHttp::Job
+
+  client timeout: 30
+
+  success_callback do |response, webhook_id, payload|
+    webhook = Webhook.find(webhook_id)
+    webhook.update!(last_delivered_at: Time.current, status: "delivered")
+  end
+
+  error_callback do |error, webhook_id, payload|
+    webhook = Webhook.find(webhook_id)
+    webhook.update!(status: "error", last_error: "#{error.class_name}: #{error.message}")
+  end
+
+  def perform(webhook_id, payload)
+    webhook = Webhook.find(webhook_id)
+
+    async_post(
+      webhook.url,
+      headers: {
+        "Content-Type" => "application/json",
+        "X-Webhook-Signature" => sign(payload)
+      },
+      json: payload
+    ).execute
+  end
+
+  private
+
+  def sign(payload)
+    OpenSSL::HMAC.hexdigest("SHA256", ENV["WEBHOOK_SECRET"], payload.to_json)
   end
 end
 ```
@@ -1261,13 +1525,19 @@ metrics = Sidekiq::AsyncHttp.metrics.to_h
 - [x] Tests don't contain unnecessary doubles/mocks (prefer real instances)
 - [x] Graceful shutdown works correctly
 
+## Implemented Features (Originally Future Enhancements)
+
+[x] **Record current metrics to Redis** - Stats class stores metrics in Redis with TTL
+[x] **Web UI** - Sidekiq Web extension showing async HTTP stats with process-level detail
+[x] **Worker DSL Module** - Sidekiq::AsyncHttp::Job mixin providing callback DSL
+[x] **Context Tracking** - Automatic Sidekiq job context via middleware
+[x] **Payload Encoding** - Compression and encoding for response bodies
+[x] **Class Resolution** - ClassHelper for dynamic worker class loading
+
 ## Future Enhancements
 
 [ ] **Circuit breaker** - Per-host circuit breakers for failing endpoints
-[x] **Record current metrics to Redis** - Similar to Sidekiq's built-in stats system
-[x] **Web UI** - Sidekiq Web extension showing async HTTP stats
-[ ] **Metrics listener** - Hook for exporting metrics
-[x] **Worker DSL Module** - Includable module providing:
+[ ] **Metrics listener** - Hook for exporting metrics to monitoring systems
    - Class-level `async_http_callbacks` for default success/error workers
    - Instance methods `async_get`, `async_post`, etc.
    - Automatic capture of job arguments for callbacks
