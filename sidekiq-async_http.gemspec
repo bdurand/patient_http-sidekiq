@@ -39,7 +39,7 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "sidekiq", ">= 7.0"
+  spec.add_dependency "sidekiq", ">= 7.1"
   spec.add_dependency "async", "~> 2.0"
   spec.add_dependency "async-http", "~> 0.60"
   spec.add_dependency "concurrent-ruby", "~> 1.2"
