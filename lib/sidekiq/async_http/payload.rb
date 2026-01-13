@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require 'base64'
-require 'zlib'
+require "base64"
+require "zlib"
 
 module Sidekiq::AsyncHttp
   class Payload
