@@ -13,7 +13,6 @@
 # - Start the processor when Sidekiq server starts (:startup event)
 # - Drain the processor when Sidekiq receives TSTP signal (:quiet event)
 # - Stop the processor when Sidekiq shuts down (:shutdown event)
-
 Sidekiq.configure_server do |config|
   config.server_middleware do |chain|
     chain.add Sidekiq::AsyncHttp::Context::Middleware

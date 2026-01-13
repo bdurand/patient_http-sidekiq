@@ -7,6 +7,10 @@ require "singleton"
 module Sidekiq
   module AsyncHttp
     # Stores processor statistics in Redis with automatic expiration.
+    #
+    # This singleton class tracks various metrics about async HTTP requests,
+    # including total requests, errors, refused requests, and current inflight counts
+    # across all processes. Statistics are stored in Redis with appropriate TTLs.
     class Stats
       include Singleton
 
@@ -18,7 +22,7 @@ module Sidekiq
 
       # TTLs
       TOTALS_TTL = 30 * 24 * 60 * 60 # 30 days in seconds
-      INFLIGHT_TTL = 300 # 5 minutes in seconds
+      INFLIGHT_TTL = 30
 
       def initialize
         @hostname = ::Socket.gethostname.force_encoding("UTF-8").freeze
@@ -41,6 +45,7 @@ module Sidekiq
 
       # Record a request error
       #
+      # @param error_type [String] the type of error that occurred
       # @return [void]
       def record_error(error_type)
         Sidekiq.redis do |redis|
@@ -99,7 +104,7 @@ module Sidekiq
 
       # Get all inflight counts across all processes and the number of max connections.
       #
-      # @return [Hash] hash of "hostname:pid" => {count: Integer, max: Integer}
+      # @return [Hash] hash of "hostname:pid" => { count: Integer, max: Integer }
       def get_all_inflight
         Sidekiq.redis do |redis|
           process_ids = redis.smembers(PROCESS_SET_KEY)

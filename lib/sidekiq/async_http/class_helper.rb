@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
+  # Helper module for class-related operations.
+  #
+  # Provides utilities for resolving class names to class objects,
+  # which is useful for dynamic worker class loading in Sidekiq.
   module ClassHelper
     extend self
 

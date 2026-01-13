@@ -13,7 +13,11 @@ module Sidekiq
 
       STATES = %i[stopped running draining stopping].freeze
 
-      attr_reader :config, :metrics
+      # @return [Configuration] the configuration object for the processor
+      attr_reader :config
+
+      # @return [Metrics] the metrics maintained by the processor
+      attr_reader :metrics
 
       # Callback to invoke after each request. Only available in testing mode.
       # @api private
@@ -37,7 +41,8 @@ module Sidekiq
         @testing_callback = nil
       end
 
-      # Start the processor
+      # Start the processor.
+      #
       # @return [void]
       def start
         return if running?
@@ -64,7 +69,8 @@ module Sidekiq
         @reactor_ready.wait
       end
 
-      # Stop the processor
+      # Stop the processor.
+      #
       # @param timeout [Numeric, nil] how long to wait for in-flight requests (seconds)
       # @return [void]
       def stop(timeout: nil)
@@ -117,7 +123,8 @@ module Sidekiq
         @reactor_thread = nil
       end
 
-      # Drain the processor (stop accepting new requests)
+      # Drain the processor (stop accepting new requests).
+      #
       # @return [void]
       def drain
         return unless running?
@@ -126,7 +133,7 @@ module Sidekiq
         @config.logger&.info("[Sidekiq::AsyncHttp] Processor draining (no longer accepting new requests)")
       end
 
-      # Enqueue a request task for processing
+      # Enqueue a request task for processing.
       #
       # @param task [RequestTask] the request task to enqueue
       # @raise [RuntimeError] if processor is not running or if at capacity
@@ -146,52 +153,67 @@ module Sidekiq
         @queue.push(task)
       end
 
-      # Check if processor is running
+      # Check if processor is running.
+      #
       # @return [Boolean]
       def running?
         state == :running
       end
 
-      # Check if processor is stopped
+      # Check if processor is stopped.
+      #
       # @return [Boolean]
       def stopped?
         state == :stopped
       end
 
-      # Check if processor is draining
+      # Check if processor is draining.
+      #
       # @return [Boolean]
       def draining?
         state == :draining
       end
 
+      # Check if processor is drained (draining and idle).
+      #
+      # @return [Boolean]
       def drained?
         state == :draining && idle?
       end
 
-      # Check if processor is stopping
+      # Check if processor is stopping.
+      #
       # @return [Boolean]
       def stopping?
         state == :stopping
       end
 
+      # Check if processor is idle (no queued or in-flight requests).
+      #
+      # @return [Boolean]
       def idle?
         @tasks_lock.synchronize do
           @queue.empty? && @pending_tasks.empty? && @in_flight_requests.empty?
         end
       end
 
-      # Get current state
+      # Get current state.
+      #
       # @return [Symbol]
       def state
         @state.get
       end
 
+      # Get the number of in-flight requests.
+      #
+      # @return [Integer]
       def in_flight_count
         @in_flight_requests.size
       end
 
       # Wait for the queue to be empty and all in-flight requests to complete.
       # This is mainly for use in tests.
+      #
       # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
       # @return [Boolean] true if processing completed, false if timeout reached
       # @api private
@@ -205,6 +227,7 @@ module Sidekiq
       end
 
       # Wait for at least one request to start processing. This is mainly for use in tests.
+      #
       # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
       # @return [Boolean] true if a request started processing, false if timeout reached
       # @api private
@@ -219,7 +242,8 @@ module Sidekiq
 
       private
 
-      # Run the async reactor loop
+      # Run the async reactor loop.
+      #
       # @return [void]
       def run_reactor
         Async do |task|
@@ -273,7 +297,8 @@ module Sidekiq
         end
       end
 
-      # Dequeue a request task with timeout
+      # Dequeue a request task with timeout.
+      #
       # @param timeout [Numeric] timeout in seconds
       # @return [RequestTask, nil] the request task or nil if timeout
       def dequeue_request(timeout:)
@@ -283,7 +308,8 @@ module Sidekiq
         nil
       end
 
-      # Process a single HTTP request task
+      # Process a single HTTP request task.
+      #
       # @param task [RequestTask] the request task to process
       # @return [void]
       def process_request(task)
@@ -372,7 +398,8 @@ module Sidekiq
         end
       end
 
-      # Build an Async::HTTP::Request from our Request object
+      # Build an Async::HTTP::Request from our Request object.
+      #
       # @param request [Request] the request object
       # @return [Async::HTTP::Request] the async HTTP request
       def build_http_request(request)
@@ -403,9 +430,10 @@ module Sidekiq
         )
       end
 
-      # Build a Response object from async response data
+      # Build a Response object from async response data.
+      #
       # @param task [RequestTask] the original request task
-      # @param response_data [Hash] the response data
+      # @param http_response [Hash] the response data
       # @return [Response] the response object
       def build_response(task, http_response)
         Response.new(
@@ -420,7 +448,8 @@ module Sidekiq
         )
       end
 
-      # Classify an error by type
+      # Classify an error by type.
+      #
       # @param exception [Exception] the exception
       # @return [Symbol] the error type
       def classify_error(exception)
@@ -438,9 +467,10 @@ module Sidekiq
         end
       end
 
-      # Handle successful response
+      # Handle successful response.
+      #
       # @param task [RequestTask] the request task
-      # @param response [Hash] the response hash
+      # @param response [Response] the response object
       # @return [void]
       def handle_success(task, response)
         if stopped?
@@ -456,7 +486,8 @@ module Sidekiq
         )
       end
 
-      # Handle error response
+      # Handle error response.
+      #
       # @param task [RequestTask] the request task
       # @param exception [Exception] the exception
       # @return [void]
@@ -480,6 +511,10 @@ module Sidekiq
         raise if AsyncHttp.testing?
       end
 
+      # Resolve a worker class from its name.
+      #
+      # @param class_name [String] the class name to resolve
+      # @return [Class] the resolved worker class
       def resolve_worker_class(class_name)
         ClassHelper.resolve_class_name(class_name)
       end

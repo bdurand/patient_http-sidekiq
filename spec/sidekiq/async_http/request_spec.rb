@@ -51,7 +51,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       uri = URI("https://api.example.com/users")
       request = described_class.new(method: :get, url: uri)
 
-      expect(request.url).to eq(uri)
+      expect(request.url).to eq(uri.to_s)
     end
 
     context "validation" do
@@ -116,7 +116,6 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
           error_worker: TestWorkers::ErrorWorker
         )
 
-        expect(result).to eq(request.id)
         expect(result).to be_a(String)
       end
 

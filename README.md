@@ -2,7 +2,7 @@
 
 :construction: NOT RELEASED :construction:
 
-[![Continuous Integration](https://github.com/${GITHUB_USERNAME}/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/${GITHUB_USERNAME}/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml)
+[![Continuous Integration](https://github.com/bdurand/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/bdurand/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml)
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
 [![Gem Version](https://badge.fury.io/rb/sidekiq-async_http_requests.svg)](https://badge.fury.io/rb/sidekiq-async_http_requests)
 

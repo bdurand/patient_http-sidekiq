@@ -1,12 +1,36 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
-  # Wrapper around a Request to allow it to be enqueued and processed asynchronously.
+  # A wrapper around {Request} that includes callback and job context for the Processor.
+  # This class allows HTTP requests to be enqueued and processed asynchronously,
+  # tracking their lifecycle and providing methods to handle success and error callbacks.
   class RequestTask
     include TimeHelper
 
-    attr_reader :id, :request, :sidekiq_job, :completion_worker, :error_worker, :response, :error
+    # @return [String] Unique UUID for tracking the task
+    attr_reader :id
 
+    # @return [Request] The HTTP request details
+    attr_reader :request
+
+    # @return [Hash] The Sidekiq job hash containing class, jid, args, etc.
+    attr_reader :sidekiq_job
+
+    # @return [String] Class name for the success callback worker
+    attr_reader :completion_worker
+
+    # @return [String, nil] Class name for the error callback worker, optional
+    attr_reader :error_worker
+
+    # @return [Response, nil] The HTTP response, set on success
+    attr_reader :response, :error
+
+    # Initializes a new RequestTask.
+    #
+    # @param request [Request] The HTTP request to wrap.
+    # @param sidekiq_job [Hash] The Sidekiq job hash.
+    # @param completion_worker [String] Class name for success callback.
+    # @param error_worker [String, nil] Class name for error callback, optional.
     def initialize(request:, sidekiq_job:, completion_worker:, error_worker: nil)
       @id = SecureRandom.uuid
       @request = request
@@ -38,14 +62,23 @@ module Sidekiq::AsyncHttp
       @completed_at = monotonic_time
     end
 
+    # Returns the wall clock time when the task was enqueued.
+    #
+    # @return [Time, nil] The enqueued time or nil if not enqueued.
     def enqueued_at
       wall_clock_time(@enqueued_at) if @enqueued_at
     end
 
+    # Returns the wall clock time when the task was started.
+    #
+    # @return [Time, nil] The started time or nil if not started.
     def started_at
       wall_clock_time(@started_at) if @started_at
     end
 
+    # Returns the wall clock time when the task was completed.
+    #
+    # @return [Time, nil] The completed time or nil if not completed.
     def completed_at
       wall_clock_time(@completed_at) if @completed_at
     end

@@ -9,7 +9,29 @@ module Sidekiq
       # Valid error types
       ERROR_TYPES = %i[timeout connection ssl protocol response_too_large unknown].freeze
 
-      attr_reader :class_name, :message, :backtrace, :error_type, :duration, :request_id, :url, :method
+      # @return [String] Name of the exception class
+      attr_reader :class_name
+
+      # @return [String] Exception message
+      attr_reader :message
+
+      # @return [Array<String>] Exception backtrace
+      attr_reader :backtrace
+
+      # @return [Symbol] Categorized error type
+      attr_reader :error_type
+
+      # @return [Float] Request duration in seconds
+      attr_reader :duration
+
+      # @return [String] Unique request identifier
+      attr_reader :request_id
+
+      # @return [String] Request URL
+      attr_reader :url
+
+      # @return [Symbol] HTTP method
+      attr_reader :method
 
       class << self
         # Reconstruct an Error from a hash
@@ -66,6 +88,16 @@ module Sidekiq
         end
       end
 
+      # Initializes a new Error.
+      #
+      # @param class_name [String] Name of the exception class
+      # @param message [String] Exception message
+      # @param backtrace [Array<String>] Exception backtrace
+      # @param error_type [Symbol] Categorized error type
+      # @param duration [Float] Request duration in seconds
+      # @param request_id [String] Unique request identifier
+      # @param url [String] Request URL
+      # @param method [Symbol, String] HTTP method
       def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, method:)
         @class_name = class_name
         @message = message

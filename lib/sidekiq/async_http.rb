@@ -7,7 +7,19 @@ require "concurrent-ruby"
 require "json"
 require "uri"
 
-# Main module for the Sidekiq Async HTTP gem
+# Main module for the Sidekiq Async HTTP gem.
+#
+# This gem provides a mechanism to offload long-running HTTP requests from Sidekiq workers
+# to a dedicated async I/O processor running in the same process, freeing worker threads
+# immediately while HTTP requests are in flight.
+#
+# Key features:
+# - Asynchronous HTTP processing using Ruby's Fiber scheduler
+# - Non-blocking worker threads
+# - Automatic connection pooling and HTTP/2 support
+# - Comprehensive error handling and retry logic
+# - Integration with Sidekiq's job lifecycle
+# - Optional Web UI for monitoring
 module Sidekiq::AsyncHttp
   # Raised when trying to enqueue a request when the processor is not running
   class NotRunningError < StandardError; end
@@ -68,6 +80,8 @@ module Sidekiq::AsyncHttp
 
     # Load Web UI extension if Sidekiq::Web is available
     # This is done after all other requires to ensure dependencies are loaded
+    #
+    # @return [void]
     def load_web_ui
       require_relative "async_http/web_ui" if defined?(Sidekiq::Web)
     end

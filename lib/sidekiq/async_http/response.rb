@@ -2,7 +2,10 @@
 
 module Sidekiq
   module AsyncHttp
-    # HTTP response
+    # Represents an HTTP response from an async request.
+    #
+    # This class encapsulates the response data including status, headers, body,
+    # and metadata about the request that generated it.
     class Response
       UNDEFINED = Object.new.freeze
       private_constant :UNDEFINED
@@ -67,6 +70,9 @@ module Sidekiq
         @method = method
       end
 
+      # Returns the response body, decoding it from the payload if necessary.
+      #
+      # @return [String, nil] The decoded response body or nil if there was no body.
       def body
         if @body.equal?(UNDEFINED)
           @body = @payload&.value

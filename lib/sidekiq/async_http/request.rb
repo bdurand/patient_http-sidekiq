@@ -14,12 +14,44 @@ module Sidekiq::AsyncHttp
     # Valid HTTP methods
     VALID_METHODS = %i[get post put patch delete].freeze
 
-    attr_reader :id, :method, :url, :headers, :body, :timeout, :read_timeout, :connect_timeout, :write_timeout
+    # @return [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
+    attr_reader :method
 
+    # @return [String] The request URL
+    attr_reader :url
+
+    # @return [HttpHeaders] Request headers
+    attr_reader :headers
+
+    # @return [String, nil] Request body
+    attr_reader :body
+
+    # @return [Float, nil] Overall timeout in seconds
+    attr_reader :timeout
+
+    # @return [Float, nil] Read timeout in seconds
+    attr_reader :read_timeout
+
+    # @return [Float, nil] Connect timeout in seconds
+    attr_reader :connect_timeout
+
+    # @return [Float, nil] Write timeout in seconds
+    attr_reader :write_timeout
+
+    # Initializes a new Request.
+    #
+    # @param method [Symbol, String] HTTP method (:get, :post, :put, :patch, :delete).
+    # @param url [String, URI::Generic] The request URL.
+    # @param headers [Hash, HttpHeaders] Request headers.
+    # @param body [String, nil] Request body.
+    # @param timeout [Float, nil] Overall timeout in seconds.
+    # @param read_timeout [Float, nil] Read timeout in seconds.
+    # @param connect_timeout [Float, nil] Connect timeout in seconds.
+    # @param write_timeout [Float, nil] Write timeout in seconds.
     def initialize(method:, url:, headers: {}, body: nil, timeout: nil, read_timeout: nil, connect_timeout: nil, write_timeout: nil)
       @id = SecureRandom.uuid
       @method = method.is_a?(String) ? method.downcase.to_sym : method
-      @url = url
+      @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
       if Sidekiq::AsyncHttp.configuration.user_agent
         @headers["user-agent"] ||= Sidekiq::AsyncHttp.configuration.user_agent.to_s

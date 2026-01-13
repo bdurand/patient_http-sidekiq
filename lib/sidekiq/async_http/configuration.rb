@@ -2,15 +2,42 @@
 
 module Sidekiq
   module AsyncHttp
-    # Configuration for the async HTTP processor
+    # Configuration for the async HTTP processor.
+    #
+    # This class holds all configuration options for the Sidekiq Async HTTP gem,
+    # including connection limits, timeouts, and other HTTP client settings.
     class Configuration
-      attr_reader :max_connections, :idle_connection_timeout,
-        :default_request_timeout, :shutdown_timeout, :dns_cache_ttl,
-        :max_response_size
+      # @return [Integer] Maximum number of concurrent connections
+      attr_reader :max_connections
 
+      # @return [Integer] Idle connection timeout in seconds
+      attr_reader :idle_connection_timeout
+
+      # @return [Integer] Default request timeout in seconds
+      attr_reader :default_request_timeout
+
+      # @return [Integer] Graceful shutdown timeout in seconds
+      attr_reader :shutdown_timeout
+
+      # @return [Integer] DNS cache TTL in seconds
+      attr_reader :dns_cache_ttl
+
+      # @return [Integer] Maximum response size in bytes
+      attr_reader :max_response_size
+
+      # @return [String, nil] Default User-Agent header value
       attr_accessor :user_agent
 
-      # Create a new Configuration with defaults
+      # Initializes a new Configuration with the specified options.
+      #
+      # @param max_connections [Integer] Maximum number of concurrent connections
+      # @param idle_connection_timeout [Integer] Idle connection timeout in seconds
+      # @param default_request_timeout [Integer] Default request timeout in seconds
+      # @param shutdown_timeout [Integer] Graceful shutdown timeout in seconds
+      # @param logger [Logger, nil] Logger instance to use
+      # @param dns_cache_ttl [Integer] DNS cache TTL in seconds
+      # @param max_response_size [Integer] Maximum response size in bytes
+      # @param user_agent [String, nil] Default User-Agent header value
       def initialize(
         max_connections: 256,
         idle_connection_timeout: 60,

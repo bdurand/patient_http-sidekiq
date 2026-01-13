@@ -8,6 +8,7 @@ module Sidekiq
     #
     # @api private
     class Metrics
+      # Initializes a new Metrics instance with zeroed counters.
       def initialize
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
@@ -19,7 +20,6 @@ module Sidekiq
 
       # Record the start of a request
       #
-      # @param max_connections [Integer] the maximum number of connections allowed
       # @return [void]
       def record_request_start
         @in_flight_requests.increment
