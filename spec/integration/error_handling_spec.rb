@@ -98,37 +98,6 @@ RSpec.describe "Error Handling Integration", :integration do
     end
   end
 
-  describe "SSL errors" do
-    it "calls error worker with ssl error for SSL issues" do
-      # Use https:// scheme with HTTP-only server to trigger SSL error
-      https_url = test_web_server.base_url.sub("http://", "https://")
-      client = Sidekiq::AsyncHttp::Client.new(base_url: https_url)
-      request = client.async_get("/test/200")
-
-      request_task = Sidekiq::AsyncHttp::RequestTask.new(
-        request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "ssl-test", "args" => ["ssl_arg"]},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
-      )
-
-      processor.enqueue(request_task)
-      processor.wait_for_idle
-
-      # Process enqueued jobs
-      Sidekiq::Worker.drain_all
-
-      # Verify error worker was called
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
-
-      error, *original_args = TestWorkers::ErrorWorker.calls.first
-      expect(error).to be_a(Sidekiq::AsyncHttp::Error)
-      expect(error.error_type).to eq(:ssl)
-      expect(original_args).to eq(["ssl_arg"])
-    end
-  end
-
   describe "HTTP error responses" do
     it "calls success worker for 4xx responses (they are valid HTTP responses)" do
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)

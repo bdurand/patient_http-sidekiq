@@ -2,6 +2,7 @@
 
 require "bundler/setup"
 require "rack/session"
+require_relative "../lib/sidekiq-async_http"
 
 Sidekiq::AsyncHttp.load_web_ui
 
@@ -15,6 +16,11 @@ end
 
 Sidekiq.configure_client do |config|
   config.redis = {url: redis_url}
+end
+
+# Configure Sidekiq::AsyncHttp processor
+Sidekiq::AsyncHttp.configure do |config|
+  config.max_connections = ENV.fetch("MAX_CONNECTIONS", "256").to_i
 end
 
 Sidekiq::AsyncHttp.after_completion do |response|

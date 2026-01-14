@@ -13,7 +13,7 @@ docker-compose up -d
 ## Features
 
 - Embedded Sidekiq server with async HTTP processor
-- Multi-threaded Puma web server (up to 16 threads)
+- High-performance Async HTTP server (async I/O, handles hundreds of concurrent requests)
 - Sidekiq Web UI for monitoring
 - Valkey (Redis) from docker-compose for job queue
 - Example workers demonstrating different use cases
@@ -21,7 +21,7 @@ docker-compose up -d
 
 ## Quick Start
 
-### Option 1: Run Sidekiq server with Puma (Recommended)
+### Option 1: Run Sidekiq server with Async HTTP (Recommended)
 
 ```bash
 rake test_app
@@ -29,7 +29,7 @@ rake test_app
 PORT=3000 rake test_app
 ```
 
-This starts both a Sidekiq server with the AsyncHttp processor and a multi-threaded Puma web server serving the Sidekiq Web UI.
+This starts both a Sidekiq server with the AsyncHttp processor and a high-performance Async HTTP server serving the Sidekiq Web UI. The server uses async I/O and can handle hundreds of concurrent requests efficiently.
 
 ### Option 2: Run directly
 

@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
-require "puma"
+require "async"
+require "async/http/endpoint"
+require "async/http/server"
+require "protocol/rack"
 require "json"
 require "net/http"
 require "uri"
@@ -9,7 +12,7 @@ class TestWebServer
   def initialize
     @thread = nil
     @port = nil
-    @server = nil
+    @shutdown = false
     @ready = false
   end
 
@@ -38,8 +41,9 @@ class TestWebServer
   end
 
   def stop
-    @server&.stop
+    @shutdown = true
     @thread&.kill
+    @thread&.join(1)
   end
 
   def base_url
@@ -56,10 +60,31 @@ class TestWebServer
   end
 
   def run_server
-    server = Puma::Server.new(build_app, nil, {min_threads: 0, max_threads: 10, log_writer: Puma::LogWriter.null})
-    server.add_tcp_listener("localhost", @port)
-    @server = server
-    server.run
+    # Wrap Rack app for async HTTP server
+    rack_app = build_app
+    app = Protocol::Rack::Adapter.new(rack_app)
+
+    # Create endpoint
+    endpoint = Async::HTTP::Endpoint.parse("http://127.0.0.1:#{@port}")
+
+    # Start async HTTP server
+    Async do |task|
+      server = Async::HTTP::Server.new(app, endpoint)
+      server_task = task.async do
+        server.run
+      end
+
+      # Monitor for shutdown
+      task.async do
+        loop do
+          break if @shutdown
+          sleep 0.1
+        end
+        server_task.stop
+      end
+
+      server_task.wait
+    end
   end
 
   def build_app
@@ -163,7 +188,7 @@ class TestWebServer
 
     # Rewind the input stream in case it needs to be read again
     input.rewind if input.respond_to?(:rewind)
-
+StandardError
     body || ""
   end
 

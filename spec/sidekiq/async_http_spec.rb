@@ -346,8 +346,14 @@ RSpec.describe Sidekiq::AsyncHttp do
     end
 
     describe ".after_completion" do
-      after do
-        described_class.instance_variable_set(:@after_completion_callbacks, [])
+      around do |example|
+        callbacks = described_class.instance_variable_get(:@after_completion_callbacks)
+        begin
+          described_class.instance_variable_set(:@after_completion_callbacks, [])
+          example.run
+        ensure
+          described_class.instance_variable_set(:@after_completion_callbacks, callbacks)
+        end
       end
 
       it "registers a callback block" do
@@ -371,8 +377,14 @@ RSpec.describe Sidekiq::AsyncHttp do
     end
 
     describe ".after_error" do
-      after do
-        described_class.instance_variable_set(:@after_error_callbacks, [])
+      around do |example|
+        callbacks = described_class.instance_variable_get(:@after_error_callbacks)
+        begin
+          described_class.instance_variable_set(:@after_error_callbacks, [])
+          example.run
+        ensure
+          described_class.instance_variable_set(:@after_error_callbacks, callbacks)
+        end
       end
 
       it "registers a callback block" do

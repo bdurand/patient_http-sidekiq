@@ -7,15 +7,10 @@ require "sidekiq"
 require_relative "../lib/sidekiq-async_http"
 
 # Redis URL from environment or default to localhost
-REDIS_URL = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
-
-# Configure Sidekiq to use Valkey from docker-compose
-Sidekiq.configure_server do |config|
-  config.redis = {url: REDIS_URL}
-end
+redis_url = ENV.fetch("REDIS_URL", "redis://localhost:6379/0")
 
 Sidekiq.configure_client do |config|
-  config.redis = {url: REDIS_URL}
+  config.redis = {url: redis_url}
 end
 
 # Load test workers
@@ -24,7 +19,7 @@ require_relative "workers"
 puts "=" * 80
 puts "Sidekiq::AsyncHttp Interactive Console"
 puts "=" * 80
-puts "Redis URL: #{REDIS_URL}"
+puts "Redis URL: #{redis_url}"
 puts "Test workers loaded."
 puts ""
 puts "Available workers:"
