@@ -1530,6 +1530,9 @@ metrics = Sidekiq::AsyncHttp.metrics.to_h
 [x] **Context Tracking** - Automatic Sidekiq job context via middleware
 [x] **Payload Encoding** - Compression and encoding for response bodies
 [x] **Class Resolution** - ClassHelper for dynamic worker class loading
+[ ] **Continuation Job Identification**
+      - Automatically tag job options with type of job (error or completion)
+      - Provide method to add block to Context middleware that triggers on job type from sidekiq_options metadata
 
 ## Future Enhancements
 

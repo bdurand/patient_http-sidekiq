@@ -806,13 +806,15 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
     end
 
-    it "enqueues success worker with response hash and original args" do
+    it "enqueues success worker with response hash and original args tagged as a completion continuation" do
       processor.send(:handle_success, mock_request, response)
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
-      job_args = TestWorkers::CompletionWorker.jobs.last["args"]
+      job = TestWorkers::CompletionWorker.jobs.last
+      job_args = job["args"]
       expect(job_args[0]).to be_a(Hash)
       expect(job_args[0]["status"]).to eq(200)
       expect(job_args[1..]).to eq([1, "test_arg"])
+      expect(job["async_http_continuation"]).to eq("completion")
     end
 
     it "logs success at debug level" do
@@ -828,7 +830,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       processor_with_logger.stop
 
       expect(log_output.string).to match(
-        /\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} succeeded with status 200.*enqueued TestWorkers::CompletionWorker/
+        /DEBUG.*\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} succeeded with status 200.*enqueued TestWorkers::CompletionWorker/
       )
     end
   end
@@ -855,15 +857,17 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(error_hash["request_id"]).to eq(mock_request.id)
     end
 
-    it "enqueues error worker with error hash and original args" do
+    it "enqueues error worker with error hash and original args tagged as an error continuation" do
       exception = StandardError.new("Test error")
 
       processor.send(:handle_error, mock_request, exception)
 
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
-      job_args = TestWorkers::ErrorWorker.jobs.last["args"]
+      job = TestWorkers::ErrorWorker.jobs.last
+      job_args = job["args"]
       expect(job_args.first).to be_a(Hash)
       expect(job_args[1..]).to eq([1, "test_arg"])
+      expect(job["async_http_continuation"]).to eq("error")
     end
 
     it "handles timeout errors" do
@@ -934,12 +938,14 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       processor_with_logger.send(:handle_error, mock_request, exception)
       processor_with_logger.stop
 
-      expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} failed with Async::TimeoutError/)
+      expect(log_output.string).to match(/WARN.*\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} failed with Async::TimeoutError/)
       expect(log_output.string).to match(/enqueued TestWorkers::ErrorWorker/)
     end
 
     it "handles errors during enqueue gracefully", :disable_testing_mode do
-      allow(TestWorkers::ErrorWorker).to receive(:perform_async).and_raise(StandardError.new("Sidekiq error"))
+      setter = double(Sidekiq::Job::Setter)
+      allow(TestWorkers::ErrorWorker).to receive(:set).and_return(setter)
+      allow(setter).to receive(:perform_async).and_raise(StandardError.new("Sidekiq error"))
 
       log_output = StringIO.new
       logger = Logger.new(log_output)

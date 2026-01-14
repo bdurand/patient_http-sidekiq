@@ -480,7 +480,7 @@ module Sidekiq
 
         task.success!(response)
 
-        @config.logger&.info(
+        @config.logger&.debug(
           "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
           "enqueued #{task.completion_worker}"
         )

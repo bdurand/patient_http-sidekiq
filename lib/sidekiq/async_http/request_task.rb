@@ -143,7 +143,7 @@ module Sidekiq::AsyncHttp
       worker_class = ClassHelper.resolve_class_name(@completion_worker)
       raise "Completion worker class not set" unless worker_class
 
-      worker_class.perform_async(response.to_h, *job_args)
+      worker_class.set(async_http_continuation: "completion").perform_async(response.to_h, *job_args)
     end
 
     # Called with the HTTP error on a failed request.
@@ -158,7 +158,7 @@ module Sidekiq::AsyncHttp
       if @error_worker
         error = Error.from_exception(exception, request_id: @id, duration: duration, url: request.url, method: request.method)
         worker_class = ClassHelper.resolve_class_name(@error_worker)
-        worker_class.perform_async(error.to_h, *job_args)
+        worker_class.set(async_http_continuation: "error").perform_async(error.to_h, *job_args)
       else
         retry_job
       end
