@@ -453,7 +453,7 @@ Enhanced the Processor class with a complete async reactor loop for consuming an
    - Logs reactor loop errors without crashing
 
 2. **Backpressure Integration:**
-   - Checks `@metrics.in_flight_count >= @config.max_connections` before processing
+   - Checks `@metrics.inflight_count >= @config.max_connections` before processing
    - Logs debug message: "Max connections reached, applying backpressure"
    - Calls `@connection_pool.check_capacity!(request)`:
      - If raises `BackpressureError`: logs warning and continues loop
@@ -510,7 +510,7 @@ Enhanced the Processor class with a complete async reactor loop for consuming an
    - Overall suite: 289 examples, 93.35% line coverage, 70.59% branch coverage
 
 9. **Integration Points:**
-   - **Metrics**: Reads `in_flight_count` for capacity decisions
+   - **Metrics**: Reads `inflight_count` for capacity decisions
    - **ConnectionPool**: Calls `check_capacity!` for backpressure
    - **Configuration**: Uses `max_connections`, `logger`
    - **Process Request**: Placeholder method ready for step 6.3
@@ -525,7 +525,7 @@ Loop:
     ├─ Check stopping? → Break if true
     ├─ Dequeue request (0.1s timeout)
     ├─ Check stopping? → Break if true
-    ├─ Check in_flight_count >= max_connections?
+    ├─ Check inflight_count >= max_connections?
     │     ├─ Yes → check_capacity!(request)
     │     │         ├─ Success → Continue
     │     │         └─ BackpressureError → Log warn, skip request

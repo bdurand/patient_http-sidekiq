@@ -32,7 +32,9 @@ Sidekiq::AsyncHttp.after_error do |error|
 end
 
 # Load test workers
-require_relative "workers"
+Dir.glob(File.join(__dir__, "workers/*.rb")).each do |file|
+  require_relative file
+end
 
 Dir.glob(File.join(__dir__, "actions/*.rb")).each do |file|
   require file

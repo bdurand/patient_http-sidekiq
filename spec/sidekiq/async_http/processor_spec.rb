@@ -523,7 +523,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     it "checks capacity before spawning fibers when at limit" do
       processor.start
-      allow(processor).to receive(:in_flight_count).and_return(config.max_connections)
+      allow(processor).to receive(:inflight_count).and_return(config.max_connections)
       expect { processor.enqueue(create_request_task) }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError, /already at max capacity/)
       processor.stop(timeout: 0)
     end
@@ -1008,13 +1008,13 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       processor.wait_for_idle(timeout: 2)
 
       # Verify request completed (no in-flight)
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
 
       # Stop with timeout
       processor.stop(timeout: 1)
 
       # Should have completed the request (still no in-flight after stop)
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
     end
 
     it "re-enqueues incomplete requests when timeout expires" do

@@ -97,13 +97,13 @@ RSpec.describe "Capacity Limit Integration", :integration do
       }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError)
 
       # Verify still only 2 in-flight
-      expect(processor.metrics.in_flight_count).to eq(2)
+      expect(processor.metrics.inflight_count).to eq(2)
 
       # Wait for the first two requests to complete
       processor.wait_for_idle
 
       # Verify both completed
-      expect(processor.metrics.in_flight_count).to eq(0)
+      expect(processor.metrics.inflight_count).to eq(0)
 
       # Now we should be able to enqueue the third request
       expect {

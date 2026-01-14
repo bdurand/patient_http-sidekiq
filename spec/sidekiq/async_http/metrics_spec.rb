@@ -21,7 +21,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
 
   describe "#initialize" do
     it "initializes with zero counts" do
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
       expect(metrics.total_requests).to eq(0)
       expect(metrics.error_count).to eq(0)
       expect(metrics.average_duration).to eq(0.0)
@@ -36,7 +36,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     it "adds request to in-flight requests" do
       metrics.record_request_start
 
-      expect(metrics.in_flight_count).to eq(1)
+      expect(metrics.inflight_count).to eq(1)
     end
 
     it "tracks multiple in-flight requests" do
@@ -44,7 +44,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.record_request_start
       metrics.record_request_start
 
-      expect(metrics.in_flight_count).to eq(3)
+      expect(metrics.inflight_count).to eq(3)
     end
   end
 
@@ -56,7 +56,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     it "removes request from in-flight requests" do
       metrics.record_request_complete(0.5)
 
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
     end
 
     it "increments total requests" do
@@ -158,7 +158,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       hash = metrics.to_h
 
       expect(hash).to be_a(Hash)
-      expect(hash["in_flight_count"]).to eq(0)
+      expect(hash["inflight_count"]).to eq(0)
       expect(hash["total_requests"]).to eq(1)
       expect(hash["average_duration"]).to eq(1.5)
       expect(hash["error_count"]).to eq(1)
@@ -188,7 +188,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     it "resets all counters to zero" do
       metrics.reset!
 
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
       expect(metrics.total_requests).to eq(0)
       expect(metrics.error_count).to eq(0)
       expect(metrics.average_duration).to eq(0.0)
@@ -219,7 +219,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       threads.each(&:join)
 
       expect(metrics.total_requests).to eq(num_threads * requests_per_thread)
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
     end
 
     it "handles concurrent error recording" do

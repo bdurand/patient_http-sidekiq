@@ -10,6 +10,9 @@ class RunJobsAction
     timeout = request.params["timeout"].to_f
     randomize = request.params["randomize"] == "true"
 
+    # Reset success and error counters
+    ExampleWorker.reset_counters if Sidekiq::AsyncHttp.metrics.inflight_count == 0
+
     # Build the test URL for this application
     port = ENV.fetch("PORT", "9292")
     test_url = "http://localhost:#{port}/test?delay=#{delay}"

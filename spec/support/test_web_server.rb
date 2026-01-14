@@ -7,6 +7,7 @@ require "protocol/rack"
 require "json"
 require "net/http"
 require "uri"
+require "console"
 
 class TestWebServer
   def initialize
@@ -60,6 +61,10 @@ class TestWebServer
   end
 
   def run_server
+    # Suppress warnings from the Async HTTP server during tests
+    # Set the console logger level to only show errors
+    Console.logger.level = Logger::ERROR
+
     # Wrap Rack app for async HTTP server
     rack_app = build_app
     app = Protocol::Rack::Adapter.new(rack_app)
@@ -188,7 +193,6 @@ class TestWebServer
 
     # Rewind the input stream in case it needs to be read again
     input.rewind if input.respond_to?(:rewind)
-StandardError
     body || ""
   end
 

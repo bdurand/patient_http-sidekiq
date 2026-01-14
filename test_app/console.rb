@@ -14,7 +14,9 @@ Sidekiq.configure_client do |config|
 end
 
 # Load test workers
-require_relative "workers"
+Dir.glob(File.join(__dir__, "workers/*.rb")).each do |file|
+  require_relative file
+end
 
 puts "=" * 80
 puts "Sidekiq::AsyncHttp Interactive Console"

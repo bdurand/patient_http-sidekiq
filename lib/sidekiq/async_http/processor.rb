@@ -35,7 +35,7 @@ module Sidekiq
         @reactor_thread = nil
         @shutdown_barrier = Concurrent::Event.new
         @reactor_ready = Concurrent::Event.new
-        @in_flight_requests = Concurrent::Hash.new
+        @inflight_requests = Concurrent::Hash.new
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
         @testing_callback = nil
@@ -93,8 +93,8 @@ module Sidekiq
         tasks_to_reenqueue = []
         @tasks_lock.synchronize do
           @state.set(:stopped)
-          tasks_to_reenqueue = @in_flight_requests.values + @pending_tasks.values
-          @in_flight_requests.clear
+          tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
+          @inflight_requests.clear
           @pending_tasks.clear
         end
 
@@ -144,7 +144,7 @@ module Sidekiq
         end
 
         # Check capacity - raise error if at max connections
-        if in_flight_count >= @config.max_connections
+        if inflight_count >= @config.max_connections
           @metrics.record_refused
           raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
@@ -193,7 +193,7 @@ module Sidekiq
       # @return [Boolean]
       def idle?
         @tasks_lock.synchronize do
-          @queue.empty? && @pending_tasks.empty? && @in_flight_requests.empty?
+          @queue.empty? && @pending_tasks.empty? && @inflight_requests.empty?
         end
       end
 
@@ -207,8 +207,8 @@ module Sidekiq
       # Get the number of in-flight requests.
       #
       # @return [Integer]
-      def in_flight_count
-        @in_flight_requests.size
+      def inflight_count
+        @inflight_requests.size
       end
 
       # Wait for the queue to be empty and all in-flight requests to complete.
@@ -234,7 +234,7 @@ module Sidekiq
       def wait_for_processing(timeout: 1)
         deadline = monotonic_time + timeout
         while monotonic_time <= deadline
-          return true if !@in_flight_requests.empty? || !@pending_tasks.empty?
+          return true if !@inflight_requests.empty? || !@pending_tasks.empty?
           sleep(0.001)
         end
         false
@@ -259,7 +259,7 @@ module Sidekiq
 
             # Update inflight stats every 5 seconds
             if monotonic_time - last_inflight_update >= 5
-              Stats.instance.update_inflight(in_flight_count, @config.max_connections)
+              Stats.instance.update_inflight(inflight_count, @config.max_connections)
               last_inflight_update = monotonic_time
             end
 
@@ -316,7 +316,7 @@ module Sidekiq
         # Move from pending to in-flight tracking
         @tasks_lock.synchronize do
           @pending_tasks.delete(task.id)
-          @in_flight_requests[task.id] = task
+          @inflight_requests[task.id] = task
         end
 
         # Mark task as started
@@ -390,7 +390,7 @@ module Sidekiq
         ensure
           # Remove from in-flight tracking
           @tasks_lock.synchronize do
-            @in_flight_requests.delete(task.id)
+            @inflight_requests.delete(task.id)
           end
           @metrics.record_request_complete(task.duration)
 

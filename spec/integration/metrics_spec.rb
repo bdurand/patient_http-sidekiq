@@ -48,7 +48,7 @@ RSpec.describe "Metrics Integration", :integration do
       metrics = processor.metrics
       expect(metrics.total_requests).to eq(0)
       expect(metrics.error_count).to eq(0)
-      expect(metrics.in_flight_count).to eq(0)
+      expect(metrics.inflight_count).to eq(0)
 
       # Build clients
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)

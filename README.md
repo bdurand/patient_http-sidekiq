@@ -6,16 +6,11 @@
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
 [![Gem Version](https://badge.fury.io/rb/sidekiq-async_http_requests.svg)](https://badge.fury.io/rb/sidekiq-async_http_requests)
 
-Offload HTTP requests from Sidekiq workers to a dedicated async I/O processor, freeing worker threads immediately.
+This gem provides a mechanism to offload HTTP requests spawned by Sidekiq jobs to a dedicated async I/O processor, freeing worker threads immediately.
 
-## Architecture
+Sidekiq is designed with the assumption that jobs are short-lived and take milliseconds to complete. Long running HTTP requests will block worker threads from processing other jobs, leading to increased latency and reduced throughput. This is particularly the case if you want to call an LLM or Agentic AI API from a Sidekiq job, where requests can take many seconds to complete.
 
-The gem uses two key classes for handling async HTTP requests:
-
-- **Request**: Contains HTTP-specific parameters (method, URL, headers, body, timeout)
-- **RequestTask**: Wraps a Request with callback and job context needed for async processing (job ID, worker classes, timing information)
-
-The Processor accepts `RequestTask` objects via its `enqueue` method, executes the HTTP request asynchronously, and invokes success or error callback workers with the results.
+By using an async HTTP processor, Sidekiq worker threads can enqueue HTTP requests to be processed asynchronously, allowing them to return to the pool and handle other jobs immediately. The async processor uses non-blocking I/O to handle many concurrent HTTP requests efficiently and can scale to thousands of concurrent requests with minimal resource usage.
 
 ## Usage
 

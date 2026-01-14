@@ -112,7 +112,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
           responses << [:third, response]
         end
 
-        middleware.call(worker, job, queue) { }
+        middleware.call(worker, job, queue) {}
 
         expect(responses.size).to eq(3)
         expect(responses.map(&:first)).to eq([:first, :second, :third])
@@ -126,7 +126,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
           response_received = response
         end
 
-        middleware.call(worker, job, queue) { }
+        middleware.call(worker, job, queue) {}
 
         expect(response_received.url).to eq("https://api.example.com/users")
         expect(response_received.method).to eq(:get)
@@ -187,7 +187,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
           errors << [:third, error]
         end
 
-        middleware.call(worker, job, queue) { }
+        middleware.call(worker, job, queue) {}
 
         expect(errors.size).to eq(3)
         expect(errors.map(&:first)).to eq([:first, :second, :third])
@@ -201,7 +201,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
           error_received = error
         end
 
-        middleware.call(worker, job, queue) { }
+        middleware.call(worker, job, queue) {}
 
         expect(error_received.class_name).to eq("Timeout::Error")
         expect(error_received.message).to eq("Request timed out")
@@ -239,7 +239,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
         errors << error
       end
 
-      middleware.call(worker, job, queue) { }
+      middleware.call(worker, job, queue) {}
 
       expect(responses).to be_empty
       expect(errors).to be_empty

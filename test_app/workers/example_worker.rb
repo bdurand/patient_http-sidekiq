@@ -4,7 +4,9 @@
 class ExampleWorker
   include Sidekiq::AsyncHttp::Job
 
-  sidekiq_options retry: 1
+  sidekiq_options retry: 5
+
+  sidekiq_retry_in { |count| 2 }
 
   success_callback do |response, method, url, timeout, delay|
     Sidekiq.logger.info("Request succeeded: #{method.upcase} #{url} - Status: #{response.status}")
@@ -31,6 +33,13 @@ class ExampleWorker
         error = conn.get("example_worker_error").to_i
       end
       {success: success, error: error}
+    end
+
+    def reset_counters
+      Sidekiq.redis do |conn|
+        conn.del("example_worker_success")
+        conn.del("example_worker_error")
+      end
     end
   end
 

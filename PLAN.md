@@ -299,8 +299,8 @@ Thread-safe metrics collection using `Concurrent::AtomicFixnum` and `Concurrent:
 
 ```ruby
 # Exposed metrics:
-# - in_flight_count: Integer
-# - in_flight_requests: Array<Request> (frozen snapshot)
+# - inflight_count: Integer
+# - inflight_requests: Array<Request> (frozen snapshot)
 # - total_requests: Integer
 # - total_duration: Float (sum of all request durations)
 # - average_duration: Float (computed: total_duration / total_requests)
@@ -501,7 +501,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 6. Processor's reactor loop picks up RequestTask from queue
 7. Task added to @pending_tasks
 8. New Fiber spawned for this request
-9. Task moved from @pending_tasks to @in_flight_requests
+9. Task moved from @pending_tasks to @inflight_requests
 10. Fiber makes HTTP request via Async::HTTP::Client (creates per-request client)
 11. Response received, Fiber builds Response object with Payload encoding
 12. Task.success!(response) called
@@ -535,7 +535,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 4. Sidekiq fires :shutdown event → Sidekiq::AsyncHttp.stop called
 5. Processor waits up to shutdown_timeout for in-flight requests
 6. For any remaining in-flight and pending requests:
-   a. Collect all tasks from @in_flight_requests and @pending_tasks
+   a. Collect all tasks from @inflight_requests and @pending_tasks
    b. For each task, call task.reenqueue_job
    c. Log re-enqueue at info level
 7. Clean up Redis stats keys for this process (Stats.instance.cleanup_process_keys)
@@ -898,20 +898,20 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - Use Concurrent::AtomicReference for:
           - @total_duration (Float)
         - Use Concurrent::Map for:
-          - @in_flight_requests (request_id → Request)
+          - @inflight_requests (request_id → Request)
           - @errors_by_type (Symbol → AtomicFixnum)
         - Implement #record_request_start(request):
-          - Add to @in_flight_requests
+          - Add to @inflight_requests
         - Implement #record_request_complete(request, duration):
-          - Remove from @in_flight_requests
+          - Remove from @inflight_requests
           - Increment @total_requests
           - Add duration to @total_duration
         - Implement #record_error(request, error_type):
           - Increment @error_count
           - Increment @errors_by_type[error_type]
         - Implement reader methods:
-          - #in_flight_count → Integer
-          - #in_flight_requests → Array<Request> (frozen copy)
+          - #inflight_count → Integer
+          - #inflight_requests → Array<Request> (frozen copy)
           - #total_requests → Integer
           - #average_duration → Float (total_duration / total_requests, or 0)
           - #error_count → Integer
@@ -921,17 +921,17 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - Write specs including thread-safety tests with multiple threads
         - NOTE: backpressure tracking removed (record_backpressure, backpressure_events)
         - Implement #record_request_start(request):
-          - Add to @in_flight_requests
+          - Add to @inflight_requests
         - Implement #record_request_complete(request, duration):
-          - Remove from @in_flight_requests
+          - Remove from @inflight_requests
           - Increment @total_requests
           - Add duration to @total_duration
         - Implement #record_error(request, error_type):
           - Increment @error_count
           - Increment @errors_by_type[error_type]
         - Implement reader methods:
-          - #in_flight_count → Integer
-          - #in_flight_requests → Array<Request> (frozen copy)
+          - #inflight_count → Integer
+          - #inflight_requests → Array<Request> (frozen copy)
           - #total_requests → Integer
           - #average_duration → Float (total_duration / total_requests, or 0)
           - #error_count → Integer
@@ -954,7 +954,7 @@ which reuses underlying connections automatically.
 
 [x] 5.2 Backpressure handling - SIMPLIFIED
         Capacity checking now happens at enqueue time (synchronous boundary) by
-        comparing in_flight_count + pending_count against max_connections.
+        comparing inflight_count + pending_count against max_connections.
         Raises CapacityError immediately when at limit.
 ```
 
@@ -969,9 +969,9 @@ which reuses underlying connections automatically.
           - @state = Concurrent::AtomicReference.new(:stopped)
           - @reactor_thread = nil
           - @shutdown_barrier = Concurrent::Event.new
-          - @tasks_lock = Mutex.new (protects @pending_tasks and @in_flight_requests)
+          - @tasks_lock = Mutex.new (protects @pending_tasks and @inflight_requests)
           - @pending_tasks = Set.new (tasks dequeued but not yet started)
-          - @in_flight_requests = Hash.new (request_id → RequestTask)
+          - @inflight_requests = Hash.new (request_id → RequestTask)
         - Define STATES = %i[stopped running draining stopping].freeze
         - Implement #start:
           - Return if already running
@@ -989,7 +989,7 @@ which reuses underlying connections automatically.
         - Implement state predicates: #running?, #stopped?, #draining?, #stopping?
         - Implement #enqueue(request):
           - Raise if not running
-          - Raise CapacityError if at max_connections (check pending + in_flight)
+          - Raise CapacityError if at max_connections (check pending + inflight)
           - Call request.enqueued! to record monotonic timestamp
           - Push to @queue
         - Write specs for state transitions
@@ -1012,7 +1012,7 @@ which reuses underlying connections automatically.
 [x] 6.3 Implement Processor - HTTP execution fiber:
         - Set Fiber[:current_request] = request
         - Call request.started! to record monotonic start time
-        - Add to @in_flight_requests (synchronized with @tasks_lock)
+        - Add to @inflight_requests (synchronized with @tasks_lock)
         - Create per-request Async::HTTP::Client
         - Build Async::HTTP::Request from our Request object
         - Set timeout using Async::Task.with_timeout
@@ -1021,7 +1021,7 @@ which reuses underlying connections automatically.
         - Call request.completed! to record monotonic completion time
         - Build Response object from Async::HTTP::Response
         - Pass request.duration to Response (calculated from monotonic times)
-        - Remove from @in_flight_requests (synchronized)
+        - Remove from @inflight_requests (synchronized)
         - Record request complete in metrics
         - Call #handle_success(request, response)
         - Write specs with WebMock HTTP stubs
@@ -1057,9 +1057,9 @@ which reuses underlying connections automatically.
           - Set state to :stopping
           - Signal reactor to stop accepting new requests
           - Calculate deadline from timeout
-          - Loop until in_flight_count == 0 or deadline passed:
+          - Loop until inflight_count == 0 or deadline passed:
             - Sleep briefly
-            - Check in_flight_count
+            - Check inflight_count
           - For remaining in-flight requests:
             - Cancel fiber if possible
             - Build list of requests to re-enqueue
@@ -1446,7 +1446,7 @@ end
 # In a monitoring endpoint or admin panel
 metrics = Sidekiq::AsyncHttp.metrics.to_h
 # => {
-#   in_flight_count: 42,
+#   inflight_count: 42,
 #   total_requests: 15_234,
 #   average_duration: 0.234,
 #   error_count: 127,
@@ -1476,8 +1476,8 @@ metrics = Sidekiq::AsyncHttp.metrics.to_h
 **3. Simplified Processor Architecture**
    - Removed connection_pool parameter
    - Added `@pending_tasks` to track tasks between dequeue and execution start
-   - Consolidated to single `@tasks_lock` (protects both @pending_tasks and @in_flight_requests)
-   - Capacity check: `(pending_count + in_flight_count) >= max_connections`
+   - Consolidated to single `@tasks_lock` (protects both @pending_tasks and @inflight_requests)
+   - Capacity check: `(pending_count + inflight_count) >= max_connections`
    - Fixed Ruby 4.0 compatibility: `Thread::Queue.pop(timeout: timeout)` uses keyword args
    - **Rationale**: Simpler concurrency model with clearer state tracking
 

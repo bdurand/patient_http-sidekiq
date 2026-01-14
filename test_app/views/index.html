@@ -227,7 +227,7 @@
           type="number"
           id="count"
           name="count"
-          value="10"
+          value="50"
           min="1"
           max="1000"
           step="1"
@@ -244,14 +244,14 @@
             type="number"
             id="delay"
             name="delay"
-            value="0.0"
+            value="5"
             min="0.0"
-            max="10.0"
+            max="60.0"
             step="any"
             autocomplete="off"
           >
           <label style="display: flex; align-items: center; gap: 5px; font-weight: normal; margin-bottom: 0; white-space: nowrap;">
-            <input type="checkbox" id="randomize" name="randomize" value="true">
+            <input type="checkbox" id="randomize" name="randomize" value="true" checked>
             Randomize by ±50%
           </label>
         </div>
@@ -264,7 +264,7 @@
           type="number"
           id="timeout"
           name="timeout"
-          value="30.0"
+          value="30"
           min="0.1"
           max="60.0"
           step="any"
@@ -277,8 +277,12 @@
     </form>
 
     <div class="status-section">
-      <div class="status-title">HTTP Request Results</div>
-      <div class="status-grid">
+      <div class="status-title">HTTP Requests</div>
+      <div class="status-grid three-col">
+        <div class="status-card">
+          <div class="status-label">In Flight</div>
+          <div class="status-value" id="inflight-count">0</div>
+        </div>
         <div class="status-card success">
           <div class="status-label">Success</div>
           <div class="status-value" id="success-count">0</div>
@@ -292,10 +296,14 @@
 
     <div class="status-section">
       <div class="status-title">Sidekiq Queue Stats</div>
-      <div class="status-grid three-col">
+      <div class="status-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr;">
         <div class="status-card">
           <div class="status-label">Enqueued</div>
           <div class="status-value" id="enqueued-count">0</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Retry</div>
+          <div class="status-value" id="retry-count">0</div>
         </div>
         <div class="status-card">
           <div class="status-label">Processed</div>
@@ -350,8 +358,8 @@
             const randomize = formData.get('randomize') === 'true';
             const randomizeText = randomize ? ' (randomized)' : '';
             showToast(`Successfully enqueued ${count} jobs (${delay}s delay${randomizeText}, ${timeout}s timeout)!`);
-            // Reset last update time and restart polling if stopped
-            lastUpdateTime = Date.now();
+            // Reset zero activity count and restart polling if stopped
+            zeroActivityCount = 0;
             if (!isPolling) {
               startPolling();
               const statusEl = document.getElementById('polling-status');
@@ -373,39 +381,41 @@
       });
 
       // Status polling
-      let lastSuccessCount = 0;
-      let lastErrorCount = 0;
-      let lastUpdateTime = Date.now();
+      let zeroActivityCount = 0;
       let pollInterval = null;
       let isPolling = false;
 
       function updateStatus(data) {
+        const inflightEl = document.getElementById('inflight-count');
         const successEl = document.getElementById('success-count');
         const errorEl = document.getElementById('error-count');
         const enqueuedEl = document.getElementById('enqueued-count');
         const processedEl = document.getElementById('processed-count');
+        const retryEl = document.getElementById('retry-count');
         const failedEl = document.getElementById('failed-count');
         const statusEl = document.getElementById('polling-status');
 
-        const newSuccess = data.success || 0;
-        const newError = data.error || 0;
+        const inflight = data.inflight || 0;
+        const enqueued = data.enqueued || 0;
+        const retry = data.retry || 0;
 
-        successEl.textContent = newSuccess;
-        errorEl.textContent = newError;
-        enqueuedEl.textContent = data.enqueued || 0;
+        inflightEl.textContent = inflight;
+        successEl.textContent = data.success || 0;
+        errorEl.textContent = data.error || 0;
+        enqueuedEl.textContent = enqueued;
         processedEl.textContent = data.processed || 0;
+        retryEl.textContent = retry;
         failedEl.textContent = data.failed || 0;
 
-        // Check if counts changed
-        if (newSuccess !== lastSuccessCount || newError !== lastErrorCount) {
-          lastUpdateTime = Date.now();
-          lastSuccessCount = newSuccess;
-          lastErrorCount = newError;
+        // Track consecutive zero activity (inflight, enqueued, and retry all zero)
+        if (inflight === 0 && enqueued === 0 && retry === 0) {
+          zeroActivityCount++;
+        } else {
+          zeroActivityCount = 0;
         }
 
-        // Stop polling if no changes for 60 seconds
-        const timeSinceLastUpdate = Date.now() - lastUpdateTime;
-        if (timeSinceLastUpdate > 60000 && isPolling) {
+        // Stop polling if no activity 5 times in a row
+        if (zeroActivityCount >= 5 && isPolling) {
           stopPolling();
           statusEl.textContent = 'Polling stopped (no activity)';
           statusEl.className = 'polling-indicator stopped';

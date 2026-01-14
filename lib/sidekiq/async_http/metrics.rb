@@ -14,7 +14,7 @@ module Sidekiq
         @error_count = Concurrent::AtomicFixnum.new(0)
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
-        @in_flight_requests = Concurrent::AtomicFixnum.new(0)
+        @inflight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
       end
 
@@ -22,7 +22,7 @@ module Sidekiq
       #
       # @return [void]
       def record_request_start
-        @in_flight_requests.increment
+        @inflight_requests.increment
       end
 
       # Record the completion of a request
@@ -30,7 +30,7 @@ module Sidekiq
       # @param duration [Float] request duration in seconds
       # @return [void]
       def record_request_complete(duration)
-        @in_flight_requests.decrement
+        @inflight_requests.decrement
         @total_requests.increment
 
         if duration
@@ -72,8 +72,8 @@ module Sidekiq
 
       # Get the number of in-flight requests
       # @return [Integer]
-      def in_flight_count
-        @in_flight_requests.value
+      def inflight_count
+        @inflight_requests.value
       end
 
       # Get total number of requests processed
@@ -111,7 +111,7 @@ module Sidekiq
       # @return [Hash] hash with all metric values
       def to_h
         {
-          "in_flight_count" => in_flight_count,
+          "inflight_count" => inflight_count,
           "total_requests" => total_requests,
           "average_duration" => average_duration,
           "error_count" => error_count,
@@ -127,7 +127,7 @@ module Sidekiq
         @total_requests = Concurrent::AtomicFixnum.new(0)
         @error_count = Concurrent::AtomicFixnum.new(0)
         @total_duration = Concurrent::AtomicReference.new(0.0)
-        @in_flight_requests = Concurrent::AtomicFixnum.new(0)
+        @inflight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @last_inflight_update = Concurrent::AtomicReference.new(Time.now.to_f)
