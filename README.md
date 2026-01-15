@@ -26,22 +26,6 @@ Sidekiq is designed with the assumption that jobs are short-lived and complete q
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-```mermaid
-gantt
-    title Traditional Sidekiq Job (Workers Blocked)
-    dateFormat X
-    axisFormat %Ss
-
-    section Worker 1
-    HTTP Request (5s) :active, 0, 5000
-
-    section Worker 2
-    HTTP Request (5s) :active, 0, 5000
-
-    section Worker 3
-    HTTP Request (5s) :active, 0, 5000
-```
-
 **The Solution:**
 
 ```
@@ -56,37 +40,6 @@ gantt
 │                                                                        │
 │  → Workers immediately free = dozens of jobs processed                 │
 └────────────────────────────────────────────────────────────────────────┘
-```
-
-```mermaid
-gantt
-    title With Async HTTP Processor (Workers Free)
-    dateFormat X
-    axisFormat %Ss
-
-    section Worker 1
-    Enqueue :done, 0, 100
-    Job :crit, 100, 200
-    Job :crit, 200, 300
-    Job :crit, 300, 400
-    Job :crit, 400, 500
-
-    section Worker 2
-    Enqueue :done, 0, 100
-    Job :crit, 100, 200
-    Job :crit, 200, 300
-    Job :crit, 300, 400
-    Job :crit, 400, 500
-
-    section Worker 3
-    Enqueue :done, 0, 100
-    Job :crit, 100, 200
-    Job :crit, 200, 300
-    Job :crit, 300, 400
-    Job :crit, 400, 500
-
-    section Async Processor
-    100+ concurrent HTTP requests :active, 0, 5000
 ```
 
 The async processor runs in a dedicated thread within your Sidekiq process, using Ruby's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking. When an HTTP request completes, the response is passed to a callback worker for processing.
@@ -122,15 +75,15 @@ class FetchDataWorker
   include Sidekiq::AsyncHttp::Job
 
   # Define callback for successful responses
-  success_callback do |response, user_id, endpoint|
+  on_completion do |response, user_id, endpoint|
     data = response.json
     User.find(user_id).update!(external_data: data)
   end
 
   # Define callback for errors (optional)
-  error_callback do |error, user_id, endpoint|
+  on_error do |error, user_id, endpoint|
     Rails.logger.error("Failed to fetch data for user #{user_id}: #{error.message}")
-    # Error will be retried automatically if no error_callback is defined
+    # Error will be retried automatically if no on_error is defined
   end
 
   def perform(user_id, endpoint)
@@ -145,7 +98,7 @@ end
 
 ### 2. That's It!
 
-The processor starts automatically with Sidekiq. When the HTTP request completes, your `success_callback` or `error_callback` will be executed as a new Sidekiq job with the original arguments.
+The processor starts automatically with Sidekiq. When the HTTP request completes, your `on_completion` or `on_error` will be executed as a new Sidekiq job with the original arguments.
 
 ## Usage Patterns
 
@@ -163,7 +116,7 @@ class ApiWorker
          timeout: 60
 
   # Callbacks receive the response/error plus original job arguments
-  success_callback do |response, resource_type, resource_id|
+  on_completion do |response, resource_type, resource_id|
     if response.success?
       process_data(response.json, resource_type, resource_id)
     else
@@ -171,7 +124,7 @@ class ApiWorker
     end
   end
 
-  error_callback do |error, resource_type, resource_id|
+  on_error do |error, resource_type, resource_id|
     case error.error_type
     when :timeout
       # Re-enqueue with exponential backoff
@@ -194,8 +147,8 @@ end
 class WebhookWorker
   include Sidekiq::AsyncHttp::Job
 
-  success_callback { |response, event_id| WebhookDelivery.mark_delivered(event_id) }
-  error_callback { |error, event_id| WebhookDelivery.mark_failed(event_id, error.message) }
+  on_completion { |response, event_id| WebhookDelivery.mark_delivered(event_id) }
+  on_error { |error, event_id| WebhookDelivery.mark_failed(event_id, error.message) }
 
   def perform(event_id)
     event = Event.find(event_id)
@@ -243,7 +196,7 @@ class FetchUserDataWorker
   include Sidekiq::AsyncHttp::Job
 
   # Point to dedicated callback workers
-  self.success_callback_worker = FetchCompletionWorker
+  self.completion_callback_worker = FetchCompletionWorker
   self.error_callback_worker = FetchErrorWorker
 
   def perform(user_id)
@@ -281,7 +234,7 @@ end
 The `Sidekiq::AsyncHttp::Response` object passed to your success callback includes:
 
 ```ruby
-success_callback do |response, *args|
+on_completion do |response, *args|
   response.status      # => 200 (Integer)
   response.headers     # => HttpHeaders object (hash-like, case-insensitive)
   response.body        # => Response body as String
@@ -306,7 +259,7 @@ end
 The `Sidekiq::AsyncHttp::Error` object passed to your error callback includes:
 
 ```ruby
-error_callback do |error, *args|
+on_error do |error, *args|
   error.class_name   # => "Async::TimeoutError" (String)
   error.message      # => Error message
   error.backtrace    # => Array of backtrace lines
@@ -318,7 +271,7 @@ error_callback do |error, *args|
 end
 ```
 
-**Note:** The `Error` object represents exceptions that occurred during the HTTP request (timeouts, connection failures, SSL errors). HTTP error responses (4xx, 5xx) are delivered to the `success_callback` as a `Response` object with an error status code.
+**Note:** The `Error` object represents exceptions that occurred during the HTTP request (timeouts, connection failures, SSL errors). HTTP error responses (4xx, 5xx) are delivered to the `on_completion` as a `Response` object with an error status code.
 
 ## Configuration
 
@@ -441,7 +394,7 @@ The Web UI shows:
 
 ### Callbacks for Custom Monitoring
 
-Register callbacks to integrate with your monitoring system:
+You can register callbacks to integrate with your monitoring system using the `after_completion` and `after_error` hooks:
 
 ```ruby
 Sidekiq::AsyncHttp.after_completion do |response|
@@ -454,6 +407,8 @@ Sidekiq::AsyncHttp.after_error do |error|
   Sentry.capture_message("Async HTTP error: #{error.message}")
 end
 ```
+
+You can register multiple callbacks; they will be called in the order registered.
 
 ## Shutdown Behavior
 

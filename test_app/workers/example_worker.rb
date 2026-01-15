@@ -8,7 +8,7 @@ class ExampleWorker
 
   sidekiq_retry_in { |count| 2 }
 
-  success_callback do |response, method, url, timeout, delay|
+  on_completion do |response, method, url, timeout, delay|
     Sidekiq.logger.info("Request succeeded: #{method.upcase} #{url} - Status: #{response.status}")
 
     Sidekiq.redis do |conn|
@@ -16,7 +16,7 @@ class ExampleWorker
     end
   end
 
-  error_callback do |error, method, url, timeout, delay|
+  on_error do |error, method, url, timeout, delay|
     Sidekiq.logger.error("Request failed: #{method.upcase} #{url} - Error: #{error.message}")
 
     Sidekiq.redis do |conn|

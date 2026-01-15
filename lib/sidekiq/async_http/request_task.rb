@@ -143,12 +143,7 @@ module Sidekiq::AsyncHttp
       worker_class = ClassHelper.resolve_class_name(@completion_worker)
       raise "Completion worker class not set" unless worker_class
 
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-        # Invoke callback inline for testing
-        worker_class.new.perform(response.to_h, *job_args)
-      else
-        worker_class.set(async_http_continuation: "completion").perform_async(response.to_h, *job_args)
-      end
+      worker_class.set(async_http_continuation: "completion").perform_async(response.to_h, *job_args)
     end
 
     # Called with the HTTP error on a failed request.
@@ -163,12 +158,7 @@ module Sidekiq::AsyncHttp
       if @error_worker
         error = Error.from_exception(exception, request_id: @id, duration: duration, url: request.url, method: request.method)
         worker_class = ClassHelper.resolve_class_name(@error_worker)
-        if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
-          # Invoke callback inline for testing
-          worker_class.new.perform(error.to_h, *job_args)
-        else
-          worker_class.set(async_http_continuation: "error").perform_async(error.to_h, *job_args)
-        end
+        worker_class.set(async_http_continuation: "error").perform_async(error.to_h, *job_args)
       else
         # Re-enqueue the original job only if it's not already a continuation
         # This prevents infinite loops in inline mode

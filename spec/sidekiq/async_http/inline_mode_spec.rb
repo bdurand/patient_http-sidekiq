@@ -5,7 +5,8 @@ require "spec_helper"
 RSpec.describe "Sidekiq::Testing.inline! mode" do
   before do
     # Save the original testing mode (Sidekiq::Testing stores it as a class variable)
-    @original_testing_mode = Sidekiq::Testing.instance_variable_get(:@test_mode)
+    # Note: nil means we should default to fake mode (as set in spec_helper.rb)
+    @original_testing_mode = Sidekiq::Testing.instance_variable_get(:@test_mode) || :fake
 
     # Enable inline testing mode
     Sidekiq::Testing.inline!
@@ -84,8 +85,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
     end
 
     it "handles 4xx and 5xx responses as successful (they are valid HTTP responses)" do
-      stub_request(:get, "https://api.example.com/missing")
-        .to_return(status: 404, body: "Not Found")
+      stub_request(:get, "https://api.example.com/missing").to_return(status: 404, body: "Not Found")
 
       client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
       request = client.async_get("/missing")
@@ -109,8 +109,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
   describe "failed HTTP request with error worker" do
     it "executes HTTP request inline and calls error worker inline on connection error" do
       # Stub connection error
-      stub_request(:get, "https://api.example.com/users")
-        .to_raise(Errno::ECONNREFUSED)
+      stub_request(:get, "https://api.example.com/users").to_raise(Errno::ECONNREFUSED)
 
       client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
       request = client.async_get("/users")
@@ -158,57 +157,20 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
   end
 
   describe "failed HTTP request without error worker" do
-    it "re-enqueues the original job inline when no error worker is provided" do
+    it "raises an error when no error worker is provided" do
       # Stub connection error
-      stub_request(:get, "https://api.example.com/users")
-        .to_raise(Errno::ECONNREFUSED)
+      stub_request(:get, "https://api.example.com/users").to_raise(Errno::ECONNREFUSED)
 
       client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
       request = client.async_get("/users")
 
-      # In inline mode, Sidekiq::Client.push will enqueue but not execute inline
-      # So we need to verify the job hash was pushed to the queue
-      expect(Sidekiq::Client).to receive(:push).with(hash_including(
-        "class" => "TestWorkers::Worker",
-        "args" => ["arg1"]
-      ))
-
-      request.execute(
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-no-error-worker", "args" => ["arg1"]},
-        completion_worker: TestWorkers::CompletionWorker
-        # Note: no error_worker provided
-      )
-
-      # Verify no workers were called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
-    end
-
-    it "does NOT re-enqueue if the job is already a continuation (prevents infinite loop)" do
-      # Stub connection error
-      stub_request(:get, "https://api.example.com/users")
-        .to_raise(Errno::ECONNREFUSED)
-
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/users")
-
-      # Verify that Sidekiq::Client.push is NOT called (preventing infinite loop)
-      expect(Sidekiq::Client).not_to receive(:push)
-
-      # Execute with a continuation job (simulating a retry)
-      request.execute(
-        sidekiq_job: {
-          "class" => "TestWorkers::Worker",
-          "jid" => "test-continuation",
-          "args" => ["arg1"],
-          "async_http_continuation" => "completion"  # Mark as continuation
-        },
-        completion_worker: TestWorkers::CompletionWorker
-      )
-
-      # Verify no workers were called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
+      expect do
+        request.execute(
+          sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-no-error-worker", "args" => ["arg1"]},
+          completion_worker: TestWorkers::CompletionWorker
+          # Note: no error_worker provided
+        )
+      end.to raise_error(Errno::ECONNREFUSED)
     end
   end
 

@@ -290,6 +290,14 @@ module Sidekiq
         # Set to 2x the heartbeat interval, with a minimum of 120 seconds
         [config.heartbeat_interval * 2, 120].max
       end
+
+      # Push a job to Sidekiq using Sidekiq::Client.push which respects testing mode
+      #
+      # @param job_hash [Hash] the Sidekiq job hash
+      # @return [String] job ID
+      def push_sidekiq_job(job_hash)
+        Sidekiq::Client.push(job_hash)
+      end
     end
   end
 end

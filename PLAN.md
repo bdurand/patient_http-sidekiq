@@ -385,9 +385,9 @@ Mixin module providing callback DSL for Sidekiq jobs (NEW - not in original plan
 ```ruby
 # Class methods:
 # - client(**options) - configure HTTP client for this job class
-# - success_callback(options = {}, &block) - define success callback inline
-# - error_callback(options = {}, &block) - define error callback inline
-# - success_callback_worker - get/set success callback worker class
+# - on_completion(options = {}, &block) - define success callback inline
+# - on_error(options = {}, &block) - define error callback inline
+# - completion_callback_worker - get/set success callback worker class
 # - error_callback_worker - get/set error callback worker class
 #
 # Instance methods (when included):
@@ -407,11 +407,11 @@ Mixin module providing callback DSL for Sidekiq jobs (NEW - not in original plan
 #
 #   client base_url: "https://api.example.com"
 #
-#   success_callback do |response, *args|
+#   on_completion do |response, *args|
 #     # handle response
 #   end
 #
-#   error_callback do |error, *args|
+#   on_error do |error, *args|
 #     # handle error
 #   end
 #
@@ -1364,12 +1364,12 @@ class WebhookDeliveryWorker
 
   client timeout: 30
 
-  success_callback do |response, webhook_id, payload|
+  on_completion do |response, webhook_id, payload|
     webhook = Webhook.find(webhook_id)
     webhook.update!(last_delivered_at: Time.current, status: "delivered")
   end
 
-  error_callback do |error, webhook_id, payload|
+  on_error do |error, webhook_id, payload|
     webhook = Webhook.find(webhook_id)
     webhook.update!(status: "error", last_error: "#{error.class_name}: #{error.message}")
   end

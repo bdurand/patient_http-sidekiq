@@ -10,11 +10,11 @@ module Sidekiq::AsyncHttp
   #   class MyJob
   #     include Sidekiq::AsyncHttp::Job
   #
-  #     success_callback do |response, *args|
+  #     on_completion do |response, *args|
   #       # Handle successful response
   #     end
   #
-  #     error_callback do |error, *args|
+  #     on_error do |error, *args|
   #       # Handle error
   #     end
   #
@@ -38,7 +38,7 @@ module Sidekiq::AsyncHttp
     # Class methods added to the including job class.
     module ClassMethods
       # @return [Class] the success callback worker class
-      attr_reader :success_callback_worker
+      attr_reader :completion_callback_worker
 
       # @return [Class] the error callback worker class
       attr_reader :error_callback_worker
@@ -59,8 +59,8 @@ module Sidekiq::AsyncHttp
       # @yield [response, *args] block to execute on successful response
       # @yieldparam response [Response] the HTTP response
       # @yieldparam args [Array] additional arguments passed to the job
-      def success_callback(options = {}, &block)
-        success_callback_block = block
+      def on_completion(options = {}, &block)
+        on_completion_block = block
 
         worker_class = Class.new do
           include Sidekiq::Job
@@ -69,24 +69,24 @@ module Sidekiq::AsyncHttp
 
           define_method(:perform) do |response_data, *args|
             response = Sidekiq::AsyncHttp::Response.from_h(response_data)
-            success_callback_block.call(response, *args)
+            on_completion_block.call(response, *args)
           end
         end
 
         const_set(:SuccessCallback, worker_class)
-        self.success_callback_worker = const_get(:SuccessCallback)
+        self.completion_callback_worker = const_get(:SuccessCallback)
       end
 
       # Sets the success callback worker class.
       #
       # @param worker_class [Class] the worker class that includes Sidekiq::Job
       # @raise [ArgumentError] if worker_class is not a valid Sidekiq job class
-      def success_callback_worker=(worker_class)
+      def completion_callback_worker=(worker_class)
         unless worker_class.is_a?(Class) && worker_class.included_modules.include?(Sidekiq::Job)
-          raise ArgumentError, "success_callback_worker must be a Sidekiq::Job class"
+          raise ArgumentError, "completion_callback_worker must be a Sidekiq::Job class"
         end
 
-        @success_callback_worker = worker_class
+        @completion_callback_worker = worker_class
       end
 
       # Defines an error callback for HTTP requests.
@@ -95,7 +95,7 @@ module Sidekiq::AsyncHttp
       # @yield [error, *args] block to execute on error
       # @yieldparam error [Error] the HTTP error
       # @yieldparam args [Array] additional arguments passed to the job
-      def error_callback(options = {}, &block)
+      def on_error(options = {}, &block)
         error_callback_block = block
 
         worker_class = Class.new do
@@ -144,7 +144,7 @@ module Sidekiq::AsyncHttp
       completion_worker ||= options.delete(:completion_worker)
       error_worker ||= options.delete(:error_worker)
 
-      completion_worker ||= self.class.success_callback_worker
+      completion_worker ||= self.class.completion_callback_worker
       error_worker ||= self.class.error_callback_worker
 
       request_task = client.async_request(method, url, **options)

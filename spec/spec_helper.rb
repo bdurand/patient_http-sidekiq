@@ -19,6 +19,10 @@ require "mock_redis"
 
 require_relative "../lib/sidekiq-async_http"
 
+# Set to to a dummy Redis URL so it doesn't accidentally connect to real Redis
+# if something is misconfigured.
+ENV["REDIS_URL"] ||= "redis://localhost:1/0"
+
 # Disable all real HTTP connections except localhost (for test server)
 WebMock.disable_net_connect!(allow_localhost: true)
 

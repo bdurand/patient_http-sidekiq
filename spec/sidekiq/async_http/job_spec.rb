@@ -36,14 +36,14 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     end
   end
 
-  describe ".success_callback" do
+  describe ".on_completion" do
     let(:worker_class) do
       Class.new do
         include Sidekiq::AsyncHttp::Job
 
         @called_args = []
 
-        success_callback(retry: false) do |response, *args|
+        on_completion(retry: false) do |response, *args|
           @called_args << [response, *args]
         end
       end
@@ -52,7 +52,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     let(:called_args) { worker_class.instance_variable_get(:@called_args) }
 
     it "sets the success callback worker class" do
-      expect(worker_class.success_callback_worker).to eq(worker_class::SuccessCallback)
+      expect(worker_class.completion_callback_worker).to eq(worker_class::SuccessCallback)
     end
 
     it "defines a SuccessCallback worker class" do
@@ -73,14 +73,14 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     end
   end
 
-  describe ".error_callback" do
+  describe ".on_error" do
     let(:worker_class) do
       Class.new do
         include Sidekiq::AsyncHttp::Job
 
         @called_args = []
 
-        error_callback(retry: false) do |error, *args|
+        on_error(retry: false) do |error, *args|
           @called_args << [error, *args]
         end
       end
@@ -117,11 +117,11 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
         @called_args = []
 
-        success_callback do |response, *args|
+        on_completion do |response, *args|
           @called_args << [response, *args]
         end
 
-        error_callback do |error, *args|
+        on_error do |error, *args|
           @called_args << [error, *args]
         end
       end
@@ -182,7 +182,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
             @called_args = []
 
-            self.success_callback_worker = TestWorkers::CompletionWorker
+            self.completion_callback_worker = TestWorkers::CompletionWorker
             self.error_callback_worker = TestWorkers::ErrorWorker
           end
         end
@@ -219,7 +219,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         worker_class_without_error_callback = Class.new do
           include Sidekiq::AsyncHttp::Job
 
-          success_callback do |response, *args|
+          on_completion do |response, *args|
             # no-op
           end
         end

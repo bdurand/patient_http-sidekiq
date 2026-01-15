@@ -66,6 +66,7 @@ module Sidekiq::AsyncHttp
   autoload :Error, File.join(__dir__, "async_http/error")
   autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
+  autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
   autoload :Job, File.join(__dir__, "async_http/job")
   autoload :Metrics, File.join(__dir__, "async_http/metrics")
   autoload :Payload, File.join(__dir__, "async_http/payload")
