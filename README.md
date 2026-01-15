@@ -4,6 +4,8 @@
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
 [![Gem Version](https://badge.fury.io/rb/sidekiq-async_http.svg)](https://badge.fury.io/rb/sidekiq-async_http)
 
+__Built for APIs that like to think.__
+
 This gem provides a mechanism to offload HTTP requests from Sidekiq jobs to a dedicated async I/O processor, freeing worker threads immediately.
 
 ## Motivation
@@ -16,12 +18,28 @@ Sidekiq is designed with the assumption that jobs are short-lived and complete q
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     Traditional Sidekiq Job                            │
 │                                                                        │
-│  Worker Thread 1: [████████████ HTTP Request (5s) ████████████████]   │
-│  Worker Thread 2: [████████████ HTTP Request (5s) ████████████████]   │
-│  Worker Thread 3: [████████████ HTTP Request (5s) ████████████████]   │
+│  Worker Thread 1: [████████████ HTTP Request (5s) ████████████████]    │
+│  Worker Thread 2: [████████████ HTTP Request (5s) ████████████████]    │
+│  Worker Thread 3: [████████████ HTTP Request (5s) ████████████████]    │
 │                                                                        │
-│  → 3 workers blocked for 5 seconds = 0 jobs processed                 │
+│  → 3 workers blocked for 5 seconds = 0 jobs processed                  │
 └────────────────────────────────────────────────────────────────────────┘
+```
+
+```mermaid
+gantt
+    title Traditional Sidekiq Job (Workers Blocked)
+    dateFormat X
+    axisFormat %Ss
+
+    section Worker 1
+    HTTP Request (5s) :active, 0, 5000
+
+    section Worker 2
+    HTTP Request (5s) :active, 0, 5000
+
+    section Worker 3
+    HTTP Request (5s) :active, 0, 5000
 ```
 
 **The Solution:**
@@ -30,14 +48,45 @@ Sidekiq is designed with the assumption that jobs are short-lived and complete q
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     With Async HTTP Processor                          │
 │                                                                        │
-│  Worker Thread 1: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]   │
-│  Worker Thread 2: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]   │
-│  Worker Thread 3: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]   │
+│  Worker Thread 1: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
+│  Worker Thread 2: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
+│  Worker Thread 3: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
 │                                                                        │
 │  Async Processor: [═══════════ 100+ concurrent HTTP requests ════════] │
 │                                                                        │
-│  → Workers immediately free = dozens of jobs processed                │
+│  → Workers immediately free = dozens of jobs processed                 │
 └────────────────────────────────────────────────────────────────────────┘
+```
+
+```mermaid
+gantt
+    title With Async HTTP Processor (Workers Free)
+    dateFormat X
+    axisFormat %Ss
+
+    section Worker 1
+    Enqueue :done, 0, 100
+    Job :crit, 100, 200
+    Job :crit, 200, 300
+    Job :crit, 300, 400
+    Job :crit, 400, 500
+
+    section Worker 2
+    Enqueue :done, 0, 100
+    Job :crit, 100, 200
+    Job :crit, 200, 300
+    Job :crit, 300, 400
+    Job :crit, 400, 500
+
+    section Worker 3
+    Enqueue :done, 0, 100
+    Job :crit, 100, 200
+    Job :crit, 200, 300
+    Job :crit, 300, 400
+    Job :crit, 400, 500
+
+    section Async Processor
+    100+ concurrent HTTP requests :active, 0, 5000
 ```
 
 The async processor runs in a dedicated thread within your Sidekiq process, using Ruby's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking. When an HTTP request completes, the response is passed to a callback worker for processing.
@@ -90,6 +139,9 @@ class FetchDataWorker
   end
 end
 ```
+
+> [!NOTE]
+> The request should be the last thing your worker does.
 
 ### 2. That's It!
 

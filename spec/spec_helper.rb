@@ -25,11 +25,10 @@ WebMock.disable_net_connect!(allow_localhost: true)
 # Use fake mode for Sidekiq during tests
 Sidekiq::Testing.fake!
 
-# Disable strict args checking for tests since processor uses symbol-keyed hashes
-Sidekiq.strict_args!(false)
+Sidekiq.strict_args!(true)
 
 # Disable Sidekiq logging during tests
-Sidekiq.logger.level = Logger::FATAL
+Sidekiq.logger.level = Logger::ERROR
 
 Dir.glob(File.join(__dir__, "support", "**", "*.rb")).sort.each do |file|
   require file
