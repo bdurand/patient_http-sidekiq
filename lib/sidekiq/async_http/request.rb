@@ -106,24 +106,115 @@ module Sidekiq::AsyncHttp
 
       # Check if processor is running
       processor = Sidekiq::AsyncHttp.processor
-      unless processor&.running?
-        raise Sidekiq::AsyncHttp::NotRunningError, "Cannot enqueue request: processor is not running"
+
+      # If processor is running, use it (takes precedence over inline mode)
+      if processor&.running?
+        # Create RequestTask and enqueue to processor
+        task = RequestTask.new(
+          request: self,
+          sidekiq_job: @job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+        processor.enqueue(task)
+
+        # Return the request ID
+        return @id
       end
 
-      # Create RequestTask and enqueue to processor
-      task = RequestTask.new(
-        request: self,
-        sidekiq_job: @job,
-        completion_worker: completion_worker,
-        error_worker: error_worker
-      )
-      processor.enqueue(task)
+      # If processor is not running but we're in inline mode, execute inline
+      if Sidekiq::Testing.inline?
+        return execute_inline(completion_worker, error_worker)
+      end
 
-      # Return the request ID
-      @id
+      # Otherwise, raise an error
+      raise Sidekiq::AsyncHttp::NotRunningError, "Cannot enqueue request: processor is not running"
     end
 
     private
+
+    # Execute the HTTP request inline (synchronously) and invoke callbacks inline.
+    # This is used when Sidekiq.testing mode is set to :inline.
+    #
+    # @param completion_worker [Class] Worker class for success callback
+    # @param error_worker [Class, nil] Worker class for error callback
+    # @return [String] the request ID
+    def execute_inline(completion_worker, error_worker)
+      require "net/http"
+      require "uri"
+
+      uri = URI.parse(@url)
+      start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      begin
+        # Create HTTP client
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.use_ssl = (uri.scheme == "https")
+        http.open_timeout = @connect_timeout if @connect_timeout
+        http.read_timeout = @timeout if @timeout
+
+        # Create request
+        request_class = case @method
+        when :get then Net::HTTP::Get
+        when :post then Net::HTTP::Post
+        when :put then Net::HTTP::Put
+        when :patch then Net::HTTP::Patch
+        when :delete then Net::HTTP::Delete
+        else
+          raise ArgumentError, "Unsupported method: #{@method}"
+        end
+
+        request = request_class.new(uri.request_uri)
+
+        # Set headers
+        @headers.each do |key, value|
+          request[key] = value
+        end
+
+        # Set body if present
+        request.body = @body if @body
+
+        # Execute request
+        http_response = http.request(request)
+
+        # Calculate duration
+        end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        duration = end_time - start_time
+
+        # Build response object
+        response = Response.new(
+          status: http_response.code.to_i,
+          headers: http_response.to_hash.transform_values { |v| v.is_a?(Array) ? v.join(", ") : v },
+          body: http_response.body,
+          protocol: http_response.http_version,
+          duration: duration,
+          request_id: @id,
+          url: @url,
+          method: @method
+        )
+
+        # Invoke completion callback inline
+        completion_worker.new.perform(response.to_h, *@job["args"])
+      rescue => e
+        # Calculate duration
+        end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        duration = end_time - start_time
+
+        if error_worker
+          # Build error object and invoke error callback inline
+          error = Error.from_exception(e, request_id: @id, duration: duration, url: @url, method: @method)
+          error_worker.new.perform(error.to_h, *@job["args"])
+        else
+          # No error worker - re-enqueue the original job only if it's not already a continuation
+          # This prevents infinite loops
+          unless @job["async_http_continuation"]
+            Sidekiq::Client.push(@job)
+          end
+        end
+      end
+
+      @id
+    end
 
     # Validate the request has required HTTP parameters.
     # @raise [ArgumentError] if method or url is invalid
