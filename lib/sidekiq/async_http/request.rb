@@ -123,7 +123,7 @@ module Sidekiq::AsyncHttp
       end
 
       # If processor is not running but we're in inline mode, execute inline
-      if Sidekiq::Testing.inline?
+      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
         return execute_inline(completion_worker, error_worker)
       end
 
