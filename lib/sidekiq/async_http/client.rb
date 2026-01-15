@@ -23,11 +23,6 @@ module Sidekiq::AsyncHttp
     # @return [Float, nil] Default connection timeout in seconds
     attr_accessor :connect_timeout
 
-    # @return [Float, nil] Default read timeout in seconds
-    attr_accessor :read_timeout
-
-    # @return [Float, nil] Default write timeout in seconds
-    attr_accessor :write_timeout
 
     # Initializes a new Client.
     #
@@ -35,15 +30,11 @@ module Sidekiq::AsyncHttp
     # @param headers [Hash] Default headers for all requests
     # @param timeout [Float] Default request timeout in seconds
     # @param connect_timeout [Float, nil] Default connection timeout in seconds
-    # @param read_timeout [Float, nil] Default read timeout in seconds
-    # @param write_timeout [Float, nil] Default write timeout in seconds
-    def initialize(base_url: nil, headers: {}, timeout: 30, connect_timeout: nil, read_timeout: nil, write_timeout: nil)
+    def initialize(base_url: nil, headers: {}, timeout: 30, connect_timeout: nil)
       @base_url = base_url
       @headers = HttpHeaders.new(headers)
       @timeout = timeout
       @connect_timeout = connect_timeout
-      @read_timeout = read_timeout
-      @write_timeout = write_timeout
     end
 
     # Build an async HTTP request. Returns a Request. The Request object that must have
@@ -55,7 +46,7 @@ module Sidekiq::AsyncHttp
     # @param headers [Hash] additional headers to merge with client headers
     # @param params [Hash] query parameters to add to URL
     # @return [Request] request object
-    def async_request(method, uri, body: nil, json: nil, headers: {}, params: {}, timeout: nil, connect_timeout: nil, read_timeout: nil, write_timeout: nil)
+    def async_request(method, uri, body: nil, json: nil, headers: {}, params: {}, timeout: nil, connect_timeout: nil)
       full_uri = @base_url ? URI.join(@base_url, uri.to_s) : URI(uri)
       if params.any?
         query_string = URI.encode_www_form(params)
@@ -81,9 +72,7 @@ module Sidekiq::AsyncHttp
         headers: merged_headers.to_h,
         body: request_body,
         timeout: timeout || @timeout,
-        connect_timeout: connect_timeout || @connect_timeout,
-        read_timeout: read_timeout || @read_timeout,
-        write_timeout: write_timeout || @write_timeout
+        connect_timeout: connect_timeout || @connect_timeout
       )
     end
 

@@ -14,6 +14,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     headers: {},
     body: nil,
     timeout: 30,
+    connect_timeout: nil,
     worker_class: "TestWorkers::Worker",
     jid: nil,
     job_args: [],
@@ -25,7 +26,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       url: url,
       headers: headers,
       body: body,
-      timeout: timeout
+      timeout: timeout,
+      connect_timeout: connect_timeout
     )
     Sidekiq::AsyncHttp::RequestTask.new(
       request: request,
@@ -287,6 +289,41 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       it "returns false when state is not stopping" do
         expect(processor.stopping?).to be false
+      end
+    end
+
+    describe "#drained?" do
+      it "returns true when draining and idle" do
+        processor.start
+        processor.drain
+        expect(processor).to be_idle
+        expect(processor.drained?).to be true
+        processor.stop
+      end
+
+      it "returns false when draining but not idle" do
+        stub_request(:get, "https://api.example.com/users")
+          .to_return do
+            sleep(0.1) # Delay response to keep request in-flight
+            {status: 200, body: "response body", headers: {}}
+          end
+
+        processor.start
+        processor.enqueue(mock_request)
+        processor.wait_for_processing(timeout: 0.5)
+        processor.drain
+
+        # Should be draining but not idle (request still in flight)
+        expect(processor.draining?).to be true
+        expect(processor.drained?).to be false
+
+        processor.stop
+      end
+
+      it "returns false when not draining" do
+        processor.start
+        expect(processor.drained?).to be false
+        processor.stop
       end
     end
   end
@@ -662,46 +699,22 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       end
     end
 
-    it "handles timeout errors" do
-      allow(client).to receive(:call).and_raise(Async::TimeoutError.new("Request timed out"))
+    # Parameterized error handling tests
+    [
+      {error_class: Async::TimeoutError, error_message: "Request timed out", error_type: :timeout},
+      {error_class: OpenSSL::SSL::SSLError, error_message: "SSL error", error_type: :ssl},
+      {error_class: Errno::ECONNREFUSED, error_message: "Connection refused", error_type: :connection},
+      {error_class: StandardError, error_message: "Unknown error", error_type: :unknown}
+    ].each do |test_case|
+      it "handles #{test_case[:error_type]} errors" do
+        allow(client).to receive(:call).and_raise(test_case[:error_class].new(test_case[:error_message]))
 
-      expect(processor).to receive(:handle_error).with(mock_request, kind_of(Async::TimeoutError))
-      expect(metrics).to receive(:record_error).with(:timeout)
+        expect(processor).to receive(:handle_error).with(mock_request, kind_of(test_case[:error_class]))
+        expect(metrics).to receive(:record_error).with(test_case[:error_type])
 
-      Async do
-        processor.send(:process_request, mock_request)
-      end
-    end
-
-    it "handles SSL errors" do
-      allow(client).to receive(:call).and_raise(OpenSSL::SSL::SSLError.new("SSL error"))
-
-      expect(processor).to receive(:handle_error).with(mock_request, kind_of(OpenSSL::SSL::SSLError))
-      expect(metrics).to receive(:record_error).with(:ssl)
-      Async do
-        processor.send(:process_request, mock_request)
-      end
-    end
-
-    it "handles connection errors" do
-      allow(client).to receive(:call).and_raise(Errno::ECONNREFUSED.new("Connection refused"))
-
-      expect(processor).to receive(:handle_error).with(mock_request, kind_of(Errno::ECONNREFUSED))
-      expect(metrics).to receive(:record_error).with(:connection)
-
-      Async do
-        processor.send(:process_request, mock_request)
-      end
-    end
-
-    it "handles unknown errors" do
-      allow(client).to receive(:call).and_raise(StandardError.new("Unknown error"))
-
-      expect(processor).to receive(:handle_error).with(mock_request, kind_of(StandardError))
-      expect(metrics).to receive(:record_error).with(:unknown)
-
-      Async do
-        processor.send(:process_request, mock_request)
+        Async do
+          processor.send(:process_request, mock_request)
+        end
       end
     end
 
@@ -712,6 +725,55 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(processor.send(:classify_error, Errno::ECONNREFUSED.new)).to eq(:connection)
       expect(processor.send(:classify_error, Errno::ECONNRESET.new)).to eq(:connection)
       expect(processor.send(:classify_error, StandardError.new)).to eq(:unknown)
+    end
+
+    it "raises ResponseTooLargeError when content-length exceeds max" do
+      allow(client).to receive(:call).and_return(async_response)
+      allow(async_response).to receive(:body).and_return(response_body)
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({"content-length" => "20000000"}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
+      expect(metrics).to receive(:record_error).with(:response_too_large)
+
+      Async do
+        processor.send(:process_request, mock_request)
+      end
+    end
+
+    it "raises ResponseTooLargeError when body size exceeds max during read" do
+      allow(client).to receive(:call).and_return(async_response)
+      allow(async_response).to receive(:body).and_return(response_body)
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      # Simulate large body chunks that exceed max_response_size
+      large_chunk = "x" * 6_000_000
+      allow(response_body).to receive(:each).and_yield(large_chunk).and_yield(large_chunk)
+
+      expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
+      expect(metrics).to receive(:record_error).with(:response_too_large)
+
+      Async do
+        processor.send(:process_request, mock_request)
+      end
+    end
+
+    it "handles ResponseTooLargeError correctly" do
+      allow(client).to receive(:call).and_return(async_response)
+      allow(async_response).to receive(:body).and_return(response_body)
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({"content-length" => "20000000"}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
+      expect(metrics).to receive(:record_error).with(:response_too_large)
+
+      Async do
+        processor.send(:process_request, mock_request)
+      end
     end
 
     it "cleans up Fiber storage in ensure block" do
@@ -774,6 +836,105 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       Async do
         processor.send(:process_request, mock_request)
       end
+    end
+
+    it "uses idle_connection_timeout from configuration" do
+      endpoint = nil
+      allow(Async::HTTP::Endpoint).to receive(:parse) do |url, options|
+        endpoint = double("Endpoint", url: url)
+        expect(options[:idle_timeout]).to eq(config.idle_connection_timeout)
+        endpoint
+      end
+      allow(Async::HTTP::Client).to receive(:new).with(endpoint).and_return(client)
+      allow(client).to receive(:call).and_return(async_response)
+      stub_async_response_body("response body")
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      Async do
+        processor.send(:process_request, mock_request)
+      end
+
+      expect(Async::HTTP::Endpoint).to have_received(:parse)
+    end
+
+    it "uses connect_timeout from request when provided" do
+      request_with_timeout = create_request_task(
+        connect_timeout: 5.0
+      )
+
+      endpoint = nil
+      allow(Async::HTTP::Endpoint).to receive(:parse) do |url, options|
+        endpoint = double("Endpoint", url: url)
+        expect(options[:connect_timeout]).to eq(5.0)
+        endpoint
+      end
+      allow(Async::HTTP::Client).to receive(:new).with(endpoint).and_return(client)
+      allow(client).to receive(:call).and_return(async_response)
+      stub_async_response_body("response body")
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      Async do
+        processor.send(:process_request, request_with_timeout)
+      end
+
+      expect(Async::HTTP::Endpoint).to have_received(:parse)
+    end
+
+    it "uses default_request_timeout from configuration when request timeout is nil" do
+      # Create request with nil timeout to use default
+      request_without_timeout = create_request_task(timeout: nil)
+
+      allow(client).to receive(:call).and_return(async_response)
+      stub_async_response_body("response body")
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      # Mock the timeout wrapper to capture the timeout value
+      timeout_value = nil
+      allow(Async::Task).to receive(:current).and_return(double("Task").tap do |task|
+        allow(task).to receive(:with_timeout) do |timeout, &block|
+          timeout_value = timeout
+          block.call
+        end
+      end)
+
+      Async do
+        processor.send(:process_request, request_without_timeout)
+      end
+
+      expect(timeout_value).to eq(config.default_request_timeout)
+    end
+
+    it "uses request timeout when provided" do
+      request_with_timeout = create_request_task(
+        timeout: 45.0
+      )
+
+      allow(client).to receive(:call).and_return(async_response)
+      stub_async_response_body("response body")
+      allow(async_response).to receive(:status).and_return(200)
+      allow(async_response).to receive(:headers).and_return(stub_headers({}))
+      allow(async_response).to receive(:protocol).and_return("HTTP/2")
+
+      # Mock the timeout wrapper to capture the timeout value
+      timeout_value = nil
+      allow(Async::Task).to receive(:current).and_return(double("Task").tap do |task|
+        allow(task).to receive(:with_timeout) do |timeout, &block|
+          timeout_value = timeout
+          block.call
+        end
+      end)
+
+      Async do
+        processor.send(:process_request, request_with_timeout)
+      end
+
+      expect(timeout_value).to eq(45.0)
     end
   end
 

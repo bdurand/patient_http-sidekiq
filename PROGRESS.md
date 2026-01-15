@@ -1,5 +1,163 @@
 # Development Progress
 
+## Latest Update: Documented Singleton Processor Pattern - January 14, 2026
+
+### Added comprehensive documentation for singleton design pattern
+- **Location**: [lib/sidekiq/async_http.rb](lib/sidekiq/async_http.rb) main module documentation
+- **Pattern**: Single `@processor` instance maintained at module level, shared across entire application
+- **Documentation Added**:
+  - **Rationale Section**: Explains four key reasons for the singleton pattern
+    1. **Sidekiq Integration**: Aligns processor lifecycle with Sidekiq's startup/shutdown hooks
+    2. **Resource Management**: Single reactor avoids contention, uses connection pooling efficiently
+    3. **Configuration Simplicity**: One configuration, one metrics instance, one connection pool
+    4. **Process Model**: Maps naturally to Sidekiq's multi-worker, single-process architecture
+  - **Trade-offs Section**: Acknowledges testing complexity and global state
+    - Unit tests require `reset!` between tests
+    - Integration tests benefit from realistic single-processor setup
+    - Global state matches Sidekiq's design patterns
+- **Design Decision**: Prioritizes production reliability and operational simplicity over test isolation
+
+**Why This Matters**:
+- Future maintainers understand why the singleton pattern was chosen
+- Trade-offs are explicitly documented rather than implicit
+- Testing challenges are acknowledged with solutions provided
+- Architecture aligns with Sidekiq's philosophy and operational patterns
+
+---
+
+## Previous Update: Refactored Long Methods - January 14, 2026
+
+### Extracted read_response_body method from process_request
+- **Reason**: The `process_request` method was 77 lines with nested logic for reading and validating response body size
+- **Refactoring Applied**:
+  - Extracted response body reading logic into `read_response_body` method (37 lines)
+  - Reduced `process_request` from 77 to 54 lines
+  - Improved testability - body reading logic can now be tested independently
+  - Reduced nesting depth in main request processing flow
+  - Made the core request flow easier to understand
+- **Methods Not Refactored**:
+  - `stop()` (56 lines): Clear sequential flow through shutdown phases. Breaking it up would obscure the shutdown logic.
+  - `run_reactor()` (55 lines): Straightforward event loop. The core reactor logic benefits from being in one place.
+- **Test Results**: All 407 specs pass
+- **Coverage**: 95.42% line (895/938), 78.10% branch (214/274)
+- **Files Modified**: [lib/sidekiq/async_http/processor.rb](lib/sidekiq/async_http/processor.rb)
+
+**Benefits**:
+- Improved readability: Main request flow is clearer without nested body reading logic
+- Better separation of concerns: Body reading with size validation is now isolated
+- Enhanced testability: Could add focused tests for body reading edge cases
+- Maintained performance: No functional changes, just reorganization
+
+---
+
+## Previous Update: Removed Unused Timeout Attributes - January 14, 2026
+
+### Removed read_timeout and write_timeout
+- **Reason**: These timeout attributes were never used by the processor, which only uses `timeout` (overall request timeout) and `connect_timeout` (connection timeout)
+- **Removed from Request class**:
+  - Removed `@read_timeout` and `@write_timeout` instance variables
+  - Removed `attr_reader :read_timeout` and `attr_reader :write_timeout`
+  - Removed parameters from `initialize` method
+  - Updated YARD documentation
+- **Removed from Client class**:
+  - Removed `attr_accessor :read_timeout` and `attr_accessor :write_timeout`
+  - Removed parameters from `initialize` method
+  - Removed from `async_request` method signature
+  - Removed from `Request.new` call in `async_request`
+  - Updated YARD documentation
+- **Removed from module-level method**:
+  - Removed parameters from `Sidekiq::AsyncHttp.request` method
+  - Updated YARD documentation
+- **Removed tests**: Deleted 4 test cases that verified these unused attributes
+- **Test Results**: All 407 specs pass (down from 411)
+- **Coverage**: 95.41% line (893/936), 78.10% branch (214/274)
+- **Files Modified**:
+  - [lib/sidekiq/async_http/request.rb](lib/sidekiq/async_http/request.rb)
+  - [lib/sidekiq/async_http/client.rb](lib/sidekiq/async_http/client.rb)
+  - [lib/sidekiq/async_http.rb](lib/sidekiq/async_http.rb)
+  - [spec/sidekiq/async_http/client_spec.rb](spec/sidekiq/async_http/client_spec.rb)
+
+**Note**: Configuration class never had `default_read_timeout` or `default_write_timeout` attributes, so no changes were needed there.
+
+---
+
+## Previous Update: Magic Numbers Extracted to Constants - January 14, 2026
+
+### Extracted Timing Constants in processor.rb
+- **Added timing constants**: Defined 4 new constants after STATES for better maintainability:
+  - `DEQUEUE_TIMEOUT = 0.1` - Seconds to wait when dequeueing requests from queue
+  - `REACTOR_SLEEP = 0.01` - Seconds to sleep when queue is empty between polls
+  - `INFLIGHT_UPDATE_INTERVAL = 5` - Seconds between inflight stats updates to Redis
+  - `SHUTDOWN_POLL_INTERVAL = 0.001` - Seconds to sleep while polling during shutdown operations
+- **Replaced magic numbers**: Updated 8 locations throughout the file:
+  - `stop()` method: uses SHUTDOWN_POLL_INTERVAL for graceful shutdown polling
+  - `run_reactor()` method: uses INFLIGHT_UPDATE_INTERVAL (2 locations) and DEQUEUE_TIMEOUT + REACTOR_SLEEP
+  - `wait_for_idle()` method: uses SHUTDOWN_POLL_INTERVAL
+  - `wait_for_processing()` method: uses SHUTDOWN_POLL_INTERVAL
+- **Benefits**:
+  - Centralized timing configuration for easier tuning
+  - Self-documenting code with descriptive constant names
+  - Easier to modify behavior for testing or performance tuning
+- **Test Results**: All 411 specs pass
+- **Coverage**: 95.44% line (901/944), 78.10% branch (214/274)
+- **Files Modified**: [lib/sidekiq/async_http/processor.rb](lib/sidekiq/async_http/processor.rb)
+
+---
+
+## Previous Update: YARD Documentation Improvements - January 14, 2026
+
+### Fixed YARD Documentation in processor.rb
+- **Blank lines between descriptions and tags**: Added blank lines between method descriptions and YARD tags per AGENTS.md convention
+  - Updated 23 method documentation blocks throughout processor.rb
+  - Ensures consistency with project documentation standards
+- **Specific @raise tags**: Updated `enqueue` method documentation:
+  - Changed from generic `@raise [RuntimeError]` to specific error types
+  - Added `@raise [NotRunningError]` for when processor is not running
+  - Added `@raise [MaxCapacityError]` for when at max capacity
+  - Added blank line separator before @return tag
+- **Test Results**: All 411 specs pass
+- **Coverage**: 95.43% line (897/940), 78.10% branch (214/274)
+- **Files Modified**: [lib/sidekiq/async_http/processor.rb](lib/sidekiq/async_http/processor.rb)
+
+---
+
+## Previous Update: Test Coverage Improvements - January 14, 2026
+
+### Added Missing Tests to processor_spec.rb
+- **Test for `drained?` predicate**: Added 3 test cases covering when draining+idle, draining+not-idle, and not draining
+- **ResponseTooLargeError tests**: Added 3 test cases for response size validation:
+  - When content-length header exceeds max_response_size
+  - When actual body size exceeds max during streaming read
+  - Error classification and handling
+- **Parameterized error handling tests**: Refactored 4 redundant error tests (timeout, SSL, connection, unknown) into a single parameterized test using array iteration
+- **Timeout configuration tests**: Added 5 tests for timeout usage:
+  - idle_connection_timeout from configuration
+  - connect_timeout from request when provided
+  - default_request_timeout when request timeout is nil
+  - request timeout when explicitly provided
+  - Updated create_request_task helper to accept connect_timeout parameter
+- **Test Results**: All 411 specs pass
+- **Coverage**: 95.43% line (897/940), 78.10% branch (214/274)
+- **Files Modified**: [spec/sidekiq/async_http/processor_spec.rb](spec/sidekiq/async_http/processor_spec.rb)
+
+---
+
+## Previous Update: Thread Safety Fix - January 14, 2026
+
+### Fixed Thread Safety Issue in Processor State Transitions
+- **Issue**: State transitions in `stop()` method were split between outside lock (`:stopping`) and inside lock (`:stopped`), creating a brief inconsistency window
+- **Root Cause**: Line 79 set `@state.set(:stopping)` outside `@tasks_lock`, while line 95 set `@state.set(:stopped)` inside the lock
+- **Impact**: Other threads could observe `:stopping` state while data structures hadn't been secured under lock yet
+- **Solution**: Wrapped both state transitions inside `@tasks_lock.synchronize` blocks:
+  - First lock: Set state to `:stopping` (prevents new enqueues)
+  - Release lock, signal shutdown barrier, wait for idle
+  - Second lock: Set state to `:stopped` and clear collections atomically
+- **Testing**: All 401 specs pass, including thread safety tests
+- **Files Modified**: [lib/sidekiq/async_http/processor.rb](lib/sidekiq/async_http/processor.rb)
+- **Coverage**: 95.11% line, 77.01% branch
+
+---
+
 ## Latest Update: Step 9.4 Completed - January 10, 2026
 
 ### Shutdown Integration Tests

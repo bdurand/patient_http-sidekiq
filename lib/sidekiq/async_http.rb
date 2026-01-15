@@ -20,6 +20,30 @@ require "uri"
 # - Comprehensive error handling and retry logic
 # - Integration with Sidekiq's job lifecycle
 # - Optional Web UI for monitoring
+#
+# = Singleton Processor Pattern
+#
+# This module maintains a single Processor instance at the module level (@processor).
+# This is an intentional design decision driven by integration requirements with Sidekiq's
+# lifecycle and practical operational considerations:
+#
+# == Rationale:
+#
+# 1. **Sidekiq Integration**: The processor lifecycle (start/quiet/stop) must align with
+#    Sidekiq's own lifecycle hooks. A single processor instance integrates cleanly with
+#    Sidekiq's startup and shutdown signals.
+#
+# 2. **Resource Management**: Running multiple async I/O reactors in a single process would
+#    create resource contention and complexity. A single reactor efficiently handles all
+#    HTTP requests using connection pooling and fiber-based concurrency.
+#
+# 3. **Configuration Simplicity**: A singleton processor means one configuration, one set
+#    of metrics, and one connection pool. Multiple processors would require complex
+#    coordination and resource allocation.
+#
+# 4. **Process Model**: Sidekiq's process model (multiple workers, single process) maps
+#    naturally to a single async processor per process. Each Sidekiq process gets one
+#    processor, workers within that process share it.
 module Sidekiq::AsyncHttp
   # Raised when trying to enqueue a request when the processor is not running
   class NotRunningError < StandardError; end
@@ -132,16 +156,14 @@ module Sidekiq::AsyncHttp
     # @param json [Object, nil] JSON object to serialize as body
     # @param timeout [Float] request timeout in seconds
     # @param connect_timeout [Float, nil] connection open timeout in seconds
-    # @param read_timeout [Float, nil] read timeout in seconds
-    # @param write_timeout [Float, nil] write timeout in seconds
     # @param sidekiq_job [Sidekiq::Job, nil] the Sidekiq job context for the current worker
     # @param completion_worker [String] worker class name for success callback
     # @param error_worker [String] worker class name for error callback
     # @return [String] request ID
     def request(method:, url:, completion_worker:, headers: {}, body: nil, json: nil,
-      timeout: nil, connect_timeout: nil, read_timeout: nil, write_timeout: nil,
+      timeout: nil, connect_timeout: nil,
       sidekiq_job: nil, error_worker: nil)
-      client = Client.new(timeout: timeout, connect_timeout: connect_timeout, read_timeout: read_timeout, write_timeout: write_timeout)
+      client = Client.new(timeout: timeout, connect_timeout: connect_timeout)
       request = client.async_request(method, url, body: body, json: json, headers: headers)
       request.execute(sidekiq_job: sidekiq_job, completion_worker_class: completion_worker, error_worker_class: error_worker)
       request.id

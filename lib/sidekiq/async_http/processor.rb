@@ -13,6 +13,12 @@ module Sidekiq
 
       STATES = %i[stopped running draining stopping].freeze
 
+      # Timing constants for the reactor loop
+      DEQUEUE_TIMEOUT = 0.1          # Seconds to wait when dequeueing requests
+      REACTOR_SLEEP = 0.01           # Seconds to sleep when queue is empty
+      INFLIGHT_UPDATE_INTERVAL = 5   # Seconds between inflight stats updates
+      SHUTDOWN_POLL_INTERVAL = 0.001 # Seconds to sleep while polling during shutdown
+
       # @return [Configuration] the configuration object for the processor
       attr_reader :config
 
@@ -26,6 +32,7 @@ module Sidekiq
       # Initialize the processor.
       #
       # @param config [Configuration] the configuration object
+      #
       # @return [void]
       def initialize(config = nil)
         @config = config || Sidekiq::AsyncHttp.configuration
@@ -72,11 +79,16 @@ module Sidekiq
       # Stop the processor.
       #
       # @param timeout [Numeric, nil] how long to wait for in-flight requests (seconds)
+      #
       # @return [void]
       def stop(timeout: nil)
         return if stopped?
 
-        @state.set(:stopping)
+        # Atomically transition to stopping state under lock to ensure consistency
+        # with other state-checking operations
+        @tasks_lock.synchronize do
+          @state.set(:stopping)
+        end
 
         # Signal the reactor thread to stop accepting new requests
         @shutdown_barrier.set
@@ -85,13 +97,14 @@ module Sidekiq
         if timeout && timeout > 0
           deadline = monotonic_time + timeout
           while !idle? && monotonic_time < deadline
-            sleep(0.001)
+            sleep(SHUTDOWN_POLL_INTERVAL)
           end
         end
 
         # Re-enqueue any remaining in-flight and pending tasks
         tasks_to_reenqueue = []
         @tasks_lock.synchronize do
+          # Now that we have the lock again, atomically transition to stopped and clear collections
           @state.set(:stopped)
           tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
           @inflight_requests.clear
@@ -136,7 +149,10 @@ module Sidekiq
       # Enqueue a request task for processing.
       #
       # @param task [RequestTask] the request task to enqueue
-      # @raise [RuntimeError] if processor is not running or if at capacity
+      #
+      # @raise [NotRunningError] if processor is not running
+      # @raise [MaxCapacityError] if at max capacity
+      #
       # @return [void]
       def enqueue(task)
         unless running?
@@ -215,13 +231,15 @@ module Sidekiq
       # This is mainly for use in tests.
       #
       # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      #
       # @return [Boolean] true if processing completed, false if timeout reached
+      #
       # @api private
       def wait_for_idle(timeout: 1)
         deadline = monotonic_time + timeout
         while monotonic_time <= deadline
           return true if idle?
-          sleep(0.001)
+          sleep(SHUTDOWN_POLL_INTERVAL)
         end
         false
       end
@@ -229,13 +247,15 @@ module Sidekiq
       # Wait for at least one request to start processing. This is mainly for use in tests.
       #
       # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      #
       # @return [Boolean] true if a request started processing, false if timeout reached
+      #
       # @api private
       def wait_for_processing(timeout: 1)
         deadline = monotonic_time + timeout
         while monotonic_time <= deadline
           return true if !@inflight_requests.empty? || !@pending_tasks.empty?
-          sleep(0.001)
+          sleep(SHUTDOWN_POLL_INTERVAL)
         end
         false
       end
@@ -252,21 +272,21 @@ module Sidekiq
 
           @config.logger&.info("[Sidekiq::AsyncHttp] Processor started")
 
-          last_inflight_update = monotonic_time - 5
+          last_inflight_update = monotonic_time - INFLIGHT_UPDATE_INTERVAL
           # Main loop: monitor shutdown/drain and process requests
           loop do
             break if stopping? || stopped?
 
-            # Update inflight stats every 5 seconds
-            if monotonic_time - last_inflight_update >= 5
+            # Update inflight stats periodically
+            if monotonic_time - last_inflight_update >= INFLIGHT_UPDATE_INTERVAL
               Stats.instance.update_inflight(inflight_count, @config.max_connections)
               last_inflight_update = monotonic_time
             end
 
             # Pop request task from queue with timeout to periodically check shutdown
-            request_task = dequeue_request(timeout: 0.1)
+            request_task = dequeue_request(timeout: DEQUEUE_TIMEOUT)
             unless request_task
-              sleep(0.01)
+              sleep(REACTOR_SLEEP)
               next
             end
 
@@ -300,6 +320,7 @@ module Sidekiq
       # Dequeue a request task with timeout.
       #
       # @param timeout [Numeric] timeout in seconds
+      #
       # @return [RequestTask, nil] the request task or nil if timeout
       def dequeue_request(timeout:)
         @queue.pop(timeout: timeout)
@@ -311,6 +332,7 @@ module Sidekiq
       # Process a single HTTP request task.
       #
       # @param task [RequestTask] the request task to process
+      #
       # @return [void]
       def process_request(task)
         # Move from pending to in-flight tracking
@@ -326,49 +348,14 @@ module Sidekiq
         @metrics.record_request_start
 
         begin
-          # Parse the URL to get the endpoint
-          uri = URI.parse(task.request.url)
-          endpoint = Async::HTTP::Endpoint.parse(uri.to_s)
-
-          # Create or reuse a client for this endpoint
-          # Async::HTTP::Client handles connection pooling and reuse internally
-          # Protocol is automatically negotiated via ALPN (HTTP/2 preferred, fallback to HTTP/1.1)
-          client = Async::HTTP::Client.new(endpoint)
-
-          # Build Async::HTTP::Request
+          http_client = http_client(task.request)
           http_request = build_http_request(task.request)
 
           # Execute with timeout
           response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
-            async_response = client.call(http_request)
-
-            # Read the body asynchronously to completion - this allows the connection to be reused
-            # The async-http client handles connection pooling and keep-alive internally
-            # Using join() instead of read() ensures non-blocking I/O that yields to the reactor
+            async_response = http_client.call(http_request)
             headers_hash = async_response.headers.to_h
-            body = if async_response.body
-              # Check content-length header if present
-              content_length = headers_hash["content-length"]&.to_i
-              if content_length && content_length > @config.max_response_size
-                raise ResponseTooLargeError.new(
-                  "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
-                )
-              end
-
-              # Read body while checking size
-              chunks = []
-              total_size = 0
-              async_response.body.each do |chunk|
-                total_size += chunk.bytesize
-                if total_size > @config.max_response_size
-                  raise ResponseTooLargeError.new(
-                    "Response body size exceeded maximum allowed size (#{@config.max_response_size} bytes)"
-                  )
-                end
-                chunks << chunk
-              end
-              chunks.join
-            end
+            body = read_response_body(async_response, headers_hash)
 
             # Build response object
             {
@@ -398,9 +385,63 @@ module Sidekiq
         end
       end
 
+      # Read response body with size validation.
+      #
+      # Reads the async HTTP response body asynchronously to completion, which allows
+      # the connection to be reused. The async-http client handles connection pooling
+      # and keep-alive internally. Using iteration instead of read() ensures non-blocking
+      # I/O that yields to the reactor.
+      #
+      # @param async_response [Async::HTTP::Protocol::Response] the async HTTP response
+      # @param headers_hash [Hash] the response headers
+      #
+      # @return [String, nil] the response body or nil if no body present
+      #
+      # @raise [ResponseTooLargeError] if body exceeds max_response_size
+      def read_response_body(async_response, headers_hash)
+        return nil unless async_response.body
+
+        # Check content-length header if present
+        content_length = headers_hash["content-length"]&.to_i
+        if content_length && content_length > @config.max_response_size
+          raise ResponseTooLargeError.new(
+            "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
+          )
+        end
+
+        # Read body while checking size
+        chunks = []
+        total_size = 0
+        async_response.body.each do |chunk|
+          total_size += chunk.bytesize
+          if total_size > @config.max_response_size
+            raise ResponseTooLargeError.new(
+              "Response body size exceeded maximum allowed size (#{@config.max_response_size} bytes)"
+            )
+          end
+          chunks << chunk
+        end
+        chunks.join
+      end
+
+      # Create an Async::HTTP::Client for the given request.
+      #
+      # @param request [Request] the request object
+      #
+      # @return [Async::HTTP::Client] the async HTTP client
+      def http_client(request)
+        endpoint = Async::HTTP::Endpoint.parse(
+          request.url,
+          connect_timeout: request.connect_timeout,
+          idle_timeout: @config.idle_connection_timeout
+        )
+        Async::HTTP::Client.new(endpoint)
+      end
+
       # Build an Async::HTTP::Request from our Request object.
       #
       # @param request [Request] the request object
+      #
       # @return [Async::HTTP::Request] the async HTTP request
       def build_http_request(request)
         uri = URI.parse(request.url)
@@ -423,7 +464,7 @@ module Sidekiq
           uri.scheme,                      # scheme
           uri.authority,                   # authority (host:port)
           request.method.to_s.upcase,      # method
-          uri.request_uri || "/",          # path
+          uri.request_uri,                 # path
           nil,                             # version (nil = auto)
           headers,                         # headers
           body_content                     # body
@@ -434,6 +475,7 @@ module Sidekiq
       #
       # @param task [RequestTask] the original request task
       # @param http_response [Hash] the response data
+      #
       # @return [Response] the response object
       def build_response(task, http_response)
         Response.new(
@@ -451,6 +493,7 @@ module Sidekiq
       # Classify an error by type.
       #
       # @param exception [Exception] the exception
+      #
       # @return [Symbol] the error type
       def classify_error(exception)
         case exception
@@ -471,6 +514,7 @@ module Sidekiq
       #
       # @param task [RequestTask] the request task
       # @param response [Response] the response object
+      #
       # @return [void]
       def handle_success(task, response)
         if stopped?
@@ -490,6 +534,7 @@ module Sidekiq
       #
       # @param task [RequestTask] the request task
       # @param exception [Exception] the exception
+      #
       # @return [void]
       def handle_error(task, exception)
         if stopped?
@@ -509,14 +554,6 @@ module Sidekiq
           "[Sidekiq::AsyncHttp] Failed to enqueue error worker for request #{task.id}: #{e.class} - #{e.message}"
         )
         raise if AsyncHttp.testing?
-      end
-
-      # Resolve a worker class from its name.
-      #
-      # @param class_name [String] the class name to resolve
-      # @return [Class] the resolved worker class
-      def resolve_worker_class(class_name)
-        ClassHelper.resolve_class_name(class_name)
       end
     end
   end

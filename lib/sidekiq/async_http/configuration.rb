@@ -41,7 +41,7 @@ module Sidekiq
       def initialize(
         max_connections: 256,
         idle_connection_timeout: 60,
-        default_request_timeout: 30,
+        default_request_timeout: 60,
         shutdown_timeout: 25,
         logger: nil,
         dns_cache_ttl: 300,

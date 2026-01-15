@@ -29,14 +29,8 @@ module Sidekiq::AsyncHttp
     # @return [Float, nil] Overall timeout in seconds
     attr_reader :timeout
 
-    # @return [Float, nil] Read timeout in seconds
-    attr_reader :read_timeout
-
     # @return [Float, nil] Connect timeout in seconds
     attr_reader :connect_timeout
-
-    # @return [Float, nil] Write timeout in seconds
-    attr_reader :write_timeout
 
     # Initializes a new Request.
     #
@@ -45,10 +39,8 @@ module Sidekiq::AsyncHttp
     # @param headers [Hash, HttpHeaders] Request headers.
     # @param body [String, nil] Request body.
     # @param timeout [Float, nil] Overall timeout in seconds.
-    # @param read_timeout [Float, nil] Read timeout in seconds.
     # @param connect_timeout [Float, nil] Connect timeout in seconds.
-    # @param write_timeout [Float, nil] Write timeout in seconds.
-    def initialize(method:, url:, headers: {}, body: nil, timeout: nil, read_timeout: nil, connect_timeout: nil, write_timeout: nil)
+    def initialize(method:, url:, headers: {}, body: nil, timeout: nil, connect_timeout: nil)
       @id = SecureRandom.uuid
       @method = method.is_a?(String) ? method.downcase.to_sym : method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
@@ -58,9 +50,7 @@ module Sidekiq::AsyncHttp
       end
       @body = body
       @timeout = timeout
-      @read_timeout = read_timeout
       @connect_timeout = connect_timeout
-      @write_timeout = write_timeout
       @job = nil
       @completion_worker_class = nil
       @error_worker_class = nil
