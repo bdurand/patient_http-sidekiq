@@ -68,10 +68,7 @@ RSpec.configure do |config|
 
   config.before do |example|
     $mock_redis.flushdb # rubocop:disable Style/GlobalVars
-    # Override Sidekiq.redis to use MockRedis for each test unless :skip_mock_redis tag is present
-    unless example.metadata[:skip_mock_redis]
-      allow(Sidekiq).to receive(:redis).and_yield($mock_redis) # rubocop:disable Style/GlobalVars
-    end
+    allow(Sidekiq).to receive(:redis).and_yield($mock_redis) # rubocop:disable Style/GlobalVars
     Sidekiq::Worker.clear_all
   end
 

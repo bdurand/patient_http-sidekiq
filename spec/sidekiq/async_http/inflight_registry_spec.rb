@@ -159,7 +159,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
   end
 
   describe "#release_gc_lock" do
-    it "releases lock held by this process", :skip_mock_redis do
+    it "releases lock held by this process" do
       # Explicitly ensure no lock exists from previous test
       Sidekiq.redis do |redis|
         redis.del(described_class::GC_LOCK_KEY)
@@ -175,7 +175,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       expect(result2).to be true
     end
 
-    it "does not release lock held by another process", :skip_mock_redis do
+    it "does not release lock held by another process" do
       registry.acquire_gc_lock
 
       # Create another registry instance (simulating another process)
@@ -190,7 +190,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
   describe "#cleanup_orphaned_requests" do
     let(:logger) { instance_double(Logger, info: nil, error: nil) }
 
-    it "re-enqueues requests older than threshold", :skip_mock_redis do
+    it "re-enqueues requests older than threshold" do
       # Register a task
       registry.register(task)
 
@@ -210,7 +210,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       # Request should be removed from Redis
       Sidekiq.redis do |redis|
         expect(redis.zcard(described_class::INFLIGHT_INDEX_KEY)).to eq(0)
-        expect(redis.hexists(described_class::INFLIGHT_JOBS_KEY, task.id)).to eq(0)
+        expect(redis.hexists(described_class::INFLIGHT_JOBS_KEY, task.id)).to be false
       end
     end
 
