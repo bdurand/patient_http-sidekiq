@@ -234,7 +234,7 @@ module Sidekiq
         Sidekiq::Client.push(job_hash)
 
         logger&.info(
-          "[Sidekiq::AsyncHttp] Re-enqueued orphaned request #{request_id} to #{job_hash['class']}"
+          "[Sidekiq::AsyncHttp] Re-enqueued orphaned request #{request_id} to #{job_hash["class"]}"
         )
 
         true

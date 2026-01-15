@@ -23,7 +23,6 @@ module Sidekiq::AsyncHttp
     # @return [Float, nil] Default connection timeout in seconds
     attr_accessor :connect_timeout
 
-
     # Initializes a new Client.
     #
     # @param base_url [String, URI::HTTP, nil] Base URL for relative URIs
