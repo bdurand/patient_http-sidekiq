@@ -254,7 +254,7 @@ module Sidekiq::AsyncHttp
 
     # Invoke the registered completion callbacks
     #
-    # @param response [Hash] the HTTP response
+    # @param response_hash [Hash] the HTTP response
     # @return [void]
     # @api private
     def invoke_completion_callbacks(response_hash)
