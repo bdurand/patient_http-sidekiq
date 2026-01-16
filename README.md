@@ -60,9 +60,8 @@ bundle install
 
 ## Requirements
 
-- Ruby 3.1 or higher
+- Ruby 3.2 or higher
 - Sidekiq 7.2 or higher
-- Redis (for Sidekiq and crash recovery features)
 
 ## Quick Start
 
