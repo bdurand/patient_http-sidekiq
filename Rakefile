@@ -22,11 +22,14 @@ RSpec::Core::RakeTask.new(:spec)
 task default: [:spec]
 
 desc "Run the test application for manual testing"
-task :test_app do
-  exec "ruby test_app/run.rb"
-end
+task test_app: "test_app:start"
 
 namespace :test_app do
+  desc "Start the test application"
+  task :start do
+    exec "ruby test_app/server.rb"
+  end
+
   desc "Stop the running test application"
   task :stop do
     # Find processes using port 9292 (the test app's web server)
@@ -42,6 +45,11 @@ namespace :test_app do
       sleep 1
       puts "Test application stopped"
     end
+  end
+
+  desc "Start a valkey container for testing"
+  task :valkey do
+    exec "exec test_app/run-valkey"
   end
 
   desc "Open an interactive console with test application loaded"

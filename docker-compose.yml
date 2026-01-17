@@ -1,7 +1,0 @@
-services:
-  valkey:
-    image: valkey/valkey:9.0.1-alpine
-    environment:
-      VALKEY_EXTRA_FLAGS: --loglevel warning --maxmemory 30m --maxmemory-policy allkeys-lru --databases 1
-    ports:
-      - "${VALKEY_PORT:-6379}:6379"

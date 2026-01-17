@@ -12,8 +12,4 @@ This project uses the standardrb style guide. Run `bundle exec standardrb --fix`
 
 Run the test suite with `bundle exec rspec`.
 
-## Things you have learned
-
-This list summarizes important things you have learned. When the user tells you that you have learned something new add it to this list. If the user tells you to learn something new, research it and then add it to this list. If the user tells you to forget something, remove it from this list.
-
-- You have not learned anything yet. Replace this item with the first thing you learn.
+The bundled test app can be started with `bundle exec rake test_app` and stopped with `bundle exec rake test_app:stop`. It requires a docker container running a Redis compatible server via `docker-compose up`.

@@ -215,16 +215,23 @@ end
 
 ### Sensitive Data Handling
 
-If the responses might contain sensitive data, you might want to ensure that it is encrypted at rest in Redis. You can achieve this with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem.
+Responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if the response contains sensitive data since the data will be stored in plain text.
+
+You can use the with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
+
+First, setup the encryption configuration in an initializer:
 
 ```ruby
-# In an initalizer setup sidekiq-encrypted_args
 Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
+```
 
+Next, specify the `encrypted_args` option in the `on_completion` callback to indicate the response argument should be encrypted:
+
+```ruby
 class SensitiveDataWorker
   include Sidekiq::AsyncHttp::Job
 
-  on_completion(encrypted_args: true) do |response, record_id|
+  on_completion(encrypted_args: :response) do |response, record_id|
     SensitiveRecord.find(record_id).update!(data: response.body)
   end
 
@@ -235,7 +242,10 @@ end
 ```
 
 > [!NOTE]
-> The encryption feature in Sidekiq Enterprise is not compatible with this gem due to its restriction on how job arguments are used.
+> You can only encrypt the response argument by name with the `encrypted_args` option when using `on_completion`. If you need to encrypt other arguments, you can either pass `true` to encrypt all arguments or pass an array of the indexes of the arguments to encrypt. See the [sidekiq-encrypted_args documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details.
+
+> [!NOTE]
+> The encryption feature in Sidekiq Enterprise will not work for this because it can only be applied to a single hash argument that must be the last argument to the job.
 
 ## Configuration
 
@@ -366,6 +376,20 @@ bundle install
 Open a pull request on [GitHub](https://github.com/bdurand/sidekiq-async_http).
 
 Please use the [standardrb](https://github.com/testdouble/standard) syntax and lint your code with `standardrb --fix` before submitting.
+
+There is a bundled test app in the `test_app` directory that can be used for manual testing and experimentation. To run the server first start up a Valkey container with:
+
+```bash
+bundle exec rake test_app:valkey
+```
+
+Then start the test application with:
+
+```bash
+bundle exec rake test_app
+```
+
+The server requires a Redis compatible server. The command will attempt to start a Valkey container and requires either the docker or container CLI to be installed.
 
 ## License
 
