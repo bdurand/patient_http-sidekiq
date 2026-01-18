@@ -1,0 +1,142 @@
+# frozen_string_literal: true
+
+module Sidekiq
+  module AsyncHttp
+    # Represents an HTTP response from an async request.
+    #
+    # This class encapsulates the response data including status, headers, body,
+    # and metadata about the request that generated it.
+    class Response
+      UNDEFINED = Object.new.freeze
+      private_constant :UNDEFINED
+
+      # @return [Integer] HTTP status code
+      attr_reader :status
+
+      # @return [HttpHeaders] response headers
+      attr_reader :headers
+
+      # @return [Float] request duration in seconds
+      attr_reader :duration
+
+      # @return [String] request ID
+      attr_reader :request_id
+
+      # @return [String] HTTP protocol version
+      attr_reader :protocol
+
+      # @return [String] request URL
+      attr_reader :url
+
+      # @return [Symbol] HTTP method
+      attr_reader :method
+
+      class << self
+        # Reconstruct a Response from a hash
+        # @param hash [Hash] hash representation
+        # @return [Response] reconstructed response
+        def from_h(hash)
+          new(
+            status: hash["status"],
+            headers: hash["headers"],
+            body: Payload.from_h(hash["body"])&.value,
+            protocol: hash["protocol"],
+            duration: hash["duration"],
+            request_id: hash["request_id"],
+            url: hash["url"],
+            method: hash["method"]&.to_sym
+          )
+        end
+      end
+
+      # Initialize a Response from an Async::HTTP::Response
+      #
+      # @param duration [Float] request duration in seconds
+      # @param request_id [String] the request ID
+      # @param url [String] the request URL
+      # @param method [Symbol] the HTTP method
+      def initialize(status:, headers:, body:, duration:, request_id:, url:, method:, protocol:)
+        @status = status
+        @headers = HttpHeaders.new(headers)
+
+        encoding, encoded_body = Payload.encode(body, @headers["content-type"])
+        @payload = Payload.new(encoding, encoded_body) unless body.nil?
+        @body = UNDEFINED
+
+        @duration = duration
+        @request_id = request_id
+        @protocol = protocol
+        @url = url
+        @method = method
+      end
+
+      # Returns the response body, decoding it from the payload if necessary.
+      #
+      # @return [String, nil] The decoded response body or nil if there was no body.
+      def body
+        if @body.equal?(UNDEFINED)
+          @body = @payload&.value
+        end
+        @body
+      end
+
+      # Check if response is successful (2xx status)
+      # @return [Boolean]
+      def success?
+        status >= 200 && status < 300
+      end
+
+      # Check if response is a redirect (3xx status)
+      # @return [Boolean]
+      def redirect?
+        status >= 300 && status < 400
+      end
+
+      # Check if response is a client error (4xx status)
+      # @return [Boolean]
+      def client_error?
+        status >= 400 && status < 500
+      end
+
+      # Check if response is a server error (5xx status)
+      # @return [Boolean]
+      def server_error?
+        status >= 500 && status < 600
+      end
+
+      # Check if response is any error (4xx or 5xx status)
+      # @return [Boolean]
+      def error?
+        status >= 400 && status < 600
+      end
+
+      # Parse response body as JSON
+      # @return [Hash, Array] parsed JSON
+      # @raise [RuntimeError] if Content-Type is not application/json
+      # @raise [JSON::ParserError] if body is not valid JSON
+      def json
+        content_type = headers["content-type"]
+        unless content_type&.include?("application/json")
+          raise "Response Content-Type is not application/json (got: #{content_type.inspect})"
+        end
+
+        JSON.parse(body)
+      end
+
+      # Convert to hash with string keys for serialization
+      # @return [Hash] hash representation
+      def to_h
+        {
+          "status" => status,
+          "headers" => headers.to_h,
+          "body" => @payload&.to_h,
+          "duration" => duration,
+          "request_id" => request_id,
+          "protocol" => protocol,
+          "url" => url,
+          "method" => method.to_s
+        }
+      end
+    end
+  end
+end

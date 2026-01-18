@@ -1,0 +1,243 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe "Full Workflow Integration", :integration do
+  include Async::RSpec::Reactor
+
+  let(:config) do
+    Sidekiq::AsyncHttp::Configuration.new.tap do |c|
+      c.max_connections = 10
+      c.default_request_timeout = 5
+    end
+  end
+
+  let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+
+  before do
+    TestWorkers::Worker.reset_calls!
+    TestWorkers::CompletionWorker.reset_calls!
+    TestWorkers::ErrorWorker.reset_calls!
+
+    # Disable WebMock completely for integration tests
+    WebMock.reset!
+    WebMock.allow_net_connect!
+    WebMock.disable!
+
+    processor.start
+  end
+
+  after do
+    processor.stop(timeout: 0) if processor.running?
+
+    # Re-enable WebMock
+    WebMock.enable!
+    WebMock.disable_net_connect!(allow_localhost: true)
+  end
+
+  describe "successful POST request workflow" do
+    it "makes async POST request and calls success worker with response and original args" do
+      # Build request
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      request = client.async_post(
+        "/test/200",
+        body: '{"event":"user.created","user_id":123}',
+        headers: {
+          "Content-Type" => "application/json",
+          "X-Custom-Header" => "test-value"
+        }
+      )
+
+      # Create request task with test workers
+      sidekiq_job = {
+        "class" => "TestWorkers::Worker",
+        "jid" => "test-jid-123",
+        "args" => ["webhook_id", 1]
+      }
+
+      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: "TestWorkers::CompletionWorker",
+        error_worker: "TestWorkers::ErrorWorker"
+      )
+
+      # Enqueue request
+      processor.enqueue(request_task)
+
+      # Wait for request to complete
+      processor.wait_for_idle(timeout: 2)
+
+      # Process enqueued Sidekiq jobs
+      Sidekiq::Worker.drain_all
+
+      # Verify TestCompletionWorker was called
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+
+      # Verify response details
+      response, *original_args = TestWorkers::CompletionWorker.calls.first
+
+      # Verify response hash contains correct status, body
+      expect(response).to be_a(Sidekiq::AsyncHttp::Response)
+      expect(response.status).to eq(200)
+
+      # Parse the response body JSON
+      response_data = JSON.parse(response.body)
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["body"]).to eq('{"event":"user.created","user_id":123}')
+      expect(response_data["headers"]["content-type"]).to eq("application/json")
+
+      expect(response.headers["content-type"]).to eq("application/json")
+      expect(response.success?).to be true
+
+      # Verify original_args passed through correctly
+      expect(original_args).to eq(["webhook_id", 1])
+
+      # Verify no error worker was called
+      expect(TestWorkers::ErrorWorker.calls).to be_empty
+    end
+  end
+
+  describe "successful GET request workflow" do
+    it "makes async GET request and calls success worker" do
+      # Build request
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      request = client.async_get(
+        "/test/200",
+        headers: {"Authorization" => "Bearer token123"}
+      )
+
+      # Create request task
+      sidekiq_job = {
+        "class" => "TestWorkers::Worker",
+        "jid" => "test-jid-456",
+        "args" => ["user", 123, "fetch"]
+      }
+
+      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: "TestWorkers::CompletionWorker"
+      )
+
+      # Enqueue and wait
+      processor.enqueue(request_task)
+      processor.wait_for_idle(timeout: 2)
+
+      # Process enqueued jobs
+      Sidekiq::Worker.drain_all
+
+      # Verify success worker called
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+
+      response, *args = TestWorkers::CompletionWorker.calls.first
+      expect(response.status).to eq(200)
+
+      # Verify response contains request info
+      response_data = JSON.parse(response.body)
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["headers"]["authorization"]).to eq("Bearer token123")
+      expect(args).to eq(["user", 123, "fetch"])
+    end
+  end
+
+  describe "multiple concurrent requests" do
+    it "handles multiple requests with different responses" do
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+
+      # Enqueue 3 requests with different status codes
+      [200, 201, 202].each_with_index do |status, i|
+        request = client.async_get("/test/#{status}")
+        request_task = Sidekiq::AsyncHttp::RequestTask.new(
+          request: request,
+          sidekiq_job: {
+            "class" => "TestWorkers::Worker",
+            "jid" => "jid-#{i}",
+            "args" => [i]
+          },
+          completion_worker: "TestWorkers::CompletionWorker"
+        )
+        processor.enqueue(request_task)
+      end
+
+      # Wait for all to complete
+      processor.wait_for_idle(timeout: 2)
+
+      # Process enqueued jobs
+      Sidekiq::Worker.drain_all
+
+      # Verify all 3 success workers called
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
+
+      # Verify each got correct response
+      responses = TestWorkers::CompletionWorker.calls.map { |call| call.first }
+      statuses = responses.map(&:status).sort
+
+      expect(statuses).to eq([200, 201, 202])
+    end
+  end
+
+  describe "request with params and headers" do
+    it "properly encodes params and sends headers" do
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      request = client.async_get(
+        "/test/200",
+        params: {"q" => "ruby", "page" => "2", "limit" => "50"},
+        headers: {
+          "Authorization" => "Bearer secret",
+          "X-Api-Version" => "v2"
+        }
+      )
+
+      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "jid", "args" => []},
+        completion_worker: "TestWorkers::CompletionWorker"
+      )
+
+      processor.enqueue(request_task)
+      processor.wait_for_idle(timeout: 2)
+
+      # Process enqueued jobs
+      Sidekiq::Worker.drain_all
+
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+      response = TestWorkers::CompletionWorker.calls.first.first
+      expect(response.status).to eq(200)
+
+      # Verify params and headers were sent
+      response_data = JSON.parse(response.body)
+      expect(response_data["query_string"]).to include("q=ruby")
+      expect(response_data["query_string"]).to include("page=2")
+      expect(response_data["query_string"]).to include("limit=50")
+      expect(response_data["headers"]["authorization"]).to eq("Bearer secret")
+      expect(response_data["headers"]["x-api-version"]).to eq("v2")
+    end
+  end
+
+  describe "processor lifecycle" do
+    it "can be started and stopped cleanly" do
+      # Make a request
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      request = client.async_get("/test/200")
+      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "jid", "args" => []},
+        completion_worker: "TestWorkers::CompletionWorker"
+      )
+
+      processor.enqueue(request_task)
+      processor.wait_for_idle(timeout: 2)
+
+      # Stop processor
+      processor.stop(timeout: 1)
+      expect(processor.stopped?).to be true
+
+      # Process enqueued jobs
+      Sidekiq::Worker.drain_all
+
+      # Verify request completed
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+    end
+  end
+end

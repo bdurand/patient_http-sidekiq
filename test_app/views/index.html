@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sidekiq AsyncHttp Test App</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 12px;
+      max-width: 500px;
+      width: 100%;
+      position: relative;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 8px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .form-group {
+      margin-bottom: 6px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 2px;
+      color: #333;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    input[type="number"],
+    input[type="text"] {
+      width: 100%;
+      padding: 6px 8px;
+      border: 2px solid #e0e0e0;
+      border-radius: 5px;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      font-family: inherit;
+    }
+
+    input[type="number"]:focus,
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #06b6d4;
+      box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.1);
+    }
+
+    .help-text {
+      font-size: 10px;
+      color: #888;
+      margin-top: 1px;
+    }
+
+    button {
+      width: 100%;
+      padding: 8px;
+      background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+      margin-top: 2px;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(6, 182, 212, 0.3);
+    }
+
+    button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .links {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #e0e0e0;
+      text-align: center;
+    }
+
+    .links a {
+      color: #06b6d4;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 12px;
+      transition: color 0.2s ease;
+    }
+
+    .links a:hover {
+      color: #3b82f6;
+    }
+
+    .toast {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #10b981;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(-20px);
+      transition: all 0.3s ease;
+      pointer-events: none;
+      z-index: 1000;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .status-section {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #e0e0e0;
+    }
+
+    .status-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .status-grid.three-col {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .status-card {
+      background: #f8f9fa;
+      padding: 6px;
+      border-radius: 5px;
+      text-align: center;
+    }
+
+    .status-label {
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+
+    .status-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #333;
+    }
+
+    .status-card.success .status-value {
+      color: #10b981;
+    }
+
+    .status-card.failure .status-value {
+      color: #ef4444;
+    }
+
+    .polling-indicator {
+      font-size: 10px;
+      color: #888;
+      margin-top: 4px;
+      text-align: center;
+    }
+
+    .polling-indicator.active::before {
+      content: "● ";
+      color: #10b981;
+    }
+
+    .polling-indicator.stopped::before {
+      content: "● ";
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <div class="container">
+    <h1>🚀 Sidekiq AsyncHttp Test Application</h1>
+
+    <form id="job-form">
+      <div class="form-group">
+        <label for="async-count">Asynchronous Requests</label>
+        <input
+          type="number"
+          id="async-count"
+          name="async_count"
+          value="50"
+          min="0"
+          max="5000"
+          step="1"
+          autocomplete="off"
+          required
+        >
+        <div class="help-text">Number of asynchronous HTTP jobs to enqueue (0-5000)</div>
+      </div>
+
+      <div class="form-group">
+        <label for="sync-count">Synchronous Requests</label>
+        <input
+          type="number"
+          id="sync-count"
+          name="sync_count"
+          value="50"
+          min="0"
+          max="5000"
+          step="1"
+          autocomplete="off"
+          required
+        >
+        <div class="help-text">Number of synchronous HTTP jobs to enqueue (0-5000)</div>
+      </div>
+
+      <div class="form-group">
+        <label for="delay">Delay (seconds) & Drift (%)</label>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <input
+            type="number"
+            id="delay"
+            name="delay"
+            value="5"
+            min="0.0"
+            max="60.0"
+            step="any"
+            autocomplete="off"
+            placeholder="Seconds"
+          >
+          <div style="display: flex; align-items: center; gap: 5px; width: 60%;">
+            <input
+              type="number"
+              id="delay_drift"
+              name="delay_drift"
+              value="50"
+              min="0"
+              max="100"
+              step="1"
+              autocomplete="off"
+              placeholder="Drift"
+            >
+            <span style="font-size: 14px; font-weight: 600; color: #555;">%</span>
+          </div>
+        </div>
+        <div class="help-text">HTTP endpoint delay in seconds and random drift percentage (0-100)</div>
+      </div>
+
+      <div class="form-group">
+        <label for="timeout">Timeout (seconds)</label>
+        <input
+          type="number"
+          id="timeout"
+          name="timeout"
+          value="30"
+          min="0.1"
+          max="60.0"
+          step="any"
+          autocomplete="off"
+        >
+        <div class="help-text">Request timeout in seconds</div>
+      </div>
+
+      <button type="submit">Run Jobs</button>
+    </form>
+
+    <div class="status-section">
+      <div class="status-title">Asynchronous HTTP Requests</div>
+      <div class="status-grid three-col">
+        <div class="status-card">
+          <div class="status-label">In Flight</div>
+          <div class="status-value" id="inflight-count">0</div>
+        </div>
+        <div class="status-card success">
+          <div class="status-label">Completed</div>
+          <div class="status-value" id="async-completed-count">0</div>
+        </div>
+        <div class="status-card failure">
+          <div class="status-label">Error</div>
+          <div class="status-value" id="async-error-count">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-section">
+      <div class="status-title">Synchronous HTTP Requests</div>
+      <div class="status-grid">
+        <div class="status-card success">
+          <div class="status-label">Completed</div>
+          <div class="status-value" id="sync-completed-count">0</div>
+        </div>
+        <div class="status-card failure">
+          <div class="status-label">Error</div>
+          <div class="status-value" id="sync-error-count">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-section">
+      <div class="status-title">Sidekiq Queue Stats</div>
+      <div class="status-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
+        <div class="status-card">
+          <div class="status-label">Busy</div>
+          <div class="status-value" id="busy-count">0</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Enqueued</div>
+          <div class="status-value" id="enqueued-count">0</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Retry</div>
+          <div class="status-value" id="retry-count">0</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Processed</div>
+          <div class="status-value" id="processed-count">0</div>
+        </div>
+        <div class="status-card">
+          <div class="status-label">Failed</div>
+          <div class="status-value" id="failed-count">0</div>
+        </div>
+      </div>
+      <div class="polling-indicator active" id="polling-status">Polling active</div>
+    </div>
+
+    <div class="links">
+      <a href="/sidekiq">View Sidekiq Dashboard →</a>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // Toast notification
+      function showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        toast.classList.add('show');
+
+        setTimeout(() => {
+          toast.classList.remove('show');
+        }, 3000);
+      }
+
+      // Form submission
+      const form = document.getElementById('job-form');
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(form);
+        const button = form.querySelector('button[type="submit"]');
+
+        button.disabled = true;
+        button.textContent = 'Submitting...';
+
+        fetch('/run_jobs', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => {
+          if (response.ok) {
+            const asyncCount = formData.get('async_count');
+            const syncCount = formData.get('sync_count');
+            const delay = formData.get('delay');
+            const timeout = formData.get('timeout');
+            const delayDrift = formData.get('delay_drift');
+            const driftText = parseFloat(delayDrift) > 0 ? ` (±${delayDrift}%)` : '';
+            const totalCount = parseInt(asyncCount) + parseInt(syncCount);
+            showToast(`Successfully enqueued ${totalCount} jobs (${asyncCount} async, ${syncCount} sync) - ${delay}s delay${driftText}, ${timeout}s timeout!`);
+            // Reset zero activity count and restart polling if stopped
+            zeroActivityCount = 0;
+            if (!isPolling) {
+              startPolling();
+              const statusEl = document.getElementById('polling-status');
+              statusEl.textContent = 'Polling active';
+              statusEl.className = 'polling-indicator active';
+            }
+          } else {
+            showToast('Failed to enqueue jobs');
+          }
+        })
+        .catch(err => {
+          console.error('Error submitting form:', err);
+          showToast('Error submitting form');
+        })
+        .finally(() => {
+          button.disabled = false;
+          button.textContent = 'Run Jobs';
+        });
+      });
+
+      // Status polling
+      let zeroActivityCount = 0;
+      let pollInterval = null;
+      let isPolling = false;
+
+      function updateStatus(data) {
+        const inflightEl = document.getElementById('inflight-count');
+        const asyncCompletedEl = document.getElementById('async-completed-count');
+        const asyncErrorEl = document.getElementById('async-error-count');
+        const syncCompletedEl = document.getElementById('sync-completed-count');
+        const syncErrorEl = document.getElementById('sync-error-count');
+        const busyEl = document.getElementById('busy-count');
+        const enqueuedEl = document.getElementById('enqueued-count');
+        const processedEl = document.getElementById('processed-count');
+        const retryEl = document.getElementById('retry-count');
+        const failedEl = document.getElementById('failed-count');
+        const statusEl = document.getElementById('polling-status');
+
+        const inflight = data.inflight || 0;
+        const busy = data.busy || 0;
+        const enqueued = data.enqueued || 0;
+        const retry = data.retry || 0;
+
+        inflightEl.textContent = inflight;
+        asyncCompletedEl.textContent = (data.asynchronous && data.asynchronous.complete) || 0;
+        asyncErrorEl.textContent = (data.asynchronous && data.asynchronous.error) || 0;
+        syncCompletedEl.textContent = (data.synchronous && data.synchronous.complete) || 0;
+        syncErrorEl.textContent = (data.synchronous && data.synchronous.error) || 0;
+        busyEl.textContent = busy;
+        enqueuedEl.textContent = enqueued;
+        processedEl.textContent = data.processed || 0;
+        retryEl.textContent = retry;
+        failedEl.textContent = data.failed || 0;
+
+        // Track consecutive zero activity (inflight, busy, enqueued, and retry all zero)
+        if (inflight === 0 && busy === 0 && enqueued === 0 && retry === 0) {
+          zeroActivityCount++;
+        } else {
+          zeroActivityCount = 0;
+        }
+
+        // Stop polling if no activity 5 times in a row
+        if (zeroActivityCount >= 5 && isPolling) {
+          stopPolling();
+          statusEl.textContent = 'Polling stopped (no activity)';
+          statusEl.className = 'polling-indicator stopped';
+        }
+      }
+
+      function fetchStatus() {
+        fetch('/status')
+          .then(response => response.json())
+          .then(data => updateStatus(data))
+          .catch(err => console.error('Failed to fetch status:', err));
+      }
+
+      function startPolling() {
+        if (isPolling) return;
+
+        isPolling = true;
+        fetchStatus(); // Initial fetch
+        pollInterval = setInterval(fetchStatus, 500);
+      }
+
+      function stopPolling() {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+        isPolling = false;
+      }
+
+      // Start polling on page load
+      startPolling();
+
+      // Stop polling when page is hidden/unloaded
+      document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+          stopPolling();
+        } else {
+          startPolling();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

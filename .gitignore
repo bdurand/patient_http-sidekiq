@@ -11,3 +11,4 @@ log/*.log
 pkg/
 rdoc/
 doc/
+test_app/.session.key

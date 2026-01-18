@@ -1,40 +1,399 @@
-# SidekiqAsyncHttpRequests
+# Sidekiq::AsyncHttp
 
-:construction: NOT RELEASED :construction:
-
-[![Continuous Integration](https://github.com/${GITHUB_USERNAME}/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/${GITHUB_USERNAME}/sidekiq-async_http_requests/actions/workflows/continuous_integration.yml)
+[![Continuous Integration](https://github.com/bdurand/sidekiq-async_http/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/bdurand/sidekiq-async_http/actions/workflows/continuous_integration.yml)
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
-[![Gem Version](https://badge.fury.io/rb/sidekiq-async_http_requests.svg)](https://badge.fury.io/rb/sidekiq-async_http_requests)
+[![Gem Version](https://badge.fury.io/rb/sidekiq-async_http.svg)](https://badge.fury.io/rb/sidekiq-async_http)
 
-TODO: Write a gem description
+*Built for APIs that like to think.*
 
-## Usage
+This gem provides a mechanism to offload HTTP requests from Sidekiq jobs to a dedicated async I/O processor, freeing worker threads immediately.
 
-TODO: Write usage instructions here
+## Motivation
+
+Sidekiq is designed with the assumption that jobs are short-lived and complete quickly. Long-running HTTP requests block worker threads from processing other jobs, leading to increased latency and reduced throughput. This is particularly problematic when calling LLM or AI APIs, where requests can take many seconds to complete.
+
+**The Problem:**
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                     Traditional Sidekiq Job                            │
+│                                                                        │
+│  Worker Thread 1: [████████████ HTTP Request (5s) ████████████████]    │
+│  Worker Thread 2: [████████████ HTTP Request (5s) ████████████████]    │
+│  Worker Thread 3: [████████████ HTTP Request (5s) ████████████████]    │
+│                                                                        │
+│  → 3 workers blocked for 5 seconds = 0 jobs processed                  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**The Solution:**
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                     With Async HTTP Processor                          │
+│                                                                        │
+│  Worker Thread 1: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
+│  Worker Thread 2: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
+│  Worker Thread 3: [█ Enqueue █][█ Job █][█ Job █][█ Job █][█ Job █]    │
+│                                                                        │
+│  Async Processor: [═══════════ 100+ concurrent HTTP requests ════════] │
+│                                                                        │
+│  → Workers immediately free = dozens of jobs processed                 │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+The async processor runs in a dedicated thread within your Sidekiq process, using Ruby's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking. When an HTTP request completes, the response is passed to a callback worker for processing.
+
+## Quick Start
+
+### 1. Create a Worker with Callbacks
+
+The simplest way to use this gem is to include `Sidekiq::AsyncHttp::Job` in your worker and define callbacks:
+
+```ruby
+class FetchDataWorker
+  include Sidekiq::AsyncHttp::Job
+
+  # Define callback for completed responses. Note that this will be called
+  # for all HTTP responses, including 4xx and 5xx status codes.
+  on_completion do |response, user_id, endpoint|
+    data = response.json
+    User.find(user_id).update!(external_data: data)
+  end
+
+  # Define callback for errors (optional). This is only called if an
+  # error was raised during the HTTP request (timeout, connection failure, etc).
+  on_error do |error, user_id, endpoint|
+    Rails.logger.error("Failed to fetch data for user #{user_id}: #{error.message}")
+    # Error will be retried automatically if no on_error is defined
+  end
+
+  def perform(user_id, endpoint)
+    # This returns immediately after enqueueing the HTTP request
+    async_get("https://api.example.com/#{endpoint}")
+  end
+end
+```
+
+> [!NOTE]
+> The request should be the last thing your worker does.
+
+### 2. That's It!
+
+The processor starts automatically with Sidekiq. When the HTTP request completes, your `on_completion` will be executed as a new Sidekiq job with the [response](Sidekiq::AsyncHttp::Response) and the original job arguments.
+
+If an error is raised during the request, the `on_error` callback will be executed instead with the [error](Sidekiq::AsyncHttp::Error) information and the original job arguments. If no `on_error` is defined, the original job will be retried according to Sidekiq's retry rules.
+
+## Usage Patterns
+
+### Using the Job Mixin (Recommended)
+
+The `Sidekiq::AsyncHttp::Job` mixin provides a clean DSL for async HTTP requests:
+
+```ruby
+class ApiWorker
+  include Sidekiq::AsyncHttp::Job
+
+  # Configure a shared HTTP client with base URL and default headers
+  client base_url: "https://api.example.com",
+         headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
+         timeout: 60
+
+  # Callbacks receive the response/error plus original job arguments
+  on_completion do |response, resource_type, resource_id|
+    if response.success?
+      process_data(response.json, resource_type, resource_id)
+    else
+      handle_api_error(response.status, resource_type, resource_id)
+    end
+  end
+
+  on_error do |error, resource_type, resource_id|
+    case error.error_type
+    when :timeout
+      # Re-enqueue with exponential backoff
+      ApiWorker.perform_in(5.minutes, resource_type, resource_id)
+    when :connection
+      notify_ops_team("API connection failure", error)
+    end
+  end
+
+  def perform(resource_type, resource_id)
+    # Uses the configured client
+    async_get("/#{resource_type}/#{resource_id}")
+  end
+end
+```
+
+### Making Different Types of Requests
+
+```ruby
+class WebhookWorker
+  include Sidekiq::AsyncHttp::Job
+
+  on_completion { |response, event_id| WebhookDelivery.mark_delivered(event_id) }
+  on_error { |error, event_id| WebhookDelivery.mark_failed(event_id, error.message) }
+
+  def perform(event_id)
+    event = Event.find(event_id)
+    webhook = event.webhook
+
+    # POST with JSON body
+    async_post(
+      webhook.url,
+      json: event.payload,
+      headers: {"X-Webhook-Signature" => sign_payload(event.payload, webhook.secret)},
+      timeout: 30
+    )
+  end
+end
+```
+
+### Defining Your Own Callback Workers
+
+For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling:
+
+```ruby
+# Define dedicated callback workers
+class FetchCompletionWorker
+  include Sidekiq::Job
+  sidekiq_options queue: "critical", retry: 10
+
+  def perform(response_data, user_id)
+    response = Sidekiq::AsyncHttp::Response.from_h(response_data)
+    User.find(user_id).update!(data: response.json)
+  end
+end
+
+class FetchErrorWorker
+  include Sidekiq::Job
+  sidekiq_options queue: "low"
+
+  def perform(error_data, user_id)
+    error = Sidekiq::AsyncHttp::Error.from_h(error_data)
+    ErrorTracker.record(error, user_id: user_id)
+  end
+end
+
+# Use them in your worker
+class FetchUserDataWorker
+  include Sidekiq::AsyncHttp::Job
+
+  # Point to dedicated callback workers
+  self.completion_callback_worker = FetchCompletionWorker
+  self.error_callback_worker = FetchErrorWorker
+
+  def perform(user_id)
+    async_get("https://api.example.com/users/#{user_id}")
+  end
+end
+```
+
+### Using the Client Directly
+
+For more control, you can use the `Sidekiq::AsyncHttp::Client` directly:
+
+```ruby
+class FlexibleWorker
+  include Sidekiq::Job
+
+  def perform(url, method, data = nil)
+    client = Sidekiq::AsyncHttp::Client.new(
+      timeout: 120,
+      connect_timeout: 10,
+      headers: {"User-Agent" => "MyApp/1.0"}
+    )
+
+    request = client.async_request(method.to_sym, url, json: data)
+    request.execute(
+      completion_worker: DataProcessorWorker,
+      error_worker: ErrorHandlerWorker
+    )
+  end
+end
+```
+
+### Sensitive Data Handling
+
+Responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if the response contains sensitive data since the data will be stored in plain text.
+
+You can use the with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
+
+First, setup the encryption configuration in an initializer:
+
+```ruby
+Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
+```
+
+Next, specify the `encrypted_args` option in the `on_completion` callback to indicate the response argument should be encrypted:
+
+```ruby
+class SensitiveDataWorker
+  include Sidekiq::AsyncHttp::Job
+
+  on_completion(encrypted_args: :response) do |response, record_id|
+    SensitiveRecord.find(record_id).update!(data: response.body)
+  end
+
+  def perform(record_id)
+    async_get("https://secure-api.example.com/data/#{record_id}")
+  end
+end
+```
+
+> [!NOTE]
+> You can only encrypt the response argument by name with the `encrypted_args` option when using `on_completion`. If you need to encrypt other arguments, you can either pass `true` to encrypt all arguments or pass an array of the indexes of the arguments to encrypt. See the [sidekiq-encrypted_args documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details.
+
+> [!NOTE]
+> The encryption feature in Sidekiq Enterprise will not work for this because it can only be applied to a single hash argument that must be the last argument to the job.
+
+## Configuration
+
+The gem can be configured globally in an initializer:
+
+```ruby
+# config/initializers/sidekiq_async_http.rb
+Sidekiq::AsyncHttp.configure do |config|
+  # Maximum concurrent HTTP requests (default: 256)
+  config.max_connections = 256
+
+  # Default timeout for HTTP requests in seconds (default: 60)
+  config.default_request_timeout = 60
+
+  # Timeout for graceful shutdown in seconds (default: 25)
+  # Should be less than Sidekiq's shutdown timeout
+  config.shutdown_timeout = 25
+
+  # Maximum response body size in bytes (default: 10MB)
+  # Responses larger than this will trigger ResponseTooLargeError
+  config.max_response_size = 10 * 1024 * 1024
+
+  # Idle connection timeout in seconds (default: 60)
+  config.idle_connection_timeout = 60
+
+  # Heartbeat interval for crash recovery in seconds (default: 60)
+  config.heartbeat_interval = 60
+
+  # Orphan detection threshold in seconds (default: 300)
+  # Requests older than this without a heartbeat will be re-enqueued
+  config.orphan_threshold = 300
+
+  # Default User-Agent header for all requests (optional)
+  config.user_agent = "MyApp/1.0"
+
+  # Custom logger (defaults to Sidekiq.logger)
+  config.logger = Rails.logger
+end
+```
+
+See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) documentation for all available options.
+
+## Metrics and Monitoring
+
+### Web UI
+
+If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics:
+
+```ruby
+# config/routes.rb (Rails)
+require "sidekiq/web"
+require "sidekiq/async_http/web_ui"
+
+mount Sidekiq::Web => "/sidekiq"
+```
+
+The Web UI shows:
+- Total requests, errors, and average duration
+- Current capacity utilization
+- Per-process inflight request counts
+
+### Callbacks for Custom Monitoring
+
+You can register callbacks to integrate with your monitoring system using the `after_completion` and `after_error` hooks:
+
+```ruby
+Sidekiq::AsyncHttp.after_completion do |response|
+  StatsD.timing("async_http.duration", response.duration * 1000)
+  StatsD.increment("async_http.status.#{response.status}")
+end
+
+Sidekiq::AsyncHttp.after_error do |error|
+  StatsD.increment("async_http.error.#{error.error_type}")
+  Sentry.capture_message("Async HTTP error: #{error.message}")
+end
+```
+
+You can register multiple callbacks; they will be called in the order registered.
+
+## Shutdown Behavior
+
+The async HTTP processor automatically hooks in with Sidekiq's lifecycle events.
+
+1. **Startup:** Processor starts automatically when Sidekiq starts
+2. **Quiet (TSTP signal):** Processor stops accepting new requests but continues processing in-flight requests
+3. **Shutdown:** Processor waits up to `shutdown_timeout` seconds for in-flight requests to complete
+
+### Incomplete Request Handling
+
+If requests are still in-flight when shutdown times out:
+
+- In-flight requests are interrupted
+- The **original Sidekiq job** is automatically re-enqueued
+- Re-enqueued jobs will be processed again when Sidekiq restarts
+
+This ensures no work is lost during deployments or restarts.
+
+### Crash Recovery
+
+The gem includes crash recovery to handle process failures:
+
+1. **Heartbeat Tracking:** Every `heartbeat_interval` seconds, the processor updates heartbeat timestamps for all in-flight requests in Redis
+2. **Orphan Detection:** One processor periodically checks for requests that haven't received a heartbeat update in `orphan_threshold` seconds
+3. **Automatic Re-enqueue:** Orphaned requests have their original Sidekiq jobs re-enqueued
+
+This ensures that if a Sidekiq process crashes, its in-flight requests will be retried by another process.
+
+## Testing
+
+The gem supports `Sidekiq::Testing.inline!` mode for synchronous testing. When in inline mode, async HTTP requests are executed immediately within the worker thread, blocking until completion. This allows you to write tests that verify the full request/response cycle without needing the async processor to be running.
 
 ## Installation
 
 Add this line to your application's Gemfile:
 
 ```ruby
-gem "sidekiq-async_http_requests"
+gem "sidekiq-async_http"
 ```
 
 Then execute:
-```bash
-$ bundle
-```
 
-Or install it yourself as:
 ```bash
-$ gem install sidekiq-async_http_requests
+bundle install
 ```
 
 ## Contributing
 
-Open a pull request on [GitHub](https://github.com/bdurand/sidekiq-async_http_requests).
+Open a pull request on [GitHub](https://github.com/bdurand/sidekiq-async_http).
 
 Please use the [standardrb](https://github.com/testdouble/standard) syntax and lint your code with `standardrb --fix` before submitting.
+
+Running the tests requires a Redis compatible server. There is a script to start one in a local container running on port 24455:
+
+```bash
+bin/run-valkey
+```
+
+Then run the test suite with:
+
+```bash
+bundle exec rake
+```
+
+There is also a bundled test app in the `test_app` directory that can be used for manual testing and experimentation. The server will run on http://localhost:9292 and can be started with:
+
+```bash
+bundle exec rake test_app
+```
 
 ## License
 

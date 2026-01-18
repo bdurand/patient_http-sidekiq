@@ -1,0 +1,669 @@
+# frozen_string_literal: true
+
+require "concurrent"
+require "async"
+require "async/queue"
+require "async/http"
+
+module Sidekiq
+  module AsyncHttp
+    # Core processor that handles async HTTP requests in a dedicated thread
+    class Processor
+      include TimeHelper
+
+      STATES = %i[stopped running draining stopping].freeze
+
+      # Timing constants for the reactor loop
+      DEQUEUE_TIMEOUT = 0.1          # Seconds to wait when dequeueing requests
+      REACTOR_SLEEP = 0.01           # Seconds to sleep when queue is empty
+      INFLIGHT_UPDATE_INTERVAL = 5   # Seconds between inflight stats updates
+      SHUTDOWN_POLL_INTERVAL = 0.001 # Seconds to sleep while polling during shutdown
+      MONITOR_SLEEP = 0.1            # Seconds to sleep between monitor thread checks
+
+      # @return [Configuration] the configuration object for the processor
+      attr_reader :config
+
+      # @return [Metrics] the metrics maintained by the processor
+      attr_reader :metrics
+
+      # @return [InflightRegistry] the inflight request registry
+      attr_reader :inflight_registry
+
+      # Callback to invoke after each request. Only available in testing mode.
+      # @api private
+      attr_accessor :testing_callback
+
+      # Initialize the processor.
+      #
+      # @param config [Configuration] the configuration object
+      # @return [void]
+      def initialize(config = nil)
+        @config = config || Sidekiq::AsyncHttp.configuration
+        @metrics = Metrics.new
+        @inflight_registry = InflightRegistry.new(@config)
+        @queue = Thread::Queue.new
+        @state = Concurrent::AtomicReference.new(:stopped)
+        @reactor_thread = nil
+        @monitor_thread = nil
+        @shutdown_barrier = Concurrent::Event.new
+        @reactor_ready = Concurrent::Event.new
+        @inflight_requests = Concurrent::Hash.new
+        @pending_tasks = Concurrent::Hash.new
+        @tasks_lock = Mutex.new
+        @testing_callback = nil
+      end
+
+      # Start the processor.
+      #
+      # @return [void]
+      def start
+        return if running?
+
+        @tasks_lock.synchronize do
+          return if starting? || running?
+          @state.set(:starting)
+          @shutdown_barrier.reset
+          @reactor_ready.reset
+        end
+
+        @reactor_thread = Thread.new do
+          Thread.current.name = "async-http-processor"
+          run_reactor
+        rescue => e
+          # Log error but don't crash
+          @config.logger&.error("[Sidekiq::AsyncHttp] Processor error: #{e.message}\n#{e.backtrace.join("\n")}")
+
+          raise if AsyncHttp.testing?
+        ensure
+          @state.set(:stopped) if @reactor_thread == Thread.current
+        end
+
+        @monitor_thread = Thread.new do
+          Thread.current.name = "async-http-monitor"
+          @state.set(:running)
+          run_monitor
+        rescue => e
+          # Log error but don't crash
+          @config.logger&.error("[Sidekiq::AsyncHttp] Monitor error: #{e.message}\n#{e.backtrace.join("\n")}")
+
+          raise if AsyncHttp.testing?
+        end
+
+        # Block until the reactor is ready
+        @reactor_ready.wait
+      end
+
+      # Stop the processor.
+      #
+      # @param timeout [Numeric, nil] how long to wait for in-flight requests (seconds)
+      # @return [void]
+      def stop(timeout: nil)
+        return if stopped?
+
+        # Atomically transition to stopping state under lock to ensure consistency
+        # with other state-checking operations
+        @tasks_lock.synchronize do
+          @state.set(:stopping)
+        end
+
+        # Signal the reactor thread to stop accepting new requests
+        @shutdown_barrier.set
+
+        # Wait for in-flight requests to complete
+        if timeout && timeout > 0
+          deadline = monotonic_time + timeout
+          while !idle? && monotonic_time < deadline
+            sleep(SHUTDOWN_POLL_INTERVAL)
+          end
+        end
+
+        # Re-enqueue any remaining in-flight and pending tasks
+        tasks_to_reenqueue = []
+        @tasks_lock.synchronize do
+          # Now that we have the lock again, atomically transition to stopped and clear collections
+          @state.set(:stopped)
+          tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
+          @inflight_requests.clear
+          @pending_tasks.clear
+        end
+
+        # Clean up process-specific keys from Redis
+        Stats.instance.cleanup_process_keys
+
+        # Re-enqueue each incomplete task
+        tasks_to_reenqueue.each do |task|
+          # Re-enqueue the original job
+          task.reenqueue_job
+
+          # Log re-enqueue
+          @config.logger&.info(
+            "[Sidekiq::AsyncHttp] Re-enqueued incomplete request #{task.id} to #{task.job_worker_class.name}"
+          )
+        rescue => e
+          @config.logger&.error(
+            "[Sidekiq::AsyncHttp] Failed to re-enqueue request #{task.id}: #{e.class} - #{e.message}"
+          )
+
+          raise if AsyncHttp.testing?
+        end
+
+        @reactor_thread.join(1) if @reactor_thread&.alive?
+        @reactor_thread.kill if @reactor_thread&.alive?
+        @reactor_thread = nil
+
+        # Stop the monitor thread
+        @monitor_thread.join(1) if @monitor_thread&.alive?
+        @monitor_thread.kill if @monitor_thread&.alive?
+        @monitor_thread = nil
+      end
+
+      # Drain the processor (stop accepting new requests).
+      #
+      # @return [void]
+      def drain
+        return unless running?
+
+        @state.set(:draining)
+        @config.logger&.info("[Sidekiq::AsyncHttp] Processor draining (no longer accepting new requests)")
+      end
+
+      # Enqueue a request task for processing.
+      #
+      # @param task [RequestTask] the request task to enqueue
+      # @raise [NotRunningError] if processor is not running
+      # @raise [MaxCapacityError] if at max capacity
+      # @return [void]
+      def enqueue(task)
+        unless running?
+          raise NotRunningError.new("Cannot enqueue request: processor is #{state}")
+        end
+
+        # Check capacity - raise error if at max connections
+        if inflight_count >= @config.max_connections
+          @metrics.record_refused
+          raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
+        end
+
+        task.enqueued!
+        @queue.push(task)
+      end
+
+      # Check if processor is starting.
+      #
+      # @return [Boolean]
+      def starting?
+        state == :starting
+      end
+
+      # Check if processor is running.
+      #
+      # @return [Boolean]
+      def running?
+        state == :running
+      end
+
+      # Check if processor is stopped.
+      #
+      # @return [Boolean]
+      def stopped?
+        state == :stopped
+      end
+
+      # Check if processor is draining.
+      #
+      # @return [Boolean]
+      def draining?
+        state == :draining
+      end
+
+      # Check if processor is drained (draining and idle).
+      #
+      # @return [Boolean]
+      def drained?
+        state == :draining && idle?
+      end
+
+      # Check if processor is stopping.
+      #
+      # @return [Boolean]
+      def stopping?
+        state == :stopping
+      end
+
+      # Check if processor is idle (no queued or in-flight requests).
+      #
+      # @return [Boolean]
+      def idle?
+        @tasks_lock.synchronize do
+          @queue.empty? && @pending_tasks.empty? && @inflight_requests.empty?
+        end
+      end
+
+      # Get current state.
+      #
+      # @return [Symbol]
+      def state
+        @state.get
+      end
+
+      # Get the number of in-flight requests.
+      #
+      # @return [Integer]
+      def inflight_count
+        @inflight_requests.size
+      end
+
+      # Wait for the processor to start.
+      #
+      # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      # @return [Boolean] true if started, false if timeout reached
+      # @api private
+      def wait_for_running(timeout: 5)
+        start
+        deadline = monotonic_time + timeout
+        while monotonic_time <= deadline
+          return true if running?
+          sleep(SHUTDOWN_POLL_INTERVAL)
+        end
+        false
+      end
+
+      # Wait for the queue to be empty and all in-flight requests to complete.
+      # This is mainly for use in tests.
+      #
+      # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      # @return [Boolean] true if processing completed, false if timeout reached
+      # @api private
+      def wait_for_idle(timeout: 1)
+        deadline = monotonic_time + timeout
+        while monotonic_time <= deadline
+          return true if idle?
+          sleep(SHUTDOWN_POLL_INTERVAL)
+        end
+        false
+      end
+
+      # Wait for at least one request to start processing. This is mainly for use in tests.
+      #
+      # @param timeout [Numeric] maximum time to wait in seconds (default: 5)
+      # @return [Boolean] true if a request started processing, false if timeout reached
+      # @api private
+      def wait_for_processing(timeout: 1)
+        deadline = monotonic_time + timeout
+        while monotonic_time <= deadline
+          return true if !@inflight_requests.empty? || !@pending_tasks.empty?
+          sleep(SHUTDOWN_POLL_INTERVAL)
+        end
+        false
+      end
+
+      private
+
+      # Run the async reactor loop.
+      #
+      # @return [void]
+      def run_reactor
+        Async do |task|
+          # Signal that the reactor is ready
+          @reactor_ready.set
+
+          @config.logger&.info("[Sidekiq::AsyncHttp] Processor started")
+
+          last_inflight_update = monotonic_time - INFLIGHT_UPDATE_INTERVAL
+          # Main loop: monitor shutdown/drain and process requests
+          loop do
+            break if stopping? || stopped?
+
+            # Update inflight stats periodically
+            if monotonic_time - last_inflight_update >= INFLIGHT_UPDATE_INTERVAL
+              Stats.instance.update_inflight(inflight_count, @config.max_connections)
+              last_inflight_update = monotonic_time
+            end
+
+            # Pop request task from queue with timeout to periodically check shutdown
+            request_task = dequeue_request(timeout: DEQUEUE_TIMEOUT)
+            unless request_task
+              sleep(REACTOR_SLEEP)
+              next
+            end
+
+            # Track as pending immediately to avoid race condition with stop()
+            @tasks_lock.synchronize do
+              @pending_tasks[request_task.id] = request_task
+            end
+
+            # If we've dequeued a task, we must process it even if stopping
+            # to avoid losing the request (shutdown will handle re-enqueuing if incomplete)
+
+            # Spawn a new fiber to process this request task
+            task.async do
+              process_request(request_task)
+            rescue => e
+              @config.logger&.error("[Sidekiq::AsyncHttp] Error processing request: #{e.inspect}\n#{e.backtrace.join("\n")}")
+
+              warn(e.inspect, e.backtrace) if AsyncHttp.testing?
+            end
+          end
+
+          @config.logger&.info("[Sidekiq::AsyncHttp] Processor stopped")
+        rescue Async::Stop
+          # Normal shutdown signal
+          @config.logger&.info("[Sidekiq::AsyncHttp] Reactor received stop signal")
+        rescue => e
+          @config.logger&.error("[Sidekiq::AsyncHttp] Reactor loop error: #{e.inspect}\n#{e.backtrace.join("\n")}")
+        end
+      end
+
+      # Dequeue a request task with timeout.
+      #
+      # @param timeout [Numeric] timeout in seconds
+      # @return [RequestTask, nil] the request task or nil if timeout
+      def dequeue_request(timeout:)
+        @queue.pop(timeout: timeout)
+      rescue ThreadError
+        # Queue is empty and timeout expired
+        nil
+      end
+
+      # Process a single HTTP request task.
+      #
+      # @param task [RequestTask] the request task to process
+      # @return [void]
+      def process_request(task)
+        # Move from pending to in-flight tracking
+        @tasks_lock.synchronize do
+          @pending_tasks.delete(task.id)
+          @inflight_requests[task.id] = task
+        end
+
+        # Register in Redis for crash recovery
+        @inflight_registry.register(task)
+
+        # Mark task as started
+        task.started!
+
+        # Record request start
+        @metrics.record_request_start
+
+        begin
+          http_client = http_client(task.request)
+          http_request = build_http_request(task.request)
+          http_request.headers.add("x-request-id", task.id)
+
+          # Execute with timeout
+          response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
+            async_response = http_client.call(http_request)
+            headers_hash = async_response.headers.to_h
+            body = read_response_body(async_response, headers_hash)
+
+            # Build response object
+            {
+              status: async_response.status,
+              headers: headers_hash,
+              body: body,
+              protocol: async_response.protocol
+            }
+          end
+
+          task.completed!
+          response = build_response(task, response_data)
+          handle_success(task, response)
+        rescue => e
+          task.completed!
+          error_type = classify_error(e)
+          @metrics.record_error(error_type)
+          handle_error(task, e)
+        ensure
+          # Remove from in-flight tracking
+          @tasks_lock.synchronize do
+            @inflight_requests.delete(task.id)
+          end
+          @metrics.record_request_complete(task.duration)
+
+          @testing_callback&.call(task) if AsyncHttp.testing?
+        end
+      end
+
+      # Read response body with size validation.
+      #
+      # Reads the async HTTP response body asynchronously to completion, which allows
+      # the connection to be reused. The async-http client handles connection pooling
+      # and keep-alive internally. Using iteration instead of read() ensures non-blocking
+      # I/O that yields to the reactor.
+      #
+      # @param async_response [Async::HTTP::Protocol::Response] the async HTTP response
+      # @param headers_hash [Hash] the response headers
+      # @return [String, nil] the response body or nil if no body present
+      # @raise [ResponseTooLargeError] if body exceeds max_response_size
+      def read_response_body(async_response, headers_hash)
+        return nil unless async_response.body
+
+        # Check content-length header if present
+        content_length = headers_hash["content-length"]&.to_i
+        if content_length && content_length > @config.max_response_size
+          raise ResponseTooLargeError.new(
+            "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
+          )
+        end
+
+        # Read body while checking size
+        chunks = []
+        total_size = 0
+        async_response.body.each do |chunk|
+          total_size += chunk.bytesize
+          if total_size > @config.max_response_size
+            raise ResponseTooLargeError.new(
+              "Response body size exceeded maximum allowed size (#{@config.max_response_size} bytes)"
+            )
+          end
+          chunks << chunk
+        end
+        chunks.join
+      end
+
+      # Create an Async::HTTP::Client for the given request.
+      #
+      # @param request [Request] the request object
+      # @return [Async::HTTP::Client] the async HTTP client
+      def http_client(request)
+        endpoint = Async::HTTP::Endpoint.parse(
+          request.url,
+          connect_timeout: request.connect_timeout,
+          idle_timeout: @config.idle_connection_timeout
+        )
+        Async::HTTP::Client.new(endpoint)
+      end
+
+      # Build an Async::HTTP::Request from our Request object.
+      #
+      # @param request [Request] the request object
+      # @return [Async::HTTP::Request] the async HTTP request
+      def build_http_request(request)
+        uri = URI.parse(request.url)
+
+        # Create headers - must be a Protocol::HTTP::Headers object, not a Hash
+        headers = Protocol::HTTP::Headers.new
+        (request.headers || {}).each do |key, value|
+          headers.add(key, value)
+        end
+
+        # Set body if present - use Protocol::HTTP::Body::Buffered for proper handling
+        body_content = if request.body
+          body_bytes = request.body.to_s
+          # Protocol::HTTP::Body::Buffered will automatically set Content-Length
+          Protocol::HTTP::Body::Buffered.wrap([body_bytes])
+        end
+
+        # Build the request with correct parameter order: scheme, authority, method, path, version, headers, body
+        Async::HTTP::Protocol::Request.new(
+          uri.scheme,                      # scheme
+          uri.authority,                   # authority (host:port)
+          request.method.to_s.upcase,      # method
+          uri.request_uri,                 # path
+          nil,                             # version (nil = auto)
+          headers,                         # headers
+          body_content                     # body
+        )
+      end
+
+      # Build a Response object from async response data.
+      #
+      # @param task [RequestTask] the original request task
+      # @param http_response [Hash] the response data
+      # @return [Response] the response object
+      def build_response(task, http_response)
+        Response.new(
+          status: http_response[:status],
+          headers: http_response[:headers],
+          body: http_response[:body],
+          protocol: http_response[:protocol],
+          duration: task.duration,
+          request_id: task.id,
+          url: task.request.url,
+          method: task.request.method
+        )
+      end
+
+      # Classify an error by type.
+      #
+      # @param exception [Exception] the exception
+      # @return [Symbol] the error type
+      def classify_error(exception)
+        case exception
+        when Async::TimeoutError
+          :timeout
+        when ResponseTooLargeError
+          :response_too_large
+        when OpenSSL::SSL::SSLError
+          :ssl
+        when Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH, Errno::ENETUNREACH
+          :connection
+        else
+          :unknown
+        end
+      end
+
+      # Handle successful response.
+      #
+      # @param task [RequestTask] the request task
+      # @param response [Response] the response object
+      # @return [void]
+      def handle_success(task, response)
+        if stopped?
+          @config.logger&.warn("[Sidekiq::AsyncHttp] Request #{task.id} succeeded after processor was stopped")
+          return
+        end
+
+        task.success!(response)
+
+        # Unregister from Redis after successful callback enqueue
+        @inflight_registry.unregister(task.id)
+
+        @config.logger&.debug(
+          "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
+          "enqueued #{task.completion_worker}"
+        )
+      end
+
+      # Handle error response.
+      #
+      # @param task [RequestTask] the request task
+      # @param exception [Exception] the exception
+      # @return [void]
+      def handle_error(task, exception)
+        if stopped?
+          @config.logger&.warn("[Sidekiq::AsyncHttp] Request #{task.id} failed after processor was stopped")
+          return
+        end
+
+        task.error!(exception)
+
+        # Unregister from Redis after error callback enqueue
+        @inflight_registry.unregister(task.id)
+
+        @config.logger&.warn(
+          "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \
+          "enqueued #{task.error_worker}"
+        )
+      rescue => e
+        # Log error but don't crash the processor
+        @config.logger&.error(
+          "[Sidekiq::AsyncHttp] Failed to enqueue error worker for request #{task.id}: #{e.class} - #{e.message}"
+        )
+        raise if AsyncHttp.testing?
+      end
+
+      # Run the monitor thread for heartbeat updates and orphan detection.
+      #
+      # @return [void]
+      def run_monitor
+        @config.logger&.info("[Sidekiq::AsyncHttp] Monitor thread started")
+
+        last_heartbeat_update = monotonic_time - @config.heartbeat_interval
+        last_gc_attempt = monotonic_time - @config.heartbeat_interval
+
+        loop do
+          break if stopping? || stopped?
+
+          current_time = monotonic_time
+
+          # Update heartbeats for all inflight requests
+          if current_time - last_heartbeat_update >= @config.heartbeat_interval
+            update_heartbeats
+            last_heartbeat_update = current_time
+          end
+
+          # Attempt garbage collection
+          if current_time - last_gc_attempt >= @config.heartbeat_interval
+            attempt_garbage_collection
+            last_gc_attempt = current_time
+          end
+
+          sleep(MONITOR_SLEEP)
+        end
+
+        @config.logger&.info("[Sidekiq::AsyncHttp] Monitor thread stopped")
+      end
+
+      # Update heartbeats for all inflight requests.
+      #
+      # @return [void]
+      def update_heartbeats
+        request_ids = []
+        @tasks_lock.synchronize do
+          request_ids = @inflight_requests.keys
+        end
+
+        return if request_ids.empty?
+
+        @inflight_registry.update_heartbeats(request_ids)
+
+        @config.logger&.debug("[Sidekiq::AsyncHttp] Updated heartbeats for #{request_ids.size} inflight requests")
+      rescue => e
+        @config.logger&.error("[Sidekiq::AsyncHttp] Failed to update heartbeats: #{e.class} - #{e.message}")
+        raise if AsyncHttp.testing?
+      end
+
+      # Attempt to acquire GC lock and clean up orphaned requests.
+      #
+      # @return [void]
+      def attempt_garbage_collection
+        # Try to acquire the distributed lock
+        return unless @inflight_registry.acquire_gc_lock
+
+        begin
+          count = @inflight_registry.cleanup_orphaned_requests(@config.orphan_threshold, @config.logger)
+
+          if count > 0
+            @config.logger&.info("[Sidekiq::AsyncHttp] Garbage collection: re-enqueued #{count} orphaned requests")
+          end
+        ensure
+          @inflight_registry.release_gc_lock
+        end
+      rescue => e
+        @config.logger&.error("[Sidekiq::AsyncHttp] Garbage collection failed: #{e.class} - #{e.message}")
+        raise if AsyncHttp.testing?
+      end
+    end
+  end
+end
