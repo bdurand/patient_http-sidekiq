@@ -17,6 +17,6 @@ gem "appraisal"
 gem "standard", "~>1.0"
 gem "simplecov", "~> 0.22"
 gem "yard"
-gem "sidekiq", "~> 7.2.0"
+gem "sidekiq", "~> 7.0.0"
 
 gemspec path: "../"
