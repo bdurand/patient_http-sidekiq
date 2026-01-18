@@ -11,7 +11,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         expect(config.max_connections).to eq(256)
         expect(config.idle_connection_timeout).to eq(60)
         expect(config.default_request_timeout).to eq(60)
-        expect(config.shutdown_timeout).to eq(25)
+        expect(config.shutdown_timeout).to eq(Sidekiq.default_configuration[:timeout] - 2)
         expect(config.logger).to eq(Sidekiq.logger)
       end
     end

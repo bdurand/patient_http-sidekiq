@@ -260,13 +260,17 @@ Sidekiq::AsyncHttp.configure do |config|
   # Default timeout for HTTP requests in seconds (default: 60)
   config.default_request_timeout = 60
 
-  # Timeout for graceful shutdown in seconds (default: 25)
-  # Should be less than Sidekiq's shutdown timeout
-  config.shutdown_timeout = 25
+  # Default User-Agent header for all requests (optional)
+  config.user_agent = "MyApp/1.0"
 
-  # Maximum response body size in bytes (default: 10MB)
+  # Timeout for graceful shutdown in seconds (default: the Sidekiq
+  # shutdown timeout minus 2 seconds). This should be less than Sidekiq's
+  # shutdown timeout
+  config.shutdown_timeout = 23
+
+  # Maximum response body size in bytes (default: 1MB)
   # Responses larger than this will trigger ResponseTooLargeError
-  config.max_response_size = 10 * 1024 * 1024
+  config.max_response_size = 1024 * 1024
 
   # Idle connection timeout in seconds (default: 60)
   config.idle_connection_timeout = 60
@@ -278,15 +282,18 @@ Sidekiq::AsyncHttp.configure do |config|
   # Requests older than this without a heartbeat will be re-enqueued
   config.orphan_threshold = 300
 
-  # Default User-Agent header for all requests (optional)
-  config.user_agent = "MyApp/1.0"
-
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
 end
 ```
 
 See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) documentation for all available options.
+
+### Tuning Tips
+
+- `max_connection`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
+- `default_request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
+- max_response_size: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
 
 ## Metrics and Monitoring
 

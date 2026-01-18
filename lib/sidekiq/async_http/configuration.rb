@@ -46,9 +46,9 @@ module Sidekiq
         max_connections: 256,
         idle_connection_timeout: 60,
         default_request_timeout: 60,
-        shutdown_timeout: 25,
+        shutdown_timeout: (Sidekiq.default_configuration[:timeout] || 25) - 2,
         logger: nil,
-        max_response_size: 10 * 1024 * 1024,
+        max_response_size: 1024 * 1024,
         heartbeat_interval: 60,
         orphan_threshold: 300,
         user_agent: nil

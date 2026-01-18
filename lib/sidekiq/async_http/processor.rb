@@ -57,10 +57,8 @@ module Sidekiq
       #
       # @return [void]
       def start
-        return if running?
-
         @tasks_lock.synchronize do
-          return if starting? || running?
+          return if starting? || running? || stopping?
           @state.set(:starting)
           @shutdown_barrier.reset
           @reactor_ready.reset
@@ -75,12 +73,14 @@ module Sidekiq
 
           raise if AsyncHttp.testing?
         ensure
-          @state.set(:stopped) if @reactor_thread == Thread.current
+          if @reactor_thread == Thread.current
+            @tasks_lock.synchronize { @state.set(:stopped) }
+          end
         end
 
         @monitor_thread = Thread.new do
           Thread.current.name = "async-http-monitor"
-          @state.set(:running)
+          @tasks_lock.synchronize { @state.set(:running) }
           run_monitor
         rescue => e
           # Log error but don't crash
@@ -98,11 +98,10 @@ module Sidekiq
       # @param timeout [Numeric, nil] how long to wait for in-flight requests (seconds)
       # @return [void]
       def stop(timeout: nil)
-        return if stopped?
-
         # Atomically transition to stopping state under lock to ensure consistency
         # with other state-checking operations
         @tasks_lock.synchronize do
+          return if stopped? || stopping? || starting?
           @state.set(:stopping)
         end
 
@@ -161,9 +160,12 @@ module Sidekiq
       #
       # @return [void]
       def drain
-        return unless running?
+        @tasks_lock.synchronize do
+          return unless running?
 
-        @state.set(:draining)
+          @state.set(:draining)
+        end
+
         @config.logger&.info("[Sidekiq::AsyncHttp] Processor draining (no longer accepting new requests)")
       end
 
@@ -186,6 +188,13 @@ module Sidekiq
 
         task.enqueued!
         @queue.push(task)
+      end
+
+      # Get the current processor status.
+      #
+      # @return [Symbol] the current status
+      def status
+        @state.get
       end
 
       # Check if processor is starting.
@@ -297,6 +306,19 @@ module Sidekiq
         false
       end
 
+      # Run the processor in a block. This is intended for use in tests to
+      # ensure the processor is started and stopped properly.
+      #
+      # @api private
+      def run(&block)
+        start
+        wait_for_running
+        yield
+      ensure
+        stop
+        wait_for_idle
+      end
+
       private
 
       # Run the async reactor loop.
@@ -394,7 +416,7 @@ module Sidekiq
           response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
             async_response = http_client.call(http_request)
             headers_hash = async_response.headers.to_h
-            body = read_response_body(async_response, headers_hash)
+            body = read_response_body(async_response, headers_hash) unless stopping? || stopped?
 
             # Build response object
             {
@@ -404,6 +426,8 @@ module Sidekiq
               protocol: async_response.protocol
             }
           end
+
+          return if stopping? || stopped?
 
           task.completed!
           response = build_response(task, response_data)

@@ -15,12 +15,10 @@ RSpec.describe "Crash Recovery", :integration do
   let(:registry) { processor.inflight_registry }
   let(:web_server) { TestWebServer.new }
 
-  before do
-    processor.start
-  end
-
-  after do
-    processor.stop(timeout: 1) if processor.running?
+  around do |example|
+    processor.run do
+      example.run
+    end
   end
 
   it "re-enqueues requests after simulated crash" do

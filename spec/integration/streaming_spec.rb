@@ -12,7 +12,7 @@ RSpec.describe "Streaming Response Integration", :integration do
 
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
-  before do
+  around do |example|
     TestWorkers::CompletionWorker.reset_calls!
 
     # Disable WebMock for integration tests
@@ -20,13 +20,12 @@ RSpec.describe "Streaming Response Integration", :integration do
     WebMock.allow_net_connect!
     WebMock.disable!
 
-    processor.start
     test_web_server.start.ready?
-  end
 
-  after do
-    processor.stop(timeout: 1)
-
+    processor.run do
+      example.run
+    end
+  ensure
     # Re-enable WebMock
     WebMock.enable!
     WebMock.disable_net_connect!(allow_localhost: true)

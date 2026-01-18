@@ -46,6 +46,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     )
   end
 
+  after do
+    processor.stop
+  end
+
   describe ".new" do
     it "initializes with provided config and metrics" do
       expect(processor.config).to eq(config)
@@ -110,8 +114,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     end
 
     context "when running" do
-      before do
-        processor.start
+      around do |example|
+        processor.run do
+          example.run
+        end
       end
 
       it "sets the state to stopping then stopped" do
@@ -175,10 +181,11 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
   describe "#drain" do
     it "sets the state to draining when running" do
-      processor.start
-      processor.drain
-      expect(processor).to be_draining
-      expect(processor.state).to eq(:draining)
+      processor.run do
+        processor.drain
+        expect(processor).to be_draining
+        expect(processor.state).to eq(:draining)
+      end
     end
 
     it "does nothing if not running" do
@@ -197,9 +204,13 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     context "when running" do
       before do
-        stub_request(:get, "https://api.example.com/users")
-          .to_return(status: 200, body: "response", headers: {})
-        processor.start
+        stub_request(:get, "https://api.example.com/users").to_return(status: 200, body: "response", headers: {})
+      end
+
+      around do |example|
+        processor.run do
+          example.run
+        end
       end
 
       it "adds the request to the queue" do
@@ -214,12 +225,14 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     end
 
     context "when draining" do
-      before do
-        processor.start
-        processor.drain
+      around do |example|
+        processor.run do
+          example.run
+        end
       end
 
       it "raises an error" do
+        processor.drain
         expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is draining/)
       end
     end
@@ -231,13 +244,12 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     end
 
     context "when stopping" do
-      before do
-        processor.start
-        processor.instance_variable_get(:@state).set(:stopping)
-      end
-
       it "raises an error" do
+        state = processor.instance_variable_get(:@state)
+        state.set(:stopping)
         expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is stopping/)
+      ensure
+        state&.set(:stopped)
       end
     end
   end
@@ -245,8 +257,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   describe "state predicates" do
     describe "#running?" do
       it "returns true when state is running" do
-        processor.start
-        expect(processor.running?).to be true
+        processor.run do
+          expect(processor.running?).to be true
+        end
       end
 
       it "returns false when state is not running" do
@@ -260,18 +273,18 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       end
 
       it "returns false when state is not stopped" do
-        processor.start
-        expect(processor.stopped?).to be false
-        processor.stop
+        processor.run do
+          expect(processor.stopped?).to be false
+        end
       end
     end
 
     describe "#draining?" do
       it "returns true when state is draining" do
-        processor.start
-        processor.drain
-        expect(processor.draining?).to be true
-        processor.stop
+        processor.run do
+          processor.drain
+          expect(processor.draining?).to be true
+        end
       end
 
       it "returns false when state is not draining" do
@@ -281,10 +294,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     describe "#stopping?" do
       it "returns true when state is stopping" do
-        processor.start
-        processor.instance_variable_get(:@state).set(:stopping)
-        expect(processor.stopping?).to be true
-        processor.stop
+        processor.run do
+          processor.instance_variable_get(:@state).set(:stopping)
+          expect(processor.stopping?).to be true
+        end
       end
 
       it "returns false when state is not stopping" do
@@ -294,11 +307,11 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     describe "#drained?" do
       it "returns true when draining and idle" do
-        processor.start
-        processor.drain
-        expect(processor).to be_idle
-        expect(processor.drained?).to be true
-        processor.stop
+        processor.run do
+          processor.drain
+          expect(processor).to be_idle
+          expect(processor.drained?).to be true
+        end
       end
 
       it "returns false when draining but not idle" do
@@ -308,22 +321,21 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
             {status: 200, body: "response body", headers: {}}
           end
 
-        processor.start
-        processor.enqueue(mock_request)
-        processor.wait_for_processing(timeout: 0.5)
-        processor.drain
+        processor.run do
+          processor.enqueue(mock_request)
+          processor.wait_for_processing(timeout: 0.5)
+          processor.drain
 
-        # Should be draining but not idle (request still in flight)
-        expect(processor.draining?).to be true
-        expect(processor.drained?).to be false
-
-        processor.stop
+          # Should be draining but not idle (request still in flight)
+          expect(processor.draining?).to be true
+          expect(processor.drained?).to be false
+        end
       end
 
       it "returns false when not draining" do
-        processor.start
-        expect(processor.drained?).to be false
-        processor.stop
+        processor.run do
+          expect(processor.drained?).to be false
+        end
       end
     end
   end
@@ -331,17 +343,17 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   describe "state transitions" do
     it "transitions from stopped to running" do
       expect(processor.state).to eq(:stopped)
-      processor.start
-      expect(processor.state).to eq(:running)
-      processor.stop
+      processor.run do
+        expect(processor.state).to eq(:running)
+      end
     end
 
     it "transitions from running to draining" do
-      processor.start
-      expect(processor.state).to eq(:running)
-      processor.drain
-      expect(processor.state).to eq(:draining)
-      processor.stop
+      processor.run do
+        expect(processor.state).to eq(:running)
+        processor.drain
+        expect(processor.state).to eq(:draining)
+      end
     end
 
     it "transitions from running to stopping to stopped" do
@@ -400,46 +412,43 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         nil # Return nil to prevent processing
       end
 
-      processor.start
-
-      threads = 10.times.map do |i|
-        Thread.new do
-          10.times do |j|
-            request = create_request_task
-            processor.enqueue(request)
+      processor.run do
+        threads = 10.times.map do |i|
+          Thread.new do
+            10.times do |j|
+              request = create_request_task
+              processor.enqueue(request)
+            end
           end
         end
+
+        threads.each(&:join)
+
+        # Wait for all 100 requests to be dequeued
+        sleep(0.001) until count >= 100
+
+        queue = processor.instance_variable_get(:@queue)
+        # Queue should have 100 items or be processing them
+        expect(queue.size + count).to be >= 100
       end
-
-      threads.each(&:join)
-
-      # Wait for all 100 requests to be dequeued
-      sleep(0.001) until count >= 100
-
-      queue = processor.instance_variable_get(:@queue)
-      # Queue should have 100 items or be processing them
-      expect(queue.size + count).to be >= 100
-
-      # Stop processor before restoring WebMock to avoid warnings in cleanup
-      processor.stop if processor.running?
     end
 
     it "handles concurrent state reads safely" do
-      processor.start
-
-      results = []
-      threads = 10.times.map do
-        Thread.new do
-          100.times do
-            results << processor.state
+      processor.run do
+        results = []
+        threads = 10.times.map do
+          Thread.new do
+            100.times do
+              results << processor.state
+            end
           end
         end
+
+        threads.each(&:join)
+
+        expect(results).to all(satisfy { |state| described_class::STATES.include?(state) })
+        expect(results.size).to eq(1000)
       end
-
-      threads.each(&:join)
-
-      expect(results).to all(satisfy { |state| described_class::STATES.include?(state) })
-      expect(results.size).to eq(1000)
     end
   end
 
@@ -459,16 +468,15 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         raise StandardError.new("Test error")
       end
 
-      processor_with_logger.start
-      processor_with_logger.wait_for_running
+      processor_with_logger.run do
+        # Wait for the error to be logged
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
+        until error_logged.true? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+          Thread.pass
+        end
 
-      # Wait for the error to be logged
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
-      until error_logged.true? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        Thread.pass
+        expect(log_output.string).to match(/Test error/)
       end
-
-      expect(log_output.string).to match(/Test error/)
     end
 
     it "recovers from errors and stops gracefully" do
@@ -503,18 +511,18 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         requests_processed << task
         signal_queue << task
       }
-      processor.start
+      processor.run do
+        request1 = create_request_task
+        request2 = create_request_task
 
-      request1 = create_request_task
-      request2 = create_request_task
+        processor.enqueue(request1)
+        processor.enqueue(request2)
 
-      processor.enqueue(request1)
-      processor.enqueue(request2)
+        # Wait for both requests to be processed
+        2.times { signal_queue.pop }
 
-      # Wait for both requests to be processed
-      2.times { signal_queue.pop }
-
-      expect(requests_processed).to include(request1, request2)
+        expect(requests_processed).to include(request1, request2)
+      end
     end
 
     it "spawns new fibers for each request" do
@@ -525,15 +533,15 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         fiber_count.increment
         signal_queue << task
       }
-      processor.start
+      processor.run do
+        # Enqueue multiple requests
+        3.times { |i| processor.enqueue(create_request_task) }
 
-      # Enqueue multiple requests
-      3.times { |i| processor.enqueue(create_request_task) }
+        # Wait for all 3 to complete
+        3.times { signal_queue.pop }
 
-      # Wait for all 3 to complete
-      3.times { signal_queue.pop }
-
-      expect(fiber_count.value).to eq(3)
+        expect(fiber_count.value).to eq(3)
+      end
     end
 
     it "logs reactor start and stop" do
@@ -578,10 +586,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     end
 
     it "checks capacity before spawning fibers when at limit" do
-      processor.start
-      allow(processor).to receive(:inflight_count).and_return(config.max_connections)
-      expect { processor.enqueue(create_request_task) }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError, /already at max capacity/)
-      processor.stop(timeout: 0)
+      processor.run do
+        allow(processor).to receive(:inflight_count).and_return(config.max_connections)
+        expect { processor.enqueue(create_request_task) }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError, /already at max capacity/)
+      end
     end
   end
 
@@ -597,6 +605,12 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       allow(metrics).to receive(:record_request_start)
       allow(metrics).to receive(:record_request_complete)
       allow(metrics).to receive(:record_error)
+    end
+
+    around do |example|
+      processor.run do
+        example.run
+      end
     end
 
     # Helper to create a headers double that supports [] access
@@ -775,8 +789,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
       expect(metrics).to receive(:record_error).with(:response_too_large)
 
-      Async do
-        processor.send(:process_request, mock_request)
+      processor.run do
+        Async do
+          processor.send(:process_request, mock_request)
+        end
       end
     end
 
@@ -973,12 +989,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
     let(:response) { Sidekiq::AsyncHttp::Response.from_h(response_hash) }
 
-    before do
-      processor.start
-    end
-
-    after do
-      processor.stop
+    around do |example|
+      processor.run do
+        example.run
+      end
     end
 
     it "resolves worker class from string name" do
@@ -1005,9 +1019,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       # Create a new processor with a logger in the config
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger)
-      processor_with_logger.start
-      processor_with_logger.send(:handle_success, mock_request, response)
-      processor_with_logger.stop
+      processor_with_logger.run do
+        processor_with_logger.send(:handle_success, mock_request, response)
+      end
 
       expect(log_output.string).to match(
         /DEBUG.*\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} succeeded with status 200.*enqueued TestWorkers::CompletionWorker/
@@ -1016,12 +1030,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   end
 
   describe "error handling" do
-    before do
-      processor.start
-    end
-
-    after do
-      processor.stop
+    around do |example|
+      processor.run do
+        example.run
+      end
     end
 
     it "builds Error from exception" do
@@ -1096,9 +1108,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     it "handles unknown errors" do
       exception = StandardError.new("Unknown error")
 
-      processor.start
-      processor.send(:handle_error, mock_request, exception)
-      processor.stop
+      processor.run do
+        processor.send(:handle_error, mock_request, exception)
+      end
 
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       error_hash = TestWorkers::ErrorWorker.jobs.last["args"].first
@@ -1111,12 +1123,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       config_with_logger = Sidekiq::AsyncHttp::Configuration.new(logger: logger)
       processor_with_logger = described_class.new(config_with_logger)
-      processor_with_logger.start
-
-      exception = Async::TimeoutError.new("Request timed out")
-
-      processor_with_logger.send(:handle_error, mock_request, exception)
-      processor_with_logger.stop
+      processor_with_logger.run do
+        exception = Async::TimeoutError.new("Request timed out")
+        processor_with_logger.send(:handle_error, mock_request, exception)
+      end
 
       expect(log_output.string).to match(/WARN.*\[Sidekiq::AsyncHttp\] Request #{Regexp.escape(mock_request.id)} failed with Async::TimeoutError/)
       expect(log_output.string).to match(/enqueued TestWorkers::ErrorWorker/)

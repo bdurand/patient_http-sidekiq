@@ -14,7 +14,7 @@ RSpec.describe "Metrics Integration", :integration do
 
   let!(:processor) { Sidekiq::AsyncHttp::Processor.new }
 
-  before do
+  around do |example|
     # Clear any pending Sidekiq jobs first
     Sidekiq::Queues.clear_all
 
@@ -30,13 +30,10 @@ RSpec.describe "Metrics Integration", :integration do
 
     Sidekiq::Testing.fake!
 
-    processor.start
-  end
-
-  after do
-    # Stop processor with minimal timeout
-    processor.stop(timeout: 0) if processor.running?
-
+    processor.run do
+      example.run
+    end
+  ensure
     # Re-enable WebMock
     WebMock.enable!
     WebMock.disable_net_connect!(allow_localhost: true)
