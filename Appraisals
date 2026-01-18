@@ -14,4 +14,5 @@ end
 
 appraise "sidekiq_7.0" do
   gem "sidekiq", "~> 7.0.0"
+  gem "async-http", "~> 0.83.0"
 end
