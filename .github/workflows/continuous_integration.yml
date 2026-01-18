@@ -33,7 +33,7 @@ jobs:
             appraisal: "sidekiq_8.0"
           - ruby: "3.2"
             appraisal: "sidekiq_7.2"
-          - ruby: "3.0"
+          - ruby: "3.1"
             appraisal: "sidekiq_7.0"
     steps:
     - uses: actions/checkout@v2
