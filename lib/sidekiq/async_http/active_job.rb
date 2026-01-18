@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
-  # Mixin module for Sidekiq jobs that provides async HTTP functionality.
+  # Mixin module for ActiveJob classes that provides async HTTP functionality.
   #
-  # Including this module in a Sidekiq job class adds methods for making asynchronous
-  # HTTP requests that are processed outside the worker thread.
+  # Including this module in an ActiveJob class adds methods for making asynchronous
+  # HTTP requests that are processed outside the job thread.
   #
   # @example
-  #   class MyJob
-  #     include Sidekiq::AsyncHttp::Job
+  #   class MyJob < ApplicationJob
+  #     include Sidekiq::AsyncHttp::ActiveJob
   #
   #     on_completion do |response, *args|
   #       # Handle successful response
@@ -22,26 +22,28 @@ module Sidekiq::AsyncHttp
   #       async_get("https://api.example.com/data")
   #     end
   #   end
-  module Job
+  module ActiveJob
     class << self
       # Hook called when the module is included in a class.
       #
-      # Ensures the base class includes Sidekiq::Job and extends it with ClassMethods.
+      # Ensures the base class inherits from ::ActiveJob::Base and extends it with ClassMethods.
       #
       # @param base [Class] the class including this module
       def included(base)
-        base.include(Sidekiq::Job) unless base.include?(Sidekiq::Job)
+        unless base.ancestors.include?(::ActiveJob::Base)
+          raise TypeError, "#{base} must inherit from ActiveJob::Base to include Sidekiq::AsyncHttp::ActiveJob"
+        end
         base.extend(ClassMethods)
       end
     end
 
     # Class methods added to the including job class.
     module ClassMethods
-      # @return [Class] the success callback worker class
-      attr_reader :completion_callback_worker
+      # @return [Class] the success callback job class
+      attr_reader :completion_callback_job
 
-      # @return [Class] the error callback worker class
-      attr_reader :error_callback_worker
+      # @return [Class] the error callback job class
+      attr_reader :error_callback_job
 
       # Configures the HTTP client for this job class.
       #
@@ -55,74 +57,80 @@ module Sidekiq::AsyncHttp
 
       # Defines a success callback for HTTP requests.
       #
-      # @param options [Hash] Sidekiq options for the callback worker
+      # @param base_class [Class, nil] optional base class for the callback job (defaults to parent class)
       # @yield [response, *args] block to execute on successful response
       # @yieldparam response [Response] the HTTP response
       # @yieldparam args [Array] additional arguments passed to the job
-      def on_completion(options = {}, &block)
+      def on_completion(base_class = nil, &block)
         on_completion_block = block
+        base_class ||= superclass
 
-        worker_class = Class.new do
-          include Sidekiq::Job
-
-          sidekiq_options(options) unless options.empty?
-
-          define_method(:perform) do |response_data, *args|
+        job_class = Class.new(base_class) do
+          def perform(response_data, *args)
             response = Sidekiq::AsyncHttp::Response.load(response_data)
-            on_completion_block.call(response, *args)
+            self.class.on_completion_block.call(response, *args)
+          end
+
+          class << self
+            attr_accessor :on_completion_block
           end
         end
 
-        const_set(:CompletionCallback, worker_class)
-        self.completion_callback_worker = const_get(:CompletionCallback)
+        job_class.on_completion_block = on_completion_block
+
+        const_set(:CompletionCallback, job_class)
+        self.completion_callback_job = const_get(:CompletionCallback)
       end
 
-      # Sets the success callback worker class.
+      # Sets the success callback job class.
       #
-      # @param worker_class [Class] the worker class that includes Sidekiq::Job
-      # @raise [ArgumentError] if worker_class is not a valid Sidekiq job class
-      def completion_callback_worker=(worker_class)
-        unless worker_class.is_a?(Class) && worker_class.included_modules.include?(Sidekiq::Job)
-          raise ArgumentError, "completion_callback_worker must be a Sidekiq::Job class"
+      # @param job_class [Class] the job class that inherits from ActiveJob::Base
+      # @raise [ArgumentError] if job_class is not a valid ActiveJob class
+      def completion_callback_job=(job_class)
+        unless job_class.is_a?(Class) && job_class.ancestors.include?(::ActiveJob::Base)
+          raise ArgumentError, "completion_callback_job must be an ActiveJob::Base class"
         end
 
-        @completion_callback_worker = worker_class
+        @completion_callback_job = job_class
       end
 
       # Defines an error callback for HTTP requests.
       #
-      # @param options [Hash] Sidekiq options for the callback worker
+      # @param base_class [Class, nil] optional base class for the callback job (defaults to parent class)
       # @yield [error, *args] block to execute on error
       # @yieldparam error [Error] the HTTP error
       # @yieldparam args [Array] additional arguments passed to the job
-      def on_error(options = {}, &block)
+      def on_error(base_class = nil, &block)
         error_callback_block = block
+        base_class ||= superclass
 
-        worker_class = Class.new do
-          include Sidekiq::Job
-
-          sidekiq_options(options) unless options.empty?
-
-          define_method(:perform) do |error_data, *args|
+        job_class = Class.new(base_class) do
+          def perform(error_data, *args)
             error = Sidekiq::AsyncHttp::Error.load(error_data)
-            error_callback_block.call(error, *args)
+            self.class.error_callback_block.call(error, *args)
+          end
+
+          class << self
+            attr_accessor :error_callback_block
           end
         end
 
-        const_set(:ErrorCallback, worker_class)
-        self.error_callback_worker = const_get(:ErrorCallback)
+        job_class.error_callback_block = error_callback_block
+
+        const_set(:ErrorCallback, job_class)
+        self.error_callback_job = const_get(:ErrorCallback)
       end
 
-      # Sets the error callback worker class.
+      # Sets the error callback job class.
       #
-      # @param worker_class [Class] the worker class that includes Sidekiq::Job
-      # @raise [ArgumentError] if worker_class is not a valid Sidekiq job class
-      def error_callback_worker=(worker_class)
-        unless worker_class.is_a?(Class) && worker_class.included_modules.include?(Sidekiq::Job)
-          raise ArgumentError, "error_callback_worker must be a Sidekiq::Job class"
+      # @param job_class [Class] the job class that inherits from ActiveJob::Base
+      # @raise [ArgumentError] if job_class is not a valid ActiveJob class
+      def error_callback_job=(job_class)
+        unless job_class.is_a?(Class) && job_class.ancestors.include?(::ActiveJob::Base)
+          raise ArgumentError, "error_callback_job must be an ActiveJob::Base class"
         end
 
-        @error_callback_worker = worker_class
+        @error_callback_job = job_class
       end
     end
 
@@ -141,14 +149,14 @@ module Sidekiq::AsyncHttp
     # @return [String] request ID
     def async_request(method, url, **options)
       options = options.dup
-      completion_worker ||= options.delete(:completion_worker)
-      error_worker ||= options.delete(:error_worker)
+      completion_job ||= options.delete(:completion_job)
+      error_job ||= options.delete(:error_job)
 
-      completion_worker ||= self.class.completion_callback_worker
-      error_worker ||= self.class.error_callback_worker
+      completion_job ||= self.class.completion_callback_job
+      error_job ||= self.class.error_callback_job
 
       request = client.async_request(method, url, **options)
-      request.execute(completion_worker: completion_worker, error_worker: error_worker)
+      request.execute(completion_worker: completion_job, error_worker: error_job)
     end
 
     # Convenience method for GET requests.

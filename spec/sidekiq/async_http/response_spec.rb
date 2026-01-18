@@ -297,7 +297,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
     end
   end
 
-  describe "#to_h" do
+  describe "#as_json" do
     it "converts response to hash with string keys" do
       response = described_class.new(
         status: 201,
@@ -310,7 +310,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         protocol: "HTTP/2"
       )
 
-      hash = response.to_h
+      hash = response.as_json
 
       expect(hash).to eq({
         "status" => 201,
@@ -336,7 +336,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         protocol: "HTTP/1.1"
       )
 
-      hash = response.to_h
+      hash = response.as_json
 
       expect(hash.keys).to contain_exactly(
         "status", "headers", "body", "duration", "request_id", "protocol", "url", "method"
@@ -355,13 +355,13 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         protocol: "HTTP/1.1"
       )
 
-      hash = response.to_h
+      hash = response.as_json
 
       expect(hash["body"]).to be_nil
     end
   end
 
-  describe ".from_h" do
+  describe ".load" do
     it "reconstructs a response from a hash" do
       hash = {
         "status" => 200,
@@ -374,7 +374,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         "method" => "get"
       }
 
-      response = described_class.from_h(hash)
+      response = described_class.load(hash)
 
       expect(response.status).to eq(200)
       expect(response.headers["Content-Type"]).to eq("text/html")
@@ -386,7 +386,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
       expect(response.method).to eq(:get)
     end
 
-    it "round-trips through to_h" do
+    it "round-trips through as_json" do
       original = described_class.new(
         status: 404,
         headers: {"X-Custom" => "value"},
@@ -398,8 +398,8 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         protocol: "HTTP/1.1"
       )
 
-      hash = original.to_h
-      reconstructed = described_class.from_h(hash)
+      hash = original.as_json
+      reconstructed = described_class.load(hash)
 
       expect(reconstructed.status).to eq(original.status)
       expect(reconstructed.headers.to_h).to eq(original.headers.to_h)
@@ -423,7 +423,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         "method" => "get"
       }
 
-      response = described_class.from_h(hash)
+      response = described_class.load(hash)
 
       expect(response.status).to eq(204)
       expect(response.body).to be_nil

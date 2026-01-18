@@ -129,7 +129,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     end
   end
 
-  describe "#to_h" do
+  describe "#as_json" do
     let(:error) do
       described_class.new(
         class_name: "StandardError",
@@ -144,7 +144,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     end
 
     it "returns hash with string keys" do
-      hash = error.to_h
+      hash = error.as_json
 
       expect(hash).to eq({
         "class_name" => "StandardError",
@@ -159,12 +159,12 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     end
 
     it "converts error_type to string" do
-      expect(error.to_h["error_type"]).to be_a(String)
-      expect(error.to_h["error_type"]).to eq("timeout")
+      expect(error.as_json["error_type"]).to be_a(String)
+      expect(error.as_json["error_type"]).to eq("timeout")
     end
   end
 
-  describe ".from_h" do
+  describe ".load" do
     let(:hash) do
       {
         "class_name" => "StandardError",
@@ -179,7 +179,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     end
 
     it "reconstructs error from hash" do
-      error = described_class.from_h(hash)
+      error = described_class.load(hash)
 
       expect(error.class_name).to eq("StandardError")
       expect(error.message).to eq("Test error")
@@ -192,7 +192,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
     end
 
     it "converts error_type string to symbol" do
-      error = described_class.from_h(hash)
+      error = described_class.load(hash)
       expect(error.error_type).to be_a(Symbol)
     end
   end
@@ -211,9 +211,9 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
       )
     end
 
-    it "preserves all data through to_h and from_h" do
-      hash = original_error.to_h
-      restored_error = described_class.from_h(hash)
+    it "preserves all data through as_json and load" do
+      hash = original_error.as_json
+      restored_error = described_class.load(hash)
 
       expect(restored_error.class_name).to eq(original_error.class_name)
       expect(restored_error.message).to eq(original_error.message)

@@ -250,7 +250,7 @@ module Sidekiq::AsyncHttp
     # @return [void]
     # @api private
     def invoke_completion_callbacks(response_hash)
-      response = Response.from_h(response_hash)
+      response = Response.load(response_hash)
       @after_completion_callbacks.each do |callback|
         callback.call(response)
       end
@@ -262,7 +262,7 @@ module Sidekiq::AsyncHttp
     # @return [void]
     # @api private
     def invoke_error_callbacks(error_hash)
-      error = Error.from_h(error_hash)
+      error = Error.load(error_hash)
       @after_error_callbacks.each do |callback|
         callback.call(error)
       end

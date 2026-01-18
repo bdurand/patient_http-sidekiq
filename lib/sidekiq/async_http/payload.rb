@@ -20,7 +20,7 @@ module Sidekiq::AsyncHttp
       #
       # @param hash [Hash, nil] hash with "encoding" and "value" keys
       # @return [Payload, nil] reconstructed payload or nil if hash is invalid
-      def from_h(hash)
+      def load(hash)
         return nil if hash.nil? || hash["value"].nil?
 
         new(hash["encoding"].to_sym, hash["value"])
@@ -97,11 +97,13 @@ module Sidekiq::AsyncHttp
     # Converts to a hash representation for serialization.
     #
     # @return [Hash] hash with "encoding" and "value" keys
-    def to_h
+    def as_json
       {
         "encoding" => encoding.to_s,
         "value" => encoded_value
       }
     end
+
+    alias_method :dump, :as_json
   end
 end

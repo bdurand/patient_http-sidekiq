@@ -489,8 +489,8 @@ Created `Sidekiq::AsyncHttp::Response` class to represent HTTP responses:
    - Raises JSON::ParserError if body is invalid JSON
 
 5. **Serialization:**
-   - `to_h` - Converts to hash with string keys for JSON serialization
-   - `.from_h` - Class method to reconstruct Response from hash
+   - `as_json` - Converts to hash with string keys for JSON serialization
+   - `.load` - Class method to reconstruct Response from hash
    - Full round-trip serialization support
 
 6. **Test Coverage:**
@@ -521,8 +521,8 @@ response.success?  # => true/false
 response.json      # => parsed JSON hash
 
 # Serialization
-hash = response.to_h
-reconstructed = Sidekiq::AsyncHttp::Response.from_h(hash)
+hash = response.as_json
+reconstructed = Sidekiq::AsyncHttp::Response.load(hash)
 ```
 
 ---
@@ -564,8 +564,8 @@ Created `Sidekiq::AsyncHttp::Error` class for representing exceptions from HTTP 
    - Captures backtrace or uses empty array if nil
 
 4. **Serialization Methods:**
-   - `#to_h` - Converts to hash with string keys
-   - `.from_h` - Reconstructs Error from hash
+   - `#as_json` - Converts to hash with string keys
+   - `.load` - Reconstructs Error from hash
    - Converts error_type between symbol and string for serialization
 
 5. **Utility Methods:**
@@ -579,7 +579,7 @@ Created `Sidekiq::AsyncHttp::Error` class for representing exceptions from HTTP 
      - ERROR_TYPES constant
      - Each exception type classification
      - Backtrace capture (present and absent)
-     - Serialization (to_h and from_h)
+     - Serialization (as_json and load)
      - Round-trip serialization
      - error_class method (existing and non-existing classes)
      - Immutability
@@ -602,8 +602,8 @@ rescue => e
 end
 
 # Serialization
-hash = error.to_h
-restored_error = Sidekiq::AsyncHttp::Error.from_h(hash)
+hash = error.as_json
+restored_error = Sidekiq::AsyncHttp::Error.load(hash)
 
 # Get actual exception class
 error.error_class # => StandardError or nil
@@ -977,7 +977,7 @@ def process_request(request)
     response_data = Async::Task.current.with_timeout(timeout) do
       async_response = client.call(http_request)
       body = async_response.read
-      {status: async_response.status, headers: async_response.headers.to_h, ...}
+      {status: async_response.status, headers: async_response.headers.as_json, ...}
     end
 
     duration = Time.now - start_time

@@ -987,7 +987,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       }
     end
 
-    let(:response) { Sidekiq::AsyncHttp::Response.from_h(response_hash) }
+    let(:response) { Sidekiq::AsyncHttp::Response.load(response_hash) }
 
     around do |example|
       processor.run do

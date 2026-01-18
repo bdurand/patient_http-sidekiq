@@ -159,8 +159,8 @@ An immutable value object representing the HTTP response:
 # - #server_error? (status 500-599)
 # - #error? (status 400-599)
 # - #json - parse body as JSON (raises if not application/json)
-# - #to_h - serialize to hash with string keys
-# - .from_h(hash) - deserialize from hash
+# - #as_json - serialize to hash with string keys
+# - .load(hash) - deserialize from hash
 #
 # Note: Body is stored as Payload (compressed/encoded) internally but exposed as decoded string.
 ```
@@ -182,10 +182,10 @@ A serializable error representation (plain Ruby class):
 #
 # Class methods:
 # - .from_exception(exception, request_id:, duration:, url:, method:) - uses pattern matching for classification
-# - .from_h(hash) - reconstruct from hash
+# - .load(hash) - reconstruct from hash
 #
 # Instance methods:
-# - #to_h - convert to hash with string keys
+# - #as_json - convert to hash with string keys
 ```
 
 ### 3a. `Sidekiq::AsyncHttp::TimeHelper`
@@ -238,11 +238,11 @@ Handles encoding and compression of response bodies (NEW - not in original plan)
 # Class methods:
 # - .encode(value, mimetype) - encodes based on MIME type, returns [encoding, encoded_value]
 # - .decode(encoded_value, encoding) - decodes based on encoding type
-# - .from_h(hash) - reconstructs from hash
+# - .load(hash) - reconstructs from hash
 #
 # Instance methods:
 # - #value - returns decoded data
-# - #to_h - converts to hash
+# - #as_json - converts to hash
 #
 # Encoding strategies:
 # - :text - plain text (small or incompressible)
@@ -505,7 +505,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 10. Fiber makes HTTP request via Async::HTTP::Client (creates per-request client)
 11. Response received, Fiber builds Response object with Payload encoding
 12. Task.success!(response) called
-13. RequestTask resolves completion_worker class and enqueues it with response.to_h
+13. RequestTask resolves completion_worker class and enqueues it with response.as_json
 14. Metrics updated, Stats recorded to Redis
 15. Fiber completes
 ```
@@ -519,7 +519,7 @@ Hooks into Sidekiq's lifecycle for startup and shutdown:
 12. Task.error!(exception) called
 13. If error_worker set:
     - Error object built with Error.from_exception(exception, duration:, url:, method:)
-    - RequestTask resolves error_worker class and enqueues it with error.to_h
+    - RequestTask resolves error_worker class and enqueues it with error.as_json
 14. If error_worker nil:
     - Task.retry_job called (increments retry_count and re-enqueues original job)
 15. Metrics updated (error_count, errors_by_type), Stats recorded to Redis
@@ -800,8 +800,8 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Missing completion_worker_class
           - Missing error_worker_class
           - Invalid method (not in VALID_METHODS constant)
-        - Implement #to_h with string keys for JSON serialization
-        - Implement .from_h class method for deserialization
+        - Implement #as_json with string keys for JSON serialization
+        - Implement .load class method for deserialization
         - Write specs for:
           - Default value generation
           - Custom value assignment
@@ -818,8 +818,8 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - #client_error? (status 400-499)
           - #server_error? (status 500-599)
           - #error? (400-599)
-        - Implement #to_h with string keys
-        - Implement .from_h class method to reconstruct from hash
+        - Implement #as_json with string keys
+        - Implement .load class method to reconstruct from hash
         - Implement #json to return parsed JSON body if Content-Type is application/json or raise an error otherwise
         - Write specs for all predicates and serialization
 
@@ -832,8 +832,8 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH → :connection
           - Async::HTTP::Protocol::Error → :protocol
           - else → :unknown
-        - Implement #to_h with string keys
-        - Implement .from_h class method
+        - Implement #as_json with string keys
+        - Implement .load class method
         - Implement #error_class that returns the actual Exception class constant from the class_name
         - Write specs for each exception type classification
 
@@ -853,8 +853,8 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH → :connection
           - Async::HTTP::Protocol::Error → :protocol
           - else → :unknown
-        - Implement #to_h with string keys
-        - Implement .from_h class method
+        - Implement #as_json with string keys
+        - Implement .load class method
         - Implement #error_class that returns the actual Exception class constant from the class_name
         - Write specs for each exception type classification
 ```
@@ -875,7 +875,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
         - Set defaults in #initialize
         - Implement #validate! that raises ArgumentError for:
           - Non-positive numeric values
-        - Implement #to_h for inspection
+        - Implement #as_json for inspection
         - Implement #logger that returns configured logger or Sidekiq.logger
         - Write specs for defaults, custom values, and validation errors
         - NOTE: backpressure_strategy removed - capacity checking happens at enqueue time
@@ -916,7 +916,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - #average_duration → Float (total_duration / total_requests, or 0)
           - #error_count → Integer
           - #errors_by_type → Hash<Symbol, Integer> (frozen copy)
-        - Implement #to_h (snapshot of all metrics)
+        - Implement #as_json (snapshot of all metrics)
         - Implement #reset! (for testing)
         - Write specs including thread-safety tests with multiple threads
         - NOTE: backpressure tracking removed (record_backpressure, backpressure_events)
@@ -936,7 +936,7 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - #average_duration → Float (total_duration / total_requests, or 0)
           - #error_count → Integer
           - #errors_by_type → Hash<Symbol, Integer> (frozen copy)
-        - Implement #to_h (snapshot of all metrics)
+        - Implement #as_json (snapshot of all metrics)
         - Implement #reset! (for testing)
         - Write specs including thread-safety tests with multiple threads
 ```
@@ -1029,7 +1029,7 @@ which reuses underlying connections automatically.
 [x] 6.4 Implement Processor - success callback:
         - Implement #handle_success(request, response):
           - Get worker class from class name taking into account module namespaces
-          - Enqueue job: worker_class.perform_async(response.to_h, *request.original_args)
+          - Enqueue job: worker_class.perform_async(response.as_json, *request.original_args)
           - Log success at debug level
         - Handle errors during enqueue (log and continue)
         - Write specs verifying:
@@ -1043,7 +1043,7 @@ which reuses underlying connections automatically.
           - Build Error using Error.from_exception(exception, request_id: request.id)
           - Record error in metrics
           - Get worker class from class name taking into account module namespaces
-          - Enqueue job: worker_class.perform_async(error.to_h, *request.original_args)
+          - Enqueue job: worker_class.perform_async(error.as_json, *request.original_args)
           - Log error at warn level
         - Write specs for:
           - Timeout errors
@@ -1402,7 +1402,7 @@ class WebhookCompletionWorker
   include Sidekiq::Job
 
   def perform(response, webhook_id, payload)
-    response = Sidekiq::AsyncHttp::Response.from_h(response)
+    response = Sidekiq::AsyncHttp::Response.load(response)
     webhook = Webhook.find(webhook_id)
 
     if response.success?
@@ -1424,7 +1424,7 @@ class WebhookErrorWorker
   include Sidekiq::Job
 
   def perform(error, webhook_id, payload)
-    error = Sidekiq::AsyncHttp::Error.from_h(error)
+    error = Sidekiq::AsyncHttp::Error.load(error)
     webhook = Webhook.find(webhook_id)
 
     webhook.update!(
@@ -1444,7 +1444,7 @@ end
 
 ```ruby
 # In a monitoring endpoint or admin panel
-metrics = Sidekiq::AsyncHttp.metrics.to_h
+metrics = Sidekiq::AsyncHttp.metrics.as_json
 # => {
 #   inflight_count: 42,
 #   total_requests: 15_234,

@@ -45,7 +45,7 @@ module TestWorkers
     def perform(response_hash, *args)
       # Convert hash to Response object for integration tests with complete hashes
       response = if response_hash.is_a?(Hash) && response_hash.key?("status") && response_hash.key?("method")
-        Sidekiq::AsyncHttp::Response.from_h(response_hash)
+        Sidekiq::AsyncHttp::Response.load(response_hash)
       else
         response_hash # For test_workers_spec simple hashes
       end
@@ -74,7 +74,7 @@ module TestWorkers
     def perform(error_hash, *args)
       # Convert hash to Error object for integration tests with complete hashes
       error = if error_hash.is_a?(Hash) && error_hash.key?("error_type") && error_hash.key?("class_name")
-        Sidekiq::AsyncHttp::Error.from_h(error_hash)
+        Sidekiq::AsyncHttp::Error.load(error_hash)
       else
         error_hash # For test_workers_spec simple hashes
       end

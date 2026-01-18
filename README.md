@@ -160,7 +160,7 @@ class FetchCompletionWorker
   sidekiq_options queue: "critical", retry: 10
 
   def perform(response_data, user_id)
-    response = Sidekiq::AsyncHttp::Response.from_h(response_data)
+    response = Sidekiq::AsyncHttp::Response.load(response_data)
     User.find(user_id).update!(data: response.json)
   end
 end
@@ -170,7 +170,7 @@ class FetchErrorWorker
   sidekiq_options queue: "low"
 
   def perform(error_data, user_id)
-    error = Sidekiq::AsyncHttp::Error.from_h(error_data)
+    error = Sidekiq::AsyncHttp::Error.load(error_data)
     ErrorTracker.record(error, user_id: user_id)
   end
 end
