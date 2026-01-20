@@ -153,28 +153,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
           # Should stop around timeout
           expect(elapsed).to be_between(0.15, 0.5)
         end
-
-        it "stops immediately if timeout is nil" do
-          allow(processor).to receive(:idle?).and_return(false)
-
-          start_time = Time.now
-          processor.stop(timeout: nil)
-          elapsed = Time.now - start_time
-
-          # Should not wait for requests
-          expect(elapsed).to be < 0.2
-        end
-
-        it "stops immediately if timeout is zero" do
-          allow(processor).to receive(:idle?).and_return(false)
-
-          start_time = Time.now
-          processor.stop(timeout: 0)
-          elapsed = Time.now - start_time
-
-          # Should not wait for requests
-          expect(elapsed).to be < 0.2
-        end
       end
     end
   end

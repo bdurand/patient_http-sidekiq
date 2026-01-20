@@ -69,6 +69,7 @@ module Sidekiq::AsyncHttp
   autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
   autoload :Job, File.join(__dir__, "async_http/job")
   autoload :Metrics, File.join(__dir__, "async_http/metrics")
+  autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :Processor, File.join(__dir__, "async_http/processor")
   autoload :Request, File.join(__dir__, "async_http/request")

@@ -16,9 +16,9 @@ set -euo pipefail
 
 run_cmd=""
 if command -v container >/dev/null 2>&1; then
-  run_cmd="container run --rm -it -p ${VALKEY_PORT}:6379 --env VALKEY_EXTRA_FLAGS='${VALKEY_EXTRA_FLAGS}' ${VALKEY_IMAGE}"
+  run_cmd="container run --rm -it --memory 128m -p ${VALKEY_PORT}:6379 --env VALKEY_EXTRA_FLAGS='${VALKEY_EXTRA_FLAGS}' ${VALKEY_IMAGE}"
 elif command -v docker >/dev/null 2>&1; then
-  run_cmd="docker run --rm -it -p ${VALKEY_PORT}:6379 -e VALKEY_EXTRA_FLAGS='${VALKEY_EXTRA_FLAGS}' ${VALKEY_IMAGE}"
+  run_cmd="docker run --rm -it --memory 128m -p ${VALKEY_PORT}:6379 -e VALKEY_EXTRA_FLAGS='${VALKEY_EXTRA_FLAGS}' ${VALKEY_IMAGE}"
 else
   echo "Error: neither 'container' nor 'docker' command found in PATH." >&2
   exit 2
