@@ -22,6 +22,9 @@ module Sidekiq::AsyncHttp
   #       async_get("https://api.example.com/data")
   #     end
   #   end
+  #
+  # This can also be included in ActiveJob classes if the queue adapter
+  # is using Sidekiq.
   module Job
     class << self
       # Hook called when the module is included in a class.
@@ -148,7 +151,7 @@ module Sidekiq::AsyncHttp
       error_worker ||= self.class.error_callback_worker
 
       request = client.async_request(method, url, **options)
-      request.execute(completion_worker: completion_worker, error_worker: error_worker)
+      request.execute(completion_worker: completion_worker, error_worker: error_worker, synchronous: synchronous_requests?)
     end
 
     # Convenience method for GET requests.
@@ -194,6 +197,26 @@ module Sidekiq::AsyncHttp
     # @return [String] request ID
     def async_delete(url, **options)
       async_request(:delete, url, **options)
+    end
+
+    # Check if the class is an ActiveJob but not using Sidkiq as the queue adapter.
+    #
+    # @return [Boolean] true if Sidekiq is the queue adapter
+    def synchronous_requests?
+      if defined?(ActiveJob::Base) && is_a?(ActiveJob::Base)
+        adapter = self.class.queue_adapter
+        adapter_name = if adapter.is_a?(Class)
+          adapter.name
+        elsif adapter.respond_to?(:name)
+          adapter.name
+        else
+          adapter.class.name
+        end
+
+        return adapter_name.to_s.include?("Sidekiq")
+      end
+
+      false
     end
   end
 end
