@@ -219,10 +219,11 @@ Responses from asynchronous HTTP requests will be pushed to Redis in order to ca
 
 You can use the with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
 
-First, setup the encryption configuration in an initializer:
+First, setup the encryption configuration in an initializer. You'll also need to append the `Sidekiq::AsyncHttp` middleware so that it comes after the decryption middleware inserted by calling `Sidekiq::EncryptedArgs.configure!`:
 
 ```ruby
 Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
+Sidekiq::AsyncHttp.append_middleware
 ```
 
 Next, specify the `encrypted_args` option in the `on_completion` callback to indicate the response argument should be encrypted:
@@ -239,12 +240,6 @@ class SensitiveDataWorker
     async_get("https://secure-api.example.com/data/#{record_id}")
   end
 end
-```
-
-If you are using the `Sidekiq::AsyncHttp.after_completion` or `Sidekiq::AsyncHttp.after_error` callbacks, you will also need to append the middleware so that it comes after the decryption middleware inserted by calling `Sidekiq::EncryptedArgs.configure!`:
-
-```ruby
-Sidekiq::AsyncHttp.append_middlware
 ```
 
 > [!NOTE]
@@ -297,9 +292,17 @@ See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) d
 
 ### Tuning Tips
 
-- `max_connection`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
+- `max_connections`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
 - `default_request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
-- max_response_size: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
+- `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
+
+> [!IMPORTANT]
+>
+> One difference between using this gem and making synchronous HTTP reuests from a Sidekiq job is that the if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
+>
+> In contrast, slow synchronous HTTP requests will fill up the Sidekiq worker pool and block new jobs from being dequeued until a worker thread becomes free.
+>
+> In general, the former behavior is preferable because it allows Sidekiq to continue processing other jobs and prevents getting into a state with 1000's of jobs stuck in the queue.
 
 ## Metrics and Monitoring
 

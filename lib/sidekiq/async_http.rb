@@ -132,7 +132,7 @@ module Sidekiq::AsyncHttp
     # and `Sidekiq::AsyncHttp::ContinuationMiddleware` middleware yourself.
     #
     # @return [void]
-    def append_middlware
+    def append_middleware
       Sidekiq.configure_server do |config|
         config.server_middleware do |chain|
           chain.add Sidekiq::AsyncHttp::Context::Middleware

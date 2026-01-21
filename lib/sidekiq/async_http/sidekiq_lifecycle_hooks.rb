@@ -17,7 +17,7 @@ module Sidekiq::AsyncHttp
       def register
         return if @registered
 
-        Sidekiq::AsyncHttp.append_middlware
+        Sidekiq::AsyncHttp.append_middleware
 
         Sidekiq.configure_server do |config|
           config.on(:startup) do
