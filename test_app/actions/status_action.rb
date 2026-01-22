@@ -3,8 +3,8 @@
 class StatusAction
   def call(env)
     current_stats = CurrentStats.new
-    async_stats = StatusReport.new("AsynchronousWorker").status
-    sync_stats = StatusReport.new("SynchronousWorker").status
+    async_stats = StatusReport.new("Asynchronous").status
+    sync_stats = StatusReport.new("Synchronous").status
 
     status = current_stats.to_h.merge(
       asynchronous: async_stats,

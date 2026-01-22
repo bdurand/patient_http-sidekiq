@@ -73,10 +73,10 @@ RSpec.describe Sidekiq::AsyncHttp::Payload do
     end
   end
 
-  describe "#to_h" do
+  describe "#as_json" do
     it "returns hash with string keys" do
       payload = described_class.new(:text, "data")
-      hash = payload.to_h
+      hash = payload.as_json
       expect(hash).to eq({
         "encoding" => "text",
         "value" => "data"
@@ -84,14 +84,14 @@ RSpec.describe Sidekiq::AsyncHttp::Payload do
     end
   end
 
-  describe ".from_h" do
+  describe ".load" do
     it "creates payload from hash" do
       hash = {
         "mimetype" => "text/plain",
         "encoding" => "text",
         "value" => "data"
       }
-      payload = described_class.from_h(hash)
+      payload = described_class.load(hash)
       expect(payload.encoding).to eq(:text)
       expect(payload.encoded_value).to eq("data")
       expect(payload.value).to eq("data")
@@ -105,8 +105,8 @@ RSpec.describe Sidekiq::AsyncHttp::Payload do
       encoding, encoded_value = described_class.encode(original_value, mimetype)
       payload = described_class.new(encoding, encoded_value)
       expect(payload.value).to eq(original_value)
-      hash = payload.to_h
-      restored = described_class.from_h(hash)
+      hash = payload.as_json
+      restored = described_class.load(hash)
       expect(restored.value).to eq(original_value)
     end
 
@@ -118,10 +118,10 @@ RSpec.describe Sidekiq::AsyncHttp::Payload do
       expect(encoded_value).to be_nil
       payload = described_class.new(encoding, encoded_value)
       expect(payload.value).to be_nil
-      hash = payload.to_h
-      restored = described_class.from_h(hash)
+      hash = payload.as_json
+      restored = described_class.load(hash)
       expect(restored).to be_nil
-      expect(described_class.from_h(nil)).to be_nil
+      expect(described_class.load(nil)).to be_nil
     end
   end
 end

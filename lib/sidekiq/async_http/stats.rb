@@ -2,7 +2,6 @@
 
 require "time"
 require "socket"
-require "singleton"
 
 module Sidekiq
   module AsyncHttp
@@ -12,8 +11,6 @@ module Sidekiq
     # including total requests, errors, refused requests, and current inflight counts
     # across all processes. Statistics are stored in Redis with appropriate TTLs.
     class Stats
-      include Singleton
-
       # Redis key prefixes
       TOTALS_KEY = "sidekiq:async_http:totals"
       INFLIGHT_PREFIX = "sidekiq:async_http:inflight"
@@ -24,9 +21,10 @@ module Sidekiq
       TOTALS_TTL = 30 * 24 * 60 * 60 # 30 days in seconds
       INFLIGHT_TTL = 30
 
-      def initialize
+      def initialize(config = nil)
         @hostname = ::Socket.gethostname.force_encoding("UTF-8").freeze
         @pid = ::Process.pid
+        @config = config
       end
 
       # Record a completed request
@@ -41,6 +39,8 @@ module Sidekiq
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
+      rescue => e
+        handle_error(e)
       end
 
       # Record a request error
@@ -54,6 +54,8 @@ module Sidekiq
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
+      rescue => e
+        handle_error(e)
       end
 
       # Record a refused request (max capacity reached)
@@ -66,6 +68,8 @@ module Sidekiq
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
+      rescue => e
+        handle_error(e)
       end
 
       # Update the inflight request count and max connections for this process
@@ -85,6 +89,8 @@ module Sidekiq
             transaction.sadd(PROCESS_SET_KEY, process_id)
           end
         end
+      rescue => e
+        handle_error(e)
       end
 
       # Get running totals
@@ -206,6 +212,13 @@ module Sidekiq
           # Clear the process set
           redis.del(PROCESS_SET_KEY)
         end
+      end
+
+      private
+
+      def handle_error(error)
+        @config&.logger&.error("[Sidekiq::AsyncHttp] Stats error: #{error.inspect}")
+        raise error if AsyncHttp.testing?
       end
     end
   end

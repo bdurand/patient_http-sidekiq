@@ -4,7 +4,6 @@ require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::Metrics do
   let(:metrics) { described_class.new }
-  let(:stats) { Sidekiq::AsyncHttp::Stats.instance }
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
 
   def create_request_task(method: :get, url: "https://api.example.com/users")
@@ -89,11 +88,6 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
         .to change { metrics.error_count }.from(0).to(1)
     end
 
-    it "records error in stats if available" do
-      expect(stats).to receive(:record_error)
-      metrics.record_error(:timeout)
-    end
-
     it "tracks errors by type" do
       metrics.record_error(:timeout)
       expect(metrics.errors_by_type).to eq({timeout: 1})
@@ -121,13 +115,9 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
   end
 
   describe "#record_refused" do
-    it "records refused request in stats if available" do
-      expect(stats).to receive(:record_refused)
+    it "records refused request" do
       metrics.record_refused
-    end
-
-    it "does not raise error when stats is nil" do
-      expect { metrics.record_refused }.not_to raise_error
+      expect(metrics.refused_count).to eq(1)
     end
   end
 

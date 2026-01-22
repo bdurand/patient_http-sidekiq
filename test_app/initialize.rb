@@ -3,11 +3,18 @@
 require "sidekiq"
 require "sidekiq/throttled"
 require "sidekiq/encrypted_args"
+require "active_job"
 require_relative "../lib/sidekiq-async_http"
 
 require_relative "app_config"
 
 Sidekiq::EncryptedArgs.configure!(secret: "A_VERY_SECRET_KEY_FOR_TESTING_PURPOSES_ONLY!")
+Sidekiq::AsyncHttp.append_middleware
+
+# Configure ActiveJob to use Sidekiq
+ActiveJob::Base.queue_adapter = :sidekiq
+Sidekiq::ActiveJob::Wrapper.include(Sidekiq::Throttled::Job)
+Sidekiq::ActiveJob::Wrapper.sidekiq_throttle concurrency: {limit: 25}
 
 # Configure Sidekiq to use Valkey from docker-compose
 Sidekiq.configure_server do |config|
@@ -24,11 +31,11 @@ Sidekiq::AsyncHttp.configure do |config|
 end
 
 Sidekiq::AsyncHttp.after_completion do |response|
-  Sidekiq.logger.info("Async HTTP Completed Continuation: #{response.status} #{response.method.to_s.upcase} #{response.url}")
+  Sidekiq.logger.info("Async HTTP Continuation: #{response.status} #{response.method.to_s.upcase} #{response.url}")
 end
 
 Sidekiq::AsyncHttp.after_error do |error|
-  Sidekiq.logger.error("Async HTTP Error Continuation: #{error.class_name} #{error.message} on #{error.method.to_s.upcase} #{error.url}")
+  Sidekiq.logger.error("Async HTTP Error: #{error.class_name} #{error.message} on #{error.method.to_s.upcase} #{error.url}")
 end
 
 # Load test workers

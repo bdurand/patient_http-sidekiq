@@ -253,7 +253,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(task.success?).to be(true)
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
       job = TestWorkers::CompletionWorker.jobs.first
-      expect(job["args"]).to eq([response.to_h, 1, 2, 3])
+      expect(job["args"]).to eq([response.as_json, 1, 2, 3])
     end
   end
 
@@ -275,7 +275,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(task.error?).to be(true)
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       job = TestWorkers::ErrorWorker.jobs.first
-      expect(job["args"]).to eq([error.to_h, 1, 2, 3])
+      expect(job["args"]).to eq([error.as_json, 1, 2, 3])
     end
 
     it "retries the job when error worker is not set" do

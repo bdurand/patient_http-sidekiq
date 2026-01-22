@@ -1,0 +1,10 @@
+source "https://rubygems.org"
+
+gemspec path: ".."
+
+gem "protocol-rack"
+gem "rack-session"
+gem "sidekiq-throttled"
+gem "sidekiq-encrypted_args"
+gem "activejob"
+gem "irb"

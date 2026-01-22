@@ -17,12 +17,9 @@ module Sidekiq::AsyncHttp
       def register
         return if @registered
 
-        Sidekiq.configure_server do |config|
-          config.server_middleware do |chain|
-            chain.add Sidekiq::AsyncHttp::Context::Middleware
-            chain.add Sidekiq::AsyncHttp::ContinuationMiddleware
-          end
+        Sidekiq::AsyncHttp.append_middleware
 
+        Sidekiq.configure_server do |config|
           config.on(:startup) do
             Sidekiq::AsyncHttp.start
           end

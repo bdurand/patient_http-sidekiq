@@ -17,7 +17,7 @@ module Sidekiq
         def registered(app)
           # GET route for the main Async HTTP dashboard page
           app.get "/async-http" do
-            stats = Sidekiq::AsyncHttp::Stats.instance
+            stats = Sidekiq::AsyncHttp::Stats.new
 
             # Get process-level inflight and capacity data
             all_inflight = stats.get_all_inflight
@@ -51,13 +51,13 @@ module Sidekiq
 
           # POST route for clearing statistics
           app.post "/async-http/clear" do
-            Sidekiq::AsyncHttp::Stats.instance.reset!
+            Sidekiq::AsyncHttp::Stats.new.reset!
             redirect "#{root_path}async-http"
           end
 
           # API endpoint for fetching stats as JSON
           app.get "/api/async-http/stats" do
-            stats = Sidekiq::AsyncHttp::Stats.instance
+            stats = Sidekiq::AsyncHttp::Stats.new
 
             # Get process-level inflight and capacity data
             all_inflight = stats.get_all_inflight

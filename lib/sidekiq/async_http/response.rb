@@ -35,11 +35,11 @@ module Sidekiq
         # Reconstruct a Response from a hash
         # @param hash [Hash] hash representation
         # @return [Response] reconstructed response
-        def from_h(hash)
+        def load(hash)
           new(
             status: hash["status"],
             headers: hash["headers"],
-            body: Payload.from_h(hash["body"])&.value,
+            body: Payload.load(hash["body"])&.value,
             protocol: hash["protocol"],
             duration: hash["duration"],
             request_id: hash["request_id"],
@@ -125,11 +125,11 @@ module Sidekiq
 
       # Convert to hash with string keys for serialization
       # @return [Hash] hash representation
-      def to_h
+      def as_json
         {
           "status" => status,
           "headers" => headers.to_h,
-          "body" => @payload&.to_h,
+          "body" => @payload&.as_json,
           "duration" => duration,
           "request_id" => request_id,
           "protocol" => protocol,
@@ -137,6 +137,8 @@ module Sidekiq
           "method" => method.to_s
         }
       end
+
+      alias_method :dump, :as_json
     end
   end
 end

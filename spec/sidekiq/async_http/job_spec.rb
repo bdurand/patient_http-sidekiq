@@ -110,6 +110,14 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     end
   end
 
+  describe ".async_http_client" do
+    it "can setup HTTP request defaults at the class level" do
+      worker = TestWorkers::WorkerWithClient.new
+      expect(worker.async_http_client.base_url).to eq("https://example.org")
+      expect(worker.async_http_client.headers["X-Custom-Header"]).to eq("Test")
+    end
+  end
+
   describe "request helper methods" do
     let(:worker_class) do
       Class.new do
@@ -264,6 +272,93 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         expect(worker_instance).to receive(:async_request).with(:delete, "https://api.example.com/data/1", timeout: 30)
         worker_instance.async_delete("https://api.example.com/data/1", timeout: 30)
       end
+    end
+  end
+
+  context "with an ActiveJob class" do
+    let(:worker_class) do
+      Class.new(ActiveJob::Base) do
+        include Sidekiq::AsyncHttp::Job
+
+        @called_args = []
+
+        on_completion do |response, *args|
+          @called_args << [response, *args]
+        end
+
+        on_error do |error, *args|
+          @called_args << [error, *args]
+        end
+
+        class << self
+          attr_reader :called_args
+        end
+      end
+    end
+
+    before do
+      active_job = Module.new
+      active_job_base = Class.new do
+        @queue_adapter_name = :sidekiq
+
+        class << self
+          attr_writer :queue_adapter_name
+
+          def queue_adapter_name
+            @queue_adapter_name&.to_s || superclass.queue_adapter_name
+          end
+        end
+      end
+
+      stub_const("ActiveJob", active_job)
+      stub_const("ActiveJob::Base", active_job_base)
+    end
+
+    it "supports asynchronous requests if queue adapter is sidekiq" do
+      ActiveJob::Base.queue_adapter_name = :sidekiq
+      worker = worker_class.new
+      expect(worker).to be_a(ActiveJob::Base)
+      expect(worker.class.asynchronous_http_requests_supported?).to be true
+    end
+
+    it "does not support asynchronous requests if queue adapter is not sidekiq" do
+      ActiveJob::Base.queue_adapter_name = :async
+      worker = worker_class.new
+      expect(worker).to be_a(ActiveJob::Base)
+      expect(worker.class.asynchronous_http_requests_supported?).to be false
+      expect {
+        worker.async_get("https://api.example.com/data")
+      }.to raise_error(/Asynchronous HTTP requests are not supported/)
+    end
+
+    it "handles extracting ActiveJob arguments in the completion callback" do
+      # ActiveJob wraps arguments in a hash when converting to Sidekiq jobs
+      activejob_args = [{"arguments" => ["arg1", "arg2", "arg3"]}]
+
+      worker_class::CompletionCallback.new.perform(response_data, *activejob_args)
+
+      expect(worker_class.called_args.size).to eq(1)
+      response, arg1, arg2, arg3 = worker_class.called_args.first
+      expect(response).to be_a(Sidekiq::AsyncHttp::Response)
+      expect(response.status).to eq(200)
+      expect(arg1).to eq("arg1")
+      expect(arg2).to eq("arg2")
+      expect(arg3).to eq("arg3")
+    end
+
+    it "handles extracting ActiveJob arguments in the error callback" do
+      # ActiveJob wraps arguments in a hash when converting to Sidekiq jobs
+      activejob_args = [{"arguments" => ["error_arg1", "error_arg2"]}]
+
+      worker_class::ErrorCallback.new.perform(error_data, *activejob_args)
+
+      expect(worker_class.called_args.size).to eq(1)
+      error, arg1, arg2 = worker_class.called_args.first
+      expect(error).to be_a(Sidekiq::AsyncHttp::Error)
+      expect(error.error_class).to eq(Timeout::Error)
+      expect(error.message).to eq("Request timed out")
+      expect(arg1).to eq("error_arg1")
+      expect(arg2).to eq("error_arg2")
     end
   end
 end

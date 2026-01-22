@@ -6,7 +6,7 @@ class CurrentStats
 
   def initialize
     sidekiq_stats = Sidekiq::Stats.new
-    @inflight = Sidekiq::AsyncHttp.metrics.inflight_count
+    @inflight = Sidekiq::AsyncHttp.metrics&.inflight_count.to_i
     @busy = Sidekiq::ProcessSet.new.reduce(0) { |sum, process| sum + process["busy"].to_i }
     @enqueued = sidekiq_stats.enqueued
     @retry = sidekiq_stats.retry_size

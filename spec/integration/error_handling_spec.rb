@@ -14,7 +14,7 @@ RSpec.describe "Error Handling Integration", :integration do
 
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
-  before do
+  around do |example|
     TestWorkers::Worker.reset_calls!
     TestWorkers::CompletionWorker.reset_calls!
     TestWorkers::ErrorWorker.reset_calls!
@@ -24,12 +24,10 @@ RSpec.describe "Error Handling Integration", :integration do
     WebMock.allow_net_connect!
     WebMock.disable!
 
-    processor.start
-  end
-
-  after do
-    processor.stop(timeout: 0) if processor.running?
-
+    processor.run do
+      example.run
+    end
+  ensure
     # Re-enable WebMock
     WebMock.enable!
     WebMock.disable_net_connect!(allow_localhost: true)

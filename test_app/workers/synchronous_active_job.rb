@@ -3,21 +3,19 @@
 require "net/http"
 require "uri"
 
-# Example worker that makes HTTP requests using synchronous HTTP calls.
-class SynchronousWorker
-  include Sidekiq::Job
-  include Sidekiq::Throttled::Job
-
-  sidekiq_throttle concurrency: {limit: 25}
+# Example ActiveJob worker that makes HTTP requests using synchronous HTTP calls.
+class SynchronousActiveJob < ActiveJob::Base
+  queue_as :default
+  retry_on StandardError, wait: 1.seconds, attempts: 2
 
   def perform(method, url, timeout)
     status_report = StatusReport.new("Synchronous")
     begin
       response = execute_request(method, url, timeout)
-      Sidekiq.logger.info("Synchronous request succeeded: #{method.upcase} #{url} - Status: #{response.code}")
+      logger.info("Synchronous ActiveJob request succeeded: #{method.upcase} #{url} - Status: #{response.code}")
       status_report.complete!
     rescue => e
-      Sidekiq.logger.error("Synchronous request failed: #{method.upcase} #{url} - Error: #{e.message}")
+      logger.error("Synchronous ActiveJob request failed: #{method.upcase} #{url} - Error: #{e.message}")
       status_report.error!
     end
   end

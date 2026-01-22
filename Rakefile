@@ -32,7 +32,8 @@ task test_app: "test_app:start"
 namespace :test_app do
   desc "Start the test application"
   task :start do
-    exec "ruby test_app/server"
+    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
+    exec "cd test_app && ruby server"
   end
 
   desc "Stop the running test application"
@@ -54,6 +55,13 @@ namespace :test_app do
 
   desc "Open an interactive console with test application loaded"
   task :console do
-    exec "ruby test_app/console"
+    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
+    exec "cd test_app && ruby console"
+  end
+
+  desc "Install bundle for the test application"
+  task :bundle do
+    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
+    exec "cd test_app && bundle install"
   end
 end

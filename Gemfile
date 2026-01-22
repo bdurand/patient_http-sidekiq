@@ -2,13 +2,9 @@ source "https://rubygems.org"
 
 gemspec
 
+gem "protocol-rack"
 gem "webmock", "~> 3.26"
 gem "async-rspec", "~> 1.17"
-gem "async-http", "~> 0.94"
-gem "protocol-rack", "~> 0.21"
-gem "rack-session", "~> 2.0"
-gem "sidekiq-throttled"
-gem "sidekiq-encrypted_args"
 
 gem "rspec", "~> 3.13"
 gem "rake"

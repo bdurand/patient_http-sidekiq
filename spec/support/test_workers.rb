@@ -24,6 +24,32 @@ module TestWorkers
     end
   end
 
+  class WorkerWithClient
+    include Sidekiq::AsyncHttp::Job
+
+    async_http_client base_url: "https://example.org", headers: {"X-Custom-Header" => "Test"}
+
+    @calls = []
+    @mutex = Mutex.new
+
+    class << self
+      attr_reader :calls
+
+      def reset_calls!
+        @mutex.synchronize { @calls = [] }
+      end
+
+      def record_call(response, *args)
+        @mutex.synchronize { @calls << [response, *args] }
+      end
+    end
+
+    def perform(endpoint)
+      response = async_get(endpoint)
+      self.class.record_call(response, endpoint)
+    end
+  end
+
   class CompletionWorker
     include Sidekiq::Job
 
@@ -45,7 +71,7 @@ module TestWorkers
     def perform(response_hash, *args)
       # Convert hash to Response object for integration tests with complete hashes
       response = if response_hash.is_a?(Hash) && response_hash.key?("status") && response_hash.key?("method")
-        Sidekiq::AsyncHttp::Response.from_h(response_hash)
+        Sidekiq::AsyncHttp::Response.load(response_hash)
       else
         response_hash # For test_workers_spec simple hashes
       end
@@ -74,7 +100,7 @@ module TestWorkers
     def perform(error_hash, *args)
       # Convert hash to Error object for integration tests with complete hashes
       error = if error_hash.is_a?(Hash) && error_hash.key?("error_type") && error_hash.key?("class_name")
-        Sidekiq::AsyncHttp::Error.from_h(error_hash)
+        Sidekiq::AsyncHttp::Error.load(error_hash)
       else
         error_hash # For test_workers_spec simple hashes
       end

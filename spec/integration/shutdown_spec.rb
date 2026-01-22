@@ -14,6 +14,12 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
   let!(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
+  around do |example|
+    processor.run do
+      example.run
+    end
+  end
+
   before do
     # Clear any pending Sidekiq jobs first
     Sidekiq::Queues.clear_all
@@ -28,15 +34,11 @@ RSpec.describe "Processor Shutdown Integration", :integration do
     WebMock.allow_net_connect!
     WebMock.disable!
 
+    # Keep fake mode so jobs queue but don't execute immediately
     Sidekiq::Testing.fake!
-
-    processor.start
   end
 
   after do
-    # Stop processor with minimal timeout to force re-enqueue of any remaining requests
-    processor.stop(timeout: 0) if processor.running?
-
     # Re-enable WebMock
     WebMock.enable!
     WebMock.disable_net_connect!(allow_localhost: true)
@@ -71,7 +73,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       # Stop with sufficient timeout (2 seconds for a fast request)
       processor.stop
 
-      # Process enqueued Sidekiq jobs
+      # Drain all completion/error worker jobs
       Sidekiq::Worker.drain_all
 
       # Verify success worker was called (request completed)
@@ -118,14 +120,19 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       # Wait for request to start processing
       processor.wait_for_processing
+      # Give it a bit more time to really get in-flight
+      sleep(0.05)
 
-      # Stop with insufficient timeout (0.1 seconds for a 10 second request)
+      # Stop with insufficient timeout (0.01 seconds for a 250ms request)
       processor.stop(timeout: 0.01)
 
-      # Process enqueued Sidekiq jobs
+      # Wait briefly for re-enqueue to happen
+      sleep(0.05)
+
+      # Drain all re-enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify original worker was re-enqueued
+      # Verify original worker was re-enqueued and executed
       expect(TestWorkers::Worker.calls.size).to eq(1)
       arg1, arg2 = TestWorkers::Worker.calls.first
       expect(arg1).to eq("original_arg1")
@@ -166,14 +173,18 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       end
 
       processor.wait_for_processing
-      sleep(0.1)
+      # Wait a bit longer to let fast requests (100ms) get close to completion
+      sleep(0.15)
 
       # Stop with medium timeout (200ms)
       # Fast requests (100ms) should complete during this timeout
       # Slow requests (500ms) should be re-enqueued
       processor.stop(timeout: 0.2)
 
-      # Process enqueued Sidekiq jobs
+      # Wait briefly for re-enqueue to happen
+      sleep(0.05)
+
+      # Drain any re-enqueued jobs
       Sidekiq::Worker.drain_all
 
       # Verify success worker was called for fast requests (1, 3, 5)

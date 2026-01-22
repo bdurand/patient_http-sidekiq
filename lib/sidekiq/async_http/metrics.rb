@@ -39,9 +39,6 @@ module Sidekiq
             new_total = current_total + duration
             break if @total_duration.compare_and_set(current_total, new_total)
           end
-
-          # Record in stats if available
-          Stats.instance.record_request(duration)
         end
       end
 
@@ -57,9 +54,6 @@ module Sidekiq
           Concurrent::AtomicFixnum.new(0)
         end
         counter.increment
-
-        # Record in stats if available
-        Stats.instance.record_error(error_type)
       end
 
       # Record a refused request (max capacity reached)
@@ -67,22 +61,24 @@ module Sidekiq
       # @return [void]
       def record_refused
         @refused_count.increment
-        Stats.instance.record_refused
       end
 
       # Get the number of in-flight requests
+      #
       # @return [Integer]
       def inflight_count
         @inflight_requests.value
       end
 
       # Get total number of requests processed
+      #
       # @return [Integer]
       def total_requests
         @total_requests.value
       end
 
       # Get average request duration
+      #
       # @return [Float] average duration in seconds, or 0 if no requests
       def average_duration
         total = total_requests
@@ -98,6 +94,7 @@ module Sidekiq
       end
 
       # Get errors grouped by type
+      #
       # @return [Hash<Symbol, Integer>] frozen hash of error type to count
       def errors_by_type
         result = {}
@@ -107,7 +104,15 @@ module Sidekiq
         result.freeze
       end
 
+      # Get total refused request count
+      #
+      # @return [Integer]
+      def refused_count
+        @refused_count.value
+      end
+
       # Get a snapshot of all metrics
+      #
       # @return [Hash] hash with all metric values
       def to_h
         {
@@ -131,7 +136,6 @@ module Sidekiq
         @errors_by_type = Concurrent::Map.new
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @last_inflight_update = Concurrent::AtomicReference.new(Time.now.to_f)
-        Stats.instance.reset!
       end
     end
   end

@@ -95,9 +95,9 @@ class ApiWorker
   include Sidekiq::AsyncHttp::Job
 
   # Configure a shared HTTP client with base URL and default headers
-  client base_url: "https://api.example.com",
-         headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
-         timeout: 60
+  async_http_client base_url: "https://api.example.com",
+                    headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
+                    timeout: 60
 
   # Callbacks receive the response/error plus original job arguments
   on_completion do |response, resource_type, resource_id|
@@ -125,26 +125,22 @@ class ApiWorker
 end
 ```
 
-### Making Different Types of Requests
+The job mixin can also be used with ActiveJob if the queue adapter is set to Sidekiq. If the queue adapter is not Sidekiq, the HTTP request will be executed synchronously, instead.
 
 ```ruby
-class WebhookWorker
+class ActiveJobExample < ApplicationJob
   include Sidekiq::AsyncHttp::Job
 
-  on_completion { |response, event_id| WebhookDelivery.mark_delivered(event_id) }
-  on_error { |error, event_id| WebhookDelivery.mark_failed(event_id, error.message) }
+  on_completion do |response, record_id|
+    Record.find(record_id).update!(data: response.json)
+  end
 
-  def perform(event_id)
-    event = Event.find(event_id)
-    webhook = event.webhook
+  on_error do |error, record_id|
+    Rails.logger.error("Failed to fetch record #{record_id}: #{error.message}")
+  end
 
-    # POST with JSON body
-    async_post(
-      webhook.url,
-      json: event.payload,
-      headers: {"X-Webhook-Signature" => sign_payload(event.payload, webhook.secret)},
-      timeout: 30
-    )
+  def perform(record_id)
+    async_get("https://api.example.com/records/#{record_id}")
   end
 end
 ```
@@ -160,7 +156,7 @@ class FetchCompletionWorker
   sidekiq_options queue: "critical", retry: 10
 
   def perform(response_data, user_id)
-    response = Sidekiq::AsyncHttp::Response.from_h(response_data)
+    response = Sidekiq::AsyncHttp::Response.load(response_data)
     User.find(user_id).update!(data: response.json)
   end
 end
@@ -170,7 +166,7 @@ class FetchErrorWorker
   sidekiq_options queue: "low"
 
   def perform(error_data, user_id)
-    error = Sidekiq::AsyncHttp::Error.from_h(error_data)
+    error = Sidekiq::AsyncHttp::Error.load(error_data)
     ErrorTracker.record(error, user_id: user_id)
   end
 end
@@ -219,10 +215,11 @@ Responses from asynchronous HTTP requests will be pushed to Redis in order to ca
 
 You can use the with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
 
-First, setup the encryption configuration in an initializer:
+First, setup the encryption configuration in an initializer. You'll also need to append the `Sidekiq::AsyncHttp` middleware so that it comes after the decryption middleware inserted by calling `Sidekiq::EncryptedArgs.configure!`:
 
 ```ruby
 Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
+Sidekiq::AsyncHttp.append_middleware
 ```
 
 Next, specify the `encrypted_args` option in the `on_completion` callback to indicate the response argument should be encrypted:
@@ -260,13 +257,17 @@ Sidekiq::AsyncHttp.configure do |config|
   # Default timeout for HTTP requests in seconds (default: 60)
   config.default_request_timeout = 60
 
-  # Timeout for graceful shutdown in seconds (default: 25)
-  # Should be less than Sidekiq's shutdown timeout
-  config.shutdown_timeout = 25
+  # Default User-Agent header for all requests (optional)
+  config.user_agent = "MyApp/1.0"
 
-  # Maximum response body size in bytes (default: 10MB)
+  # Timeout for graceful shutdown in seconds (default: the Sidekiq
+  # shutdown timeout minus 2 seconds). This should be less than Sidekiq's
+  # shutdown timeout
+  config.shutdown_timeout = 23
+
+  # Maximum response body size in bytes (default: 1MB)
   # Responses larger than this will trigger ResponseTooLargeError
-  config.max_response_size = 10 * 1024 * 1024
+  config.max_response_size = 1024 * 1024
 
   # Idle connection timeout in seconds (default: 60)
   config.idle_connection_timeout = 60
@@ -278,15 +279,26 @@ Sidekiq::AsyncHttp.configure do |config|
   # Requests older than this without a heartbeat will be re-enqueued
   config.orphan_threshold = 300
 
-  # Default User-Agent header for all requests (optional)
-  config.user_agent = "MyApp/1.0"
-
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
 end
 ```
 
 See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) documentation for all available options.
+
+### Tuning Tips
+
+- `max_connections`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
+- `default_request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
+- `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
+
+> [!IMPORTANT]
+>
+> One difference between using this gem and making synchronous HTTP requests from a Sidekiq job is that the if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
+>
+> In contrast, slow synchronous HTTP requests will fill up the Sidekiq worker pool and block new jobs from being dequeued until a worker thread becomes free.
+>
+> In general, the former behavior is preferable because it allows Sidekiq to continue processing other jobs and prevents getting into a state with 1000's of jobs stuck in the queue.
 
 ## Metrics and Monitoring
 
@@ -324,6 +336,9 @@ end
 ```
 
 You can register multiple callbacks; they will be called in the order registered.
+
+> [!NOTE]
+> These callbacks are not available when using through the ActiveJob interface.
 
 ## Shutdown Behavior
 

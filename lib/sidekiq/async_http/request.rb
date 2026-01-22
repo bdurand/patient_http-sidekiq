@@ -63,8 +63,9 @@ module Sidekiq::AsyncHttp
     # @param completion_worker [Class] Worker class (must include Sidekiq::Job) to call on successful response
     # @param error_worker [Class, nil] Worker class (must include Sidekiq::Job) to call on error.
     #   If nil, errors will be logged and the original job will be retried.
+    # @param synchronous [Boolean] If true, runs the request inline (for testing).
     # @return [String] the request ID
-    def execute(completion_worker:, sidekiq_job: nil, error_worker: nil)
+    def execute(completion_worker:, sidekiq_job: nil, error_worker: nil, synchronous: false)
       # Get current job if not provided
       sidekiq_job ||= (defined?(Sidekiq::AsyncHttp::Context) ? Sidekiq::AsyncHttp::Context.current_job : nil)
 
@@ -107,7 +108,7 @@ module Sidekiq::AsyncHttp
       )
 
       # Run the request inline if Sidekiq::Testing.inline! is enabled
-      if defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
+      if synchronous || async_disabled?
         InlineRequest.new(task).execute
         return task.id
       end
@@ -146,6 +147,10 @@ module Sidekiq::AsyncHttp
       end
 
       self
+    end
+
+    def async_disabled?
+      defined?(Sidekiq::Testing) && Sidekiq::Testing.inline?
     end
   end
 end

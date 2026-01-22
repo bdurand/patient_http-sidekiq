@@ -172,10 +172,12 @@ RSpec.describe Sidekiq::AsyncHttp do
   describe ".start" do
     after do
       described_class.reset!
+      described_class.stop
     end
 
     it "creates and starts a new processor" do
       described_class.start
+      described_class.processor.wait_for_running
 
       expect(described_class.processor).to be_a(Sidekiq::AsyncHttp::Processor)
       expect(described_class.processor).to be_running

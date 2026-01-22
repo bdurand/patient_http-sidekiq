@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::Stats do
-  let(:stats) { described_class.instance }
+  let(:stats) { described_class.new }
 
   describe "#record_request" do
     it "records request with duration" do

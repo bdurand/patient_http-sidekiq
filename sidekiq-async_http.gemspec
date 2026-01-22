@@ -43,6 +43,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "async", "~> 2.0"
   spec.add_dependency "async-http", "~> 0.60"
   spec.add_dependency "concurrent-ruby", "~> 1.2"
+  spec.add_dependency "base64"
 
   spec.add_development_dependency "bundler"
 end

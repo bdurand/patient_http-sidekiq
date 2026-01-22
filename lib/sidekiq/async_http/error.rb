@@ -37,7 +37,7 @@ module Sidekiq
         # Reconstruct an Error from a hash
         # @param hash [Hash] hash representation
         # @return [Error] reconstructed error
-        def from_h(hash)
+        def load(hash)
           new(
             class_name: hash["class_name"],
             message: hash["message"],
@@ -111,7 +111,7 @@ module Sidekiq
 
       # Convert to hash with string keys for serialization
       # @return [Hash] hash representation
-      def to_h
+      def as_json
         {
           "class_name" => class_name,
           "message" => message,
@@ -123,6 +123,8 @@ module Sidekiq
           "method" => method.to_s
         }
       end
+
+      alias_method :dump, :as_json
 
       # Get the actual Exception class constant from the class_name
       # @return [Class, nil] the exception class or nil if not found

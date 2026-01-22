@@ -69,6 +69,7 @@ module Sidekiq::AsyncHttp
   autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
   autoload :Job, File.join(__dir__, "async_http/job")
   autoload :Metrics, File.join(__dir__, "async_http/metrics")
+  autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :Processor, File.join(__dir__, "async_http/processor")
   autoload :Request, File.join(__dir__, "async_http/request")
@@ -122,6 +123,22 @@ module Sidekiq::AsyncHttp
     # @yieldparam error [Error] information about the error that was raised
     def after_error(&block)
       @after_error_callbacks << block
+    end
+
+    # Add Sidekiq middleware for context and continuation handling. The middleware
+    # is already added during initialization. You can call this method again to
+    # append the middleware if needed to insert it after other middleware. If you need
+    # further control, you can manually add the `Sidekiq::AsyncHttp::Context::Middleware`
+    # and `Sidekiq::AsyncHttp::ContinuationMiddleware` middleware yourself.
+    #
+    # @return [void]
+    def append_middleware
+      Sidekiq.configure_server do |config|
+        config.server_middleware do |chain|
+          chain.add Sidekiq::AsyncHttp::Context::Middleware
+          chain.add Sidekiq::AsyncHttp::ContinuationMiddleware
+        end
+      end
     end
 
     # Check if the processor is running
@@ -250,7 +267,7 @@ module Sidekiq::AsyncHttp
     # @return [void]
     # @api private
     def invoke_completion_callbacks(response_hash)
-      response = Response.from_h(response_hash)
+      response = Response.load(response_hash)
       @after_completion_callbacks.each do |callback|
         callback.call(response)
       end
@@ -262,7 +279,7 @@ module Sidekiq::AsyncHttp
     # @return [void]
     # @api private
     def invoke_error_callbacks(error_hash)
-      error = Error.from_h(error_hash)
+      error = Error.load(error_hash)
       @after_error_callbacks.each do |callback|
         callback.call(error)
       end
