@@ -75,7 +75,10 @@ module Sidekiq::AsyncHttp
 
           define_method(:perform) do |response_data, *args|
             response = Sidekiq::AsyncHttp::Response.load(response_data)
-            args = args.first["arguments"] if active_job
+            if active_job
+              original_args = args.first
+              args = original_args.fetch("arguments", []) if original_args.is_a?(Hash)
+            end
             on_completion_block.call(response, *args)
           end
         end
@@ -113,7 +116,10 @@ module Sidekiq::AsyncHttp
 
           define_method(:perform) do |error_data, *args|
             error = Sidekiq::AsyncHttp::Error.load(error_data)
-            args = args.first["arguments"] if active_job
+            if active_job
+              original_args = args.first
+              args = original_args.fetch("arguments", []) if original_args.is_a?(Hash)
+            end
             error_callback_block.call(error, *args)
           end
         end
