@@ -294,7 +294,7 @@ See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) d
 
 > [!IMPORTANT]
 >
-> One difference between using this gem and making synchronous HTTP reuests from a Sidekiq job is that the if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
+> One difference between using this gem and making synchronous HTTP requests from a Sidekiq job is that the if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
 >
 > In contrast, slow synchronous HTTP requests will fill up the Sidekiq worker pool and block new jobs from being dequeued until a worker thread becomes free.
 >

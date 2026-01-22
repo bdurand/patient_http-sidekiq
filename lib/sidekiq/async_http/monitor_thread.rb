@@ -9,7 +9,7 @@ module Sidekiq
     class MonitorThread
       include TimeHelper
 
-      # Miniumum seconds to sleep between monitor thread checks
+      # Minimum seconds to sleep between monitor thread checks
       MAX_MONITOR_SLEEP = 5.0
 
       # @return [Configuration] the configuration object
