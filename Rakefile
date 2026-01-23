@@ -36,13 +36,13 @@ namespace :test_app do
     exec "cd test_app && ruby server"
   end
 
-  desc "Stop the running test application"
+  desc "Stop the running test application on default port 9292 or PORT env var"
   task :stop do
-    # Find processes using port 9292 (the test app's web server)
-    pids = `lsof -ti :9292`.split("\n").map(&:strip).reject(&:empty?)
+    port = ENV.fetch("PORT", "9292").to_i
+    pids = `lsof -ti :#{port}`.split("\n").map(&:strip).reject(&:empty?)
 
     if pids.empty?
-      puts "No running test application found (port 9292 is not in use)"
+      puts "No running test application found (port #{port} is not in use)"
     else
       pids.each do |pid|
         puts "Killing process #{pid}..."

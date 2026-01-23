@@ -830,7 +830,6 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
           - Async::TimeoutError → :timeout
           - OpenSSL::SSL::SSLError → :ssl
           - Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH → :connection
-          - Async::HTTP::Protocol::Error → :protocol
           - else → :unknown
         - Implement #as_json with string keys
         - Implement .load class method
@@ -851,7 +850,6 @@ WebMock's default stubbing doesn't work out-of-box with `async-http`. Solutions:
 ```
           - OpenSSL::SSL::SSLError → :ssl
           - Errno::ECONNREFUSED, Errno::ECONNRESET, Errno::EHOSTUNREACH → :connection
-          - Async::HTTP::Protocol::Error → :protocol
           - else → :unknown
         - Implement #as_json with string keys
         - Implement .load class method
@@ -1371,7 +1369,7 @@ class WebhookDeliveryWorker
 
   on_error do |error, webhook_id, payload|
     webhook = Webhook.find(webhook_id)
-    webhook.update!(status: "error", last_error: "#{error.class_name}: #{error.message}")
+    webhook.update!(status: "error", last_error: "#{error.error_class.name}: #{error.message}")
   end
 
   def perform(webhook_id, payload)

@@ -6,14 +6,14 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
   describe "#initialize" do
     it "creates a request with valid parameters" do
       request = described_class.new(
-        method: :get,
-        url: "https://api.example.com/users",
+        :get,
+        "https://api.example.com/users",
         headers: {"Authorization" => "Bearer token"},
         body: nil,
         timeout: 30
       )
 
-      expect(request.method).to eq(:get)
+      expect(request.http_method).to eq(:get)
       expect(request.url).to eq("https://api.example.com/users")
       expect(request.headers.to_h).to eq({"authorization" => "Bearer token"})
       expect(request.body).to be_nil
@@ -24,10 +24,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       Sidekiq::AsyncHttp.configure do |config|
         config.user_agent = "Sidekiq-AsyncHttp-Test"
       end
-      request = described_class.new(
-        method: :get,
-        url: "https://api.example.com/users"
-      )
+      request = described_class.new(:get, "https://api.example.com/users")
       expect(request.headers["user-agent"]).to eq("Sidekiq-AsyncHttp-Test")
     ensure
       Sidekiq::AsyncHttp.reset_configuration!
@@ -37,11 +34,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       Sidekiq::AsyncHttp.configure do |config|
         config.user_agent = "Sidekiq-AsyncHttp-Test"
       end
-      request = described_class.new(
-        method: :get,
-        url: "https://api.example.com/users",
-        headers: {"User-Agent" => "Custom-Agent"}
-      )
+      request = described_class.new(:get, "https://api.example.com/users", headers: {"User-Agent" => "Custom-Agent"})
       expect(request.headers["user-agent"]).to eq("Custom-Agent")
     ensure
       Sidekiq::AsyncHttp.reset_configuration!
@@ -49,53 +42,53 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
 
     it "accepts a URI object for url" do
       uri = URI("https://api.example.com/users")
-      request = described_class.new(method: :get, url: uri)
+      request = described_class.new(:get, uri)
 
       expect(request.url).to eq(uri.to_s)
     end
 
     context "validation" do
       it "casts method to a symbol" do
-        request = described_class.new(method: "POST", url: "https://example.com")
-        expect(request.method).to eq(:post)
+        request = described_class.new("POST", "https://example.com")
+        expect(request.http_method).to eq(:post)
       end
 
       it "validates method is a valid HTTP method" do
         expect do
-          described_class.new(method: :invalid, url: "https://example.com")
+          described_class.new(:invalid, "https://example.com")
         end.to raise_error(ArgumentError, /method must be one of/)
       end
 
       it "accepts all valid HTTP methods" do
         %i[get post put patch delete].each do |method|
           expect do
-            described_class.new(method: method, url: "https://example.com")
+            described_class.new(method, "https://example.com")
           end.not_to raise_error
         end
       end
 
       it "validates url is present" do
         expect do
-          described_class.new(method: :get, url: nil)
+          described_class.new(:get, nil)
         end.to raise_error(ArgumentError, "url is required")
       end
 
       it "validates url is not empty" do
         expect do
-          described_class.new(method: :get, url: "")
+          described_class.new(:get, "")
         end.to raise_error(ArgumentError, "url is required")
       end
 
       it "validates url is a String or URI" do
         expect do
-          described_class.new(method: :get, url: 123)
+          described_class.new(:get, 123)
         end.to raise_error(ArgumentError, "url must be a String or URI, got: Integer")
       end
     end
   end
 
   describe "#execute" do
-    let(:request) { described_class.new(method: :get, url: "https://example.com") }
+    let(:request) { described_class.new(:get, "https://example.com") }
     let(:job_hash) { {"class" => "TestWorker", "args" => [1, 2, 3]} }
     let(:processor) { instance_double(Sidekiq::AsyncHttp::Processor) }
 

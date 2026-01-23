@@ -13,7 +13,7 @@ class AsynchronousActiveJob < ActiveJob::Base
   end
 
   on_error do |error, method, url, timeout|
-    logger.error("ActiveJob async request failed: #{method.upcase} #{url} - Error: #{error.class_name} #{error.message}")
+    logger.error("ActiveJob async request failed: #{method.upcase} #{url} - Error: #{error.error_class.name} #{error.message}")
     StatusReport.new("Asynchronous").error!
   end
 

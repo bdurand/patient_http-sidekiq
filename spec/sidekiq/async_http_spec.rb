@@ -327,7 +327,7 @@ RSpec.describe Sidekiq::AsyncHttp do
         "duration" => 0.123,
         "request_id" => "req-123",
         "url" => "https://api.example.com/users",
-        "method" => "get",
+        "http_method" => "get",
         "protocol" => "HTTP/2"
       }
     end
@@ -341,7 +341,7 @@ RSpec.describe Sidekiq::AsyncHttp do
         "duration" => 0.5,
         "request_id" => "req-456",
         "url" => "https://api.example.com/slow",
-        "method" => "post"
+        "http_method" => "post"
       }
     end
 
@@ -429,7 +429,7 @@ RSpec.describe Sidekiq::AsyncHttp do
         expect(responses.first).to be_a(Sidekiq::AsyncHttp::Response)
         expect(responses.first.status).to eq(200)
         expect(responses.first.url).to eq("https://api.example.com/users")
-        expect(responses.first.method).to eq(:get)
+        expect(responses.first.http_method).to eq(:get)
         expect(responses.first.request_id).to eq("req-123")
       end
 
@@ -496,7 +496,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
         expect(errors.size).to eq(2)
         expect(errors.first).to be_a(Sidekiq::AsyncHttp::Error)
-        expect(errors.first.class_name).to eq("Timeout::Error")
+        expect(errors.first.error_class).to eq(Timeout::Error)
         expect(errors.first.message).to eq("Request timed out")
         expect(errors.first.error_type).to eq(:timeout)
         expect(errors.first.request_id).to eq("req-456")
@@ -512,11 +512,11 @@ RSpec.describe Sidekiq::AsyncHttp do
         described_class.invoke_error_callbacks(error_data)
 
         expect(error_received).to be_a(Sidekiq::AsyncHttp::Error)
-        expect(error_received.class_name).to eq("Timeout::Error")
+        expect(error_received.error_class).to eq(Timeout::Error)
         expect(error_received.message).to eq("Request timed out")
         expect(error_received.backtrace).to eq(["line 1", "line 2", "line 3"])
         expect(error_received.url).to eq("https://api.example.com/slow")
-        expect(error_received.method).to eq(:post)
+        expect(error_received.http_method).to eq(:post)
       end
 
       it "invokes callbacks in registration order" do

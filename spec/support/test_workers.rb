@@ -70,7 +70,7 @@ module TestWorkers
 
     def perform(response_hash, *args)
       # Convert hash to Response object for integration tests with complete hashes
-      response = if response_hash.is_a?(Hash) && response_hash.key?("status") && response_hash.key?("method")
+      response = if response_hash.is_a?(Hash) && response_hash.key?("status") && response_hash.key?("http_method")
         Sidekiq::AsyncHttp::Response.load(response_hash)
       else
         response_hash # For test_workers_spec simple hashes

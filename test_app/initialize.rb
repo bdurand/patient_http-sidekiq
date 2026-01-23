@@ -31,11 +31,11 @@ Sidekiq::AsyncHttp.configure do |config|
 end
 
 Sidekiq::AsyncHttp.after_completion do |response|
-  Sidekiq.logger.info("Async HTTP Continuation: #{response.status} #{response.method.to_s.upcase} #{response.url}")
+  Sidekiq.logger.info("Async HTTP Continuation: #{response.status} #{response.http_method.to_s.upcase} #{response.url}")
 end
 
 Sidekiq::AsyncHttp.after_error do |error|
-  Sidekiq.logger.error("Async HTTP Error: #{error.class_name} #{error.message} on #{error.method.to_s.upcase} #{error.url}")
+  Sidekiq.logger.error("Async HTTP Error: #{error.error_class.name} #{error.message} on #{error.http_method.to_s.upcase} #{error.url}")
 end
 
 # Load test workers

@@ -6,10 +6,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
   let(:registry) { described_class.new(config) }
   let(:request) do
-    Sidekiq::AsyncHttp::Request.new(
-      method: :get,
-      url: "https://example.com/test"
-    )
+    Sidekiq::AsyncHttp::Request.new(:get, "https://example.com/test")
   end
   let(:sidekiq_job) do
     {

@@ -7,10 +7,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
 
   def create_request_task(method: :get, url: "https://api.example.com/users")
-    req = Sidekiq::AsyncHttp::Request.new(
-      method: method,
-      url: url
-    )
+    req = Sidekiq::AsyncHttp::Request.new(method, url)
     Sidekiq::AsyncHttp::RequestTask.new(
       request: req,
       sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "jid-123", "args" => []},

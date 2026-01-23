@@ -66,8 +66,8 @@ module Sidekiq::AsyncHttp
 
       # Create request with all parameters
       Request.new(
-        method: method,
-        url: full_uri.to_s,
+        method,
+        full_uri.to_s,
         headers: merged_headers.to_h,
         body: request_body,
         timeout: timeout || @timeout,

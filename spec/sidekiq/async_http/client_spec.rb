@@ -49,7 +49,7 @@ RSpec.describe Sidekiq::AsyncHttp::Client do
 
     it "creates Request with method, url, headers, body, and timeout" do
       result = client.async_request(:post, "/users", body: "data")
-      expect(result.method).to eq(:post)
+      expect(result.http_method).to eq(:post)
       expect(result.url).to eq("https://api.example.com/users")
       expect(result.headers.to_h).to include("authorization" => "Bearer token123")
       expect(result.body).to eq("data")

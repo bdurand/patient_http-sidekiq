@@ -29,7 +29,7 @@ module Sidekiq
       attr_reader :url
 
       # @return [Symbol] HTTP method
-      attr_reader :method
+      attr_reader :http_method
 
       class << self
         # Reconstruct a Response from a hash
@@ -44,7 +44,7 @@ module Sidekiq
             duration: hash["duration"],
             request_id: hash["request_id"],
             url: hash["url"],
-            method: hash["method"]&.to_sym
+            http_method: hash["http_method"]&.to_sym
           )
         end
       end
@@ -54,8 +54,9 @@ module Sidekiq
       # @param duration [Float] request duration in seconds
       # @param request_id [String] the request ID
       # @param url [String] the request URL
-      # @param method [Symbol] the HTTP method
-      def initialize(status:, headers:, body:, duration:, request_id:, url:, method:, protocol:)
+      # @param http_method [Symbol] the HTTP method
+      # @param protocol [String] the HTTP protocol version
+      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:, protocol:)
         @status = status
         @headers = HttpHeaders.new(headers)
 
@@ -67,7 +68,7 @@ module Sidekiq
         @request_id = request_id
         @protocol = protocol
         @url = url
-        @method = method
+        @http_method = http_method
       end
 
       # Returns the response body, decoding it from the payload if necessary.
@@ -110,13 +111,20 @@ module Sidekiq
         status >= 400 && status < 600
       end
 
+      # Get the Content-Type header
+      #
+      # @return [String, nil]
+      def content_type
+        headers["content-type"]
+      end
+
       # Parse response body as JSON
       # @return [Hash, Array] parsed JSON
       # @raise [RuntimeError] if Content-Type is not application/json
       # @raise [JSON::ParserError] if body is not valid JSON
       def json
-        content_type = headers["content-type"]
-        unless content_type&.include?("application/json")
+        type = content_type.to_s.downcase
+        unless type.match?(/\Aapplication\/[^ ]*json\b/) || type == "text/json"
           raise "Response Content-Type is not application/json (got: #{content_type.inspect})"
         end
 
@@ -134,7 +142,7 @@ module Sidekiq
           "request_id" => request_id,
           "protocol" => protocol,
           "url" => url,
-          "method" => method.to_s
+          "http_method" => http_method.to_s
         }
       end
 

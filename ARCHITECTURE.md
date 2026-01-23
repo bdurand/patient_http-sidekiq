@@ -97,7 +97,7 @@ erDiagram
     }
 
     REQUEST {
-        string method
+        string http_method
         string url
         hash headers
         string body
@@ -108,6 +108,8 @@ erDiagram
         int status
         hash headers
         string body
+        string http_method
+        string url
     }
 
     JOB-MIXIN {

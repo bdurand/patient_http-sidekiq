@@ -156,7 +156,7 @@ module Sidekiq::AsyncHttp
       @error = exception
 
       if @error_worker
-        error = Error.from_exception(exception, request_id: @id, duration: duration, url: request.url, method: request.method)
+        error = Error.from_exception(exception, request_id: @id, duration: duration, url: request.url, http_method: request.http_method)
         worker_class = ClassHelper.resolve_class_name(@error_worker)
         worker_class.set(async_http_continuation: "error").perform_async(error.as_json, *job_args)
       else

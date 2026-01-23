@@ -28,14 +28,14 @@ module Sidekiq::AsyncHttp
         http.read_timeout = request.timeout if request.timeout
 
         # Create request
-        request_class = case request.method
+        request_class = case request.http_method
         when :get then Net::HTTP::Get
         when :post then Net::HTTP::Post
         when :put then Net::HTTP::Put
         when :patch then Net::HTTP::Patch
         when :delete then Net::HTTP::Delete
         else
-          raise ArgumentError, "Unsupported method: #{request.method}"
+          raise ArgumentError, "Unsupported method: #{request.http_method}"
         end
 
         req = request_class.new(uri.request_uri)
@@ -64,7 +64,7 @@ module Sidekiq::AsyncHttp
           duration: duration,
           request_id: @task.id,
           url: request.url,
-          method: request.method
+          http_method: request.http_method
         )
 
         # Invoke completion callback inline
@@ -76,7 +76,7 @@ module Sidekiq::AsyncHttp
 
         if @task.error_worker
           # Build error object and invoke error callback inline
-          error = Error.from_exception(e, request_id: @task.id, duration: duration, url: request.url, method: request.method)
+          error = Error.from_exception(e, request_id: @task.id, duration: duration, url: request.url, http_method: request.http_method)
           @task.error_worker.new.perform(error.as_json, *@task.sidekiq_job["args"])
         else
           raise e

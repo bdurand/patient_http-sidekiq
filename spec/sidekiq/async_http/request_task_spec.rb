@@ -4,10 +4,7 @@ require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::RequestTask do
   let(:request) do
-    Sidekiq::AsyncHttp::Request.new(
-      method: :get,
-      url: "https://api.example.com/users"
-    )
+    Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/users")
   end
 
   let(:sidekiq_job) do
@@ -244,7 +241,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         request_id: task.id,
         duration: 0.5,
         url: "https://api.example.com/users",
-        method: :get,
+        http_method: :get,
         protocol: "HTTP/1.1"
       )
 
@@ -268,7 +265,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       task.completed!
 
       exception = StandardError.new("Something went wrong")
-      error = Sidekiq::AsyncHttp::Error.from_exception(exception, request_id: task.id, duration: task.duration, url: request.url, method: request.method)
+      error = Sidekiq::AsyncHttp::Error.from_exception(exception, request_id: task.id, duration: task.duration, url: request.url, http_method: request.http_method)
 
       task.error!(exception)
       expect(task.error).to eq(exception)

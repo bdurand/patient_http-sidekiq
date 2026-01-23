@@ -22,8 +22,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     error_worker: "TestWorkers::ErrorWorker"
   )
     request = Sidekiq::AsyncHttp::Request.new(
-      method: method,
-      url: url,
+      method,
+      url,
       headers: headers,
       body: body,
       timeout: timeout,
@@ -195,10 +195,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         processor.enqueue(request)
         queue = processor.instance_variable_get(:@queue)
         expect(queue.size).to eq(1)
-      end
-
-      it "does not raise an error" do
-        expect { processor.enqueue(request) }.not_to raise_error
       end
     end
 
@@ -1068,19 +1064,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       error_hash = TestWorkers::ErrorWorker.jobs.last["args"].first
       expect(error_hash["error_type"]).to eq("ssl")
-    end
-
-    it "handles protocol errors" do
-      # Create a mock protocol error
-      protocol_error_class = Class.new(StandardError)
-      stub_const("Async::HTTP::Protocol::Error", protocol_error_class)
-      exception = protocol_error_class.new("Protocol error")
-
-      processor.send(:handle_error, mock_request, exception)
-
-      expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
-      error_hash = TestWorkers::ErrorWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("protocol")
     end
 
     it "handles unknown errors" do

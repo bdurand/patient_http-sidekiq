@@ -37,10 +37,7 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => [42]
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(
-      method: :get,
-      url: "http://localhost:9876/test"
-    )
+    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
 
     task = Sidekiq::AsyncHttp::RequestTask.new(
       request: request,
@@ -86,10 +83,7 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(
-      method: :get,
-      url: "http://localhost:9876/test"
-    )
+    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
 
     task = Sidekiq::AsyncHttp::RequestTask.new(
       request: request,
@@ -152,10 +146,7 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(
-      method: :get,
-      url: "http://localhost:9876/test"
-    )
+    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
 
     task = Sidekiq::AsyncHttp::RequestTask.new(
       request: request,
@@ -207,10 +198,7 @@ RSpec.describe "Crash Recovery", :integration do
         "args" => []
       }
 
-      request = Sidekiq::AsyncHttp::Request.new(
-        method: :get,
-        url: "http://localhost:9876/test"
-      )
+      request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
 
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,

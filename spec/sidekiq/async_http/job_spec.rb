@@ -171,7 +171,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         expect(request_tasks.size).to eq(1)
         task = request_tasks.first
         expect(task.request).to be_a(Sidekiq::AsyncHttp::Request)
-        expect(task.request.method).to eq(:get)
+        expect(task.request.http_method).to eq(:get)
         expect(task.request.url).to eq("https://api.example.com/data")
         expect(task.request.timeout).to eq(10)
       end

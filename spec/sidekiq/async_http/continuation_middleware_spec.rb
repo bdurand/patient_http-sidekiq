@@ -15,7 +15,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
       "duration" => 0.123,
       "request_id" => "req-123",
       "url" => "https://api.example.com/users",
-      "method" => "get",
+      "http_method" => "get",
       "protocol" => "HTTP/2"
     }
   end
@@ -29,7 +29,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
       "duration" => 0.5,
       "request_id" => "req-456",
       "url" => "https://api.example.com/slow",
-      "method" => "post"
+      "http_method" => "post"
     }
   end
 
@@ -129,7 +129,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
         middleware.call(worker, job, queue) {}
 
         expect(response_received.url).to eq("https://api.example.com/users")
-        expect(response_received.method).to eq(:get)
+        expect(response_received.http_method).to eq(:get)
         expect(response_received.status).to eq(200)
         expect(response_received.body).to eq('{"message":"success"}')
       end
@@ -168,7 +168,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
         expect(yielded).to be true
         expect(errors.size).to eq(1)
         expect(errors.first).to be_a(Sidekiq::AsyncHttp::Error)
-        expect(errors.first.class_name).to eq("Timeout::Error")
+        expect(errors.first.error_class).to eq(Timeout::Error)
         expect(errors.first.request_id).to eq("req-456")
       end
 
@@ -203,11 +203,11 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
 
         middleware.call(worker, job, queue) {}
 
-        expect(error_received.class_name).to eq("Timeout::Error")
+        expect(error_received.error_class).to eq(Timeout::Error)
         expect(error_received.message).to eq("Request timed out")
         expect(error_received.error_type).to eq(:timeout)
         expect(error_received.url).to eq("https://api.example.com/slow")
-        expect(error_received.method).to eq(:post)
+        expect(error_received.http_method).to eq(:post)
       end
 
       it "still yields even if no callbacks are registered" do

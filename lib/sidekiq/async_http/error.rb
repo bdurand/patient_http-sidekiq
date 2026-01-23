@@ -2,21 +2,14 @@
 
 module Sidekiq
   module AsyncHttp
-    # Error object representing an exception from an HTTP request. Note that this
-    # is not for HTTP error responses (4xx/5xx), but for actual exceptions raised
+    # Error object representing an exception from making an HTTP request. Note that this
+    # is not for HTTP error responses (4xx/5xx), but from actual exceptions raised
     # during the request (timeouts, connection errors, SSL errors, etc).
-    class Error
+    #
+    # This is how errors are passed back to the error continuation jobs for processing.
+    class Error < StandardError
       # Valid error types
-      ERROR_TYPES = %i[timeout connection ssl protocol response_too_large unknown].freeze
-
-      # @return [String] Name of the exception class
-      attr_reader :class_name
-
-      # @return [String] Exception message
-      attr_reader :message
-
-      # @return [Array<String>] Exception backtrace
-      attr_reader :backtrace
+      ERROR_TYPES = %i[timeout connection ssl response_too_large unknown].freeze
 
       # @return [Symbol] Categorized error type
       attr_reader :error_type
@@ -31,7 +24,7 @@ module Sidekiq
       attr_reader :url
 
       # @return [Symbol] HTTP method
-      attr_reader :method
+      attr_reader :http_method
 
       class << self
         # Reconstruct an Error from a hash
@@ -46,30 +39,30 @@ module Sidekiq
             error_type: hash["error_type"]&.to_sym,
             duration: hash["duration"],
             url: hash["url"],
-            method: hash["method"]
+            http_method: hash["http_method"]
           )
         end
-      end
-      class << self
+
         # Create an Error from an exception using pattern matching
         #
         # @param exception [Exception] the exception to convert
+        # @param duration [Float] request duration in seconds
         # @param request_id [String] the request ID
+        # @param url [String] the request URL
+        # @param http_method [Symbol, String] the HTTP method
         # @return [Error] the error object
-        def from_exception(exception, duration:, request_id:, url:, method:)
+        def from_exception(exception, duration:, request_id:, url:, http_method:)
           error_type = case exception
           in Async::TimeoutError
             :timeout
           in OpenSSL::SSL::SSLError
             :ssl
-          in Errno::ECONNREFUSED | Errno::ECONNRESET | Errno::EHOSTUNREACH
+          in Errno::ECONNREFUSED | Errno::ECONNRESET | Errno::EHOSTUNREACH | Errno::EPIPE | SocketError | IOError
             :connection
           else
             # Check for specific error types by class name
             if exception.is_a?(Sidekiq::AsyncHttp::ResponseTooLargeError)
               :response_too_large
-            elsif exception.class.name&.include?("Protocol::Error")
-              :protocol
             else
               :unknown
             end
@@ -83,7 +76,7 @@ module Sidekiq
             error_type: error_type,
             duration: duration,
             url: url,
-            method: method
+            http_method: http_method
           )
         end
       end
@@ -97,30 +90,30 @@ module Sidekiq
       # @param duration [Float] Request duration in seconds
       # @param request_id [String] Unique request identifier
       # @param url [String] Request URL
-      # @param method [Symbol, String] HTTP method
-      def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, method:)
+      # @param http_method [Symbol, String] HTTP method
+      def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, http_method:)
+        super(message)
+        set_backtrace(backtrace)
         @class_name = class_name
-        @message = message
-        @backtrace = backtrace
         @error_type = error_type
         @duration = duration
         @request_id = request_id
         @url = url
-        @method = method&.to_sym
+        @http_method = http_method&.to_sym
       end
 
       # Convert to hash with string keys for serialization
       # @return [Hash] hash representation
       def as_json
         {
-          "class_name" => class_name,
+          "class_name" => @class_name,
           "message" => message,
           "backtrace" => backtrace,
           "request_id" => request_id,
           "error_type" => error_type.to_s,
           "duration" => duration,
           "url" => url,
-          "method" => method.to_s
+          "http_method" => http_method.to_s
         }
       end
 
@@ -129,7 +122,7 @@ module Sidekiq
       # Get the actual Exception class constant from the class_name
       # @return [Class, nil] the exception class or nil if not found
       def error_class
-        ClassHelper.resolve_class_name(class_name)
+        ClassHelper.resolve_class_name(@class_name)
       end
     end
   end

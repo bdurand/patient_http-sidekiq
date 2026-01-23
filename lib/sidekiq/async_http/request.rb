@@ -15,7 +15,7 @@ module Sidekiq::AsyncHttp
     VALID_METHODS = %i[get post put patch delete].freeze
 
     # @return [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
-    attr_reader :method
+    attr_reader :http_method
 
     # @return [String] The request URL
     attr_reader :url
@@ -34,14 +34,14 @@ module Sidekiq::AsyncHttp
 
     # Initializes a new Request.
     #
-    # @param method [Symbol, String] HTTP method (:get, :post, :put, :patch, :delete).
+    # @param http_method [Symbol, String] HTTP method (:get, :post, :put, :patch, :delete).
     # @param url [String, URI::Generic] The request URL.
     # @param headers [Hash, HttpHeaders] Request headers.
     # @param body [String, nil] Request body.
     # @param timeout [Float, nil] Overall timeout in seconds.
     # @param connect_timeout [Float, nil] Connect timeout in seconds.
-    def initialize(method:, url:, headers: {}, body: nil, timeout: nil, connect_timeout: nil)
-      @method = method.is_a?(String) ? method.downcase.to_sym : method
+    def initialize(http_method, url, headers: {}, body: nil, timeout: nil, connect_timeout: nil)
+      @http_method = http_method.is_a?(String) ? http_method.downcase.to_sym : http_method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
       if Sidekiq::AsyncHttp.configuration.user_agent
@@ -130,8 +130,8 @@ module Sidekiq::AsyncHttp
     # @raise [ArgumentError] if method or url is invalid
     # @return [self] for chaining
     def validate!
-      unless VALID_METHODS.include?(@method)
-        raise ArgumentError, "method must be one of #{VALID_METHODS.inspect}, got: #{@method.inspect}"
+      unless VALID_METHODS.include?(@http_method)
+        raise ArgumentError, "method must be one of #{VALID_METHODS.inspect}, got: #{@http_method.inspect}"
       end
 
       if @url.nil? || (@url.is_a?(String) && @url.empty?)
@@ -142,8 +142,8 @@ module Sidekiq::AsyncHttp
         raise ArgumentError, "url must be a String or URI, got: #{@url.class}"
       end
 
-      if [:get, :delete].include?(@method) && !@body.nil?
-        raise ArgumentError, "body is not allowed for #{@method.upcase} requests"
+      if [:get, :delete].include?(@http_method) && !@body.nil?
+        raise ArgumentError, "body is not allowed for #{@http_method.upcase} requests"
       end
 
       self

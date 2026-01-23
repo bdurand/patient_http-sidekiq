@@ -126,7 +126,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
 
       error, arg1 = TestWorkers::ErrorWorker.calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
-      expect(error.class_name).to eq("Errno::ECONNREFUSED")
+      expect(error.error_class).to eq(Errno::ECONNREFUSED)
       expect(arg1).to eq("arg1")
 
       # Verify no jobs were enqueued
@@ -189,7 +189,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       )
 
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      response, = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(200)
     end
   end

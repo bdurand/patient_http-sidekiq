@@ -518,7 +518,7 @@ module Sidekiq
         Async::HTTP::Protocol::Request.new(
           uri.scheme,                      # scheme
           uri.authority,                   # authority (host:port)
-          request.method.to_s.upcase,      # method
+          request.http_method.to_s.upcase,      # method
           uri.request_uri,                 # path
           nil,                             # version (nil = auto)
           headers,                         # headers
@@ -540,7 +540,7 @@ module Sidekiq
           duration: task.duration,
           request_id: task.id,
           url: task.request.url,
-          method: task.request.method
+          http_method: task.request.http_method
         )
       end
 
@@ -603,7 +603,7 @@ module Sidekiq
 
         @config.logger&.warn(
           "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \
-          "enqueued #{task.error_worker}"
+          "enqueued #{task.error_worker || task.sidekiq_job["class"]}\n#{exception.backtrace&.join("\n")}"
         )
       rescue => e
         # Log error but don't crash the processor

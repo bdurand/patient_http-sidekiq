@@ -59,7 +59,7 @@ RSpec.describe "Error Handling Integration", :integration do
       error, *original_args = TestWorkers::ErrorWorker.calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:timeout)
-      expect(error.class_name).to match(/Timeout/)
+      expect(error.error_class.name).to match(/Timeout/)
       expect(original_args).to eq(["timeout_arg"])
     end
   end
@@ -90,7 +90,7 @@ RSpec.describe "Error Handling Integration", :integration do
       error, *original_args = TestWorkers::ErrorWorker.calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:connection)
-      expect(error.class_name).to match(/Errno::E/)
+      expect(error.error_class.name).to match(/Errno::E/)
       expect(error.message).to match(/refused|reset|connection/i)
       expect(original_args).to eq(["connection_arg"])
     end

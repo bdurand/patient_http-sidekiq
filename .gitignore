@@ -12,3 +12,4 @@ pkg/
 rdoc/
 doc/
 test_app/.session.key
+test_app/tmp
