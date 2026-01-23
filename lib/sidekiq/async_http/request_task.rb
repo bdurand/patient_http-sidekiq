@@ -182,5 +182,24 @@ module Sidekiq::AsyncHttp
     def error?
       !@error.nil?
     end
+
+    # Build a Response object from async response data.
+    #
+    # @param status [Integer] HTTP status code
+    # @param headers [Hash] HTTP response headers
+    # @param body [String, nil] HTTP response body
+    # @return [Response] the response object
+    # @api private
+    def build_response(status:, headers:, body:)
+      Response.new(
+        status: status,
+        headers: headers,
+        body: body,
+        duration: duration,
+        request_id: id,
+        url: request.url,
+        http_method: request.http_method
+      )
+    end
   end
 end

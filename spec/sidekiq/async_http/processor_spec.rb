@@ -702,7 +702,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(captured_response.status).to eq(201)
       expect(captured_response.body).to eq("response body")
       expect(captured_response.headers["X-Custom"]).to eq("value")
-      expect(captured_response.protocol).to eq("HTTP/2")
       expect(captured_response.request_id).to eq(mock_request.id)
       expect(captured_response.duration).to be_a(Float)
     end

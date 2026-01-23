@@ -30,6 +30,8 @@ module Sidekiq
         wrap_client(client)
       end
 
+      private
+
       # Create an endpoint for the request.
       #
       # @param request [Request] the request object

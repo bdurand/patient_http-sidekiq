@@ -35,24 +35,6 @@ module Sidekiq
         read_body_chunks(async_response)
       end
 
-      # Build a Response object from async response data.
-      #
-      # @param task [RequestTask] the original request task
-      # @param response_data [Hash] the response data with :status, :headers, :body, :protocol
-      # @return [Response] the response object
-      def build_response(task, response_data)
-        Response.new(
-          status: response_data[:status],
-          headers: response_data[:headers],
-          body: response_data[:body],
-          protocol: response_data[:protocol],
-          duration: task.duration,
-          request_id: task.id,
-          url: task.request.url,
-          http_method: task.request.http_method
-        )
-      end
-
       private
 
       # Validate content-length header doesn't exceed max size.
@@ -61,11 +43,11 @@ module Sidekiq
       # @raise [ResponseTooLargeError] if content-length exceeds max_response_size
       def validate_content_length(headers_hash)
         content_length = headers_hash["content-length"]&.to_i
-        return unless content_length && content_length > @config.max_response_size
-
-        raise ResponseTooLargeError.new(
-          "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
-        )
+        if content_length && content_length > @config.max_response_size
+          raise ResponseTooLargeError.new(
+            "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
+          )
+        end
       end
 
       # Read body chunks while checking size.

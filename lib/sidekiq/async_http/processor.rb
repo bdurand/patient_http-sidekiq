@@ -384,15 +384,14 @@ module Sidekiq
             {
               status: async_response.status,
               headers: headers_hash,
-              body: body,
-              protocol: async_response.protocol
+              body: body
             }
           end
 
           return if stopping? || stopped?
 
           task.completed!
-          response = @response_reader.build_response(task, response_data)
+          response = task.build_response(**response_data)
           handle_success(task, response)
         rescue => e
           task.completed!

@@ -60,7 +60,6 @@ module Sidekiq::AsyncHttp
           status: http_response.code.to_i,
           headers: http_response.to_hash.transform_values { |v| v.is_a?(Array) ? v.join(", ") : v },
           body: http_response.body,
-          protocol: http_response.http_version,
           duration: duration,
           request_id: @task.id,
           url: request.url,

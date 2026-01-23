@@ -241,8 +241,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         request_id: task.id,
         duration: 0.5,
         url: "https://api.example.com/users",
-        http_method: :get,
-        protocol: "HTTP/1.1"
+        http_method: :get
       )
 
       task.success!(response)

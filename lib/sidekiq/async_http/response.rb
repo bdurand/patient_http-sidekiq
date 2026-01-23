@@ -22,9 +22,6 @@ module Sidekiq
       # @return [String] request ID
       attr_reader :request_id
 
-      # @return [String] HTTP protocol version
-      attr_reader :protocol
-
       # @return [String] request URL
       attr_reader :url
 
@@ -40,7 +37,6 @@ module Sidekiq
             status: hash["status"],
             headers: hash["headers"],
             body: Payload.load(hash["body"])&.value,
-            protocol: hash["protocol"],
             duration: hash["duration"],
             request_id: hash["request_id"],
             url: hash["url"],
@@ -55,8 +51,7 @@ module Sidekiq
       # @param request_id [String] the request ID
       # @param url [String] the request URL
       # @param http_method [Symbol] the HTTP method
-      # @param protocol [String] the HTTP protocol version
-      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:, protocol:)
+      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:)
         @status = status
         @headers = HttpHeaders.new(headers)
 
@@ -66,7 +61,6 @@ module Sidekiq
 
         @duration = duration
         @request_id = request_id
-        @protocol = protocol
         @url = url
         @http_method = http_method
       end
@@ -140,7 +134,6 @@ module Sidekiq
           "body" => @payload&.as_json,
           "duration" => duration,
           "request_id" => request_id,
-          "protocol" => protocol,
           "url" => url,
           "http_method" => http_method.to_s
         }
