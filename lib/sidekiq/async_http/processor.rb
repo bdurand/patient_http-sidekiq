@@ -4,6 +4,7 @@ require "concurrent"
 require "async"
 require "async/queue"
 require "async/http"
+require "protocol/http/accept_encoding"
 
 module Sidekiq
   module AsyncHttp
@@ -402,13 +403,13 @@ module Sidekiq
         @metrics.record_request_start
 
         begin
-          http_client = http_client(task.request)
+          client = http_client(task.request)
           http_request = build_http_request(task.request)
           http_request.headers.add("x-request-id", task.id)
 
           # Execute with timeout
           response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
-            async_response = http_client.call(http_request)
+            async_response = client.call(http_request)
             headers_hash = async_response.headers.to_h
             body = read_response_body(async_response, headers_hash) unless stopping? || stopped?
 
@@ -491,7 +492,8 @@ module Sidekiq
           connect_timeout: request.connect_timeout,
           idle_timeout: @config.idle_connection_timeout
         )
-        Async::HTTP::Client.new(endpoint)
+        client = Async::HTTP::Client.new(endpoint)
+        Protocol::HTTP::AcceptEncoding.new(client)
       end
 
       # Build an Async::HTTP::Request from our Request object.
@@ -505,6 +507,11 @@ module Sidekiq
         headers = Protocol::HTTP::Headers.new
         (request.headers || {}).each do |key, value|
           headers.add(key, value)
+        end
+
+        if request.headers["user-agent"].nil?
+          user_agent = @config.user_agent&.to_s || "sidekiq-async_http"
+          headers.add("user-agent", user_agent)
         end
 
         # Set body if present - use Protocol::HTTP::Body::Buffered for proper handling

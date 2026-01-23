@@ -575,7 +575,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     let(:response_body) { instance_double(Protocol::HTTP::Body::Buffered) }
 
     before do
-      allow(Async::HTTP::Client).to receive(:new).and_return(client)
+      allow(Protocol::HTTP::AcceptEncoding).to receive(:new).and_return(client)
       allow(metrics).to receive(:record_request_start)
       allow(metrics).to receive(:record_request_complete)
       allow(metrics).to receive(:record_error)
