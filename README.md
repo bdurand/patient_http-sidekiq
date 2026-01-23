@@ -410,7 +410,7 @@ bundle exec rake
 
 There is also a bundled test app in the `test_app` directory that can be used for manual testing and experimentation.
 
-To run the test app, firs install the dependencies:
+To run the test app, first install the dependencies:
 
 ```bash
 bundle exec rake test_app:bundle

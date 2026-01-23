@@ -13,8 +13,6 @@ class ExampleWorker
 
   on_error(encrypted_args: true) do |error, method, url, timeout, delay|
     Sidekiq.logger.error("ExampleWorker Error: #{error.inspect}\n#{error.backtrace.join("\n")}")
-    path = write_response(error.response)
-    Sidekiq.logger.info("ExampleWorker: Error response written to #{path}")
   end
 
   def perform(method, url)
@@ -28,9 +26,7 @@ class ExampleWorker
     Dir.mkdir(tmp_dir) unless Dir.exist?(tmp_dir)
     file_name = "response_#{response.request_id}#{response_extension(response)}"
     path = File.join(tmp_dir, file_name)
-    File.open(path, "wb") do |file|
-      file.write(response.body)
-    end
+    File.binwrite(path, response.body)
     path
   end
 
@@ -58,8 +54,6 @@ class ExampleWorker
       ".html"
     when /json/
       ".json"
-    when /html/
-      ".html"
     when /xml/
       ".xml"
     when /text/

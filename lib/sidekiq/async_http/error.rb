@@ -9,7 +9,7 @@ module Sidekiq
     # This is how errors are passed back to the error continuation jobs for processing.
     class Error < StandardError
       # Valid error types
-      ERROR_TYPES = %i[timeout connection ssl protocol response_too_large unknown].freeze
+      ERROR_TYPES = %i[timeout connection ssl response_too_large unknown].freeze
 
       # @return [Symbol] Categorized error type
       attr_reader :error_type
@@ -42,8 +42,7 @@ module Sidekiq
             http_method: hash["http_method"]
           )
         end
-      end
-      class << self
+
         # Create an Error from an exception using pattern matching
         #
         # @param exception [Exception] the exception to convert

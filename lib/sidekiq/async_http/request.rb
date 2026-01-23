@@ -142,8 +142,8 @@ module Sidekiq::AsyncHttp
         raise ArgumentError, "url must be a String or URI, got: #{@url.class}"
       end
 
-      if [:get, :delete].include?(@method) && !@body.nil?
-        raise ArgumentError, "body is not allowed for #{@method.upcase} requests"
+      if [:get, :delete].include?(@http_method) && !@body.nil?
+        raise ArgumentError, "body is not allowed for #{@http_method.upcase} requests"
       end
 
       self

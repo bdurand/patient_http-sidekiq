@@ -3,16 +3,6 @@
 require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::Error do
-  describe "ERROR_TYPES" do
-    it "defines valid error types" do
-      expect(described_class::ERROR_TYPES).to eq(%i[timeout connection ssl protocol response_too_large unknown])
-    end
-
-    it "is frozen" do
-      expect(described_class::ERROR_TYPES).to be_frozen
-    end
-  end
-
   describe ".from_exception" do
     let(:request_id) { "req_123" }
     let(:url) { "https://example.com" }

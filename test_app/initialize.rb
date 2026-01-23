@@ -35,7 +35,7 @@ Sidekiq::AsyncHttp.after_completion do |response|
 end
 
 Sidekiq::AsyncHttp.after_error do |error|
-  Sidekiq.logger.error("Async HTTP Error: #{error.class_name} #{error.message} on #{error.http_method.to_s.upcase} #{error.url}")
+  Sidekiq.logger.error("Async HTTP Error: #{error.error_class.name} #{error.message} on #{error.http_method.to_s.upcase} #{error.url}")
 end
 
 # Load test workers
