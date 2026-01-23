@@ -218,6 +218,53 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
     end
   end
 
+  describe "#content_type" do
+    it "returns the Content-Type header" do
+      response = described_class.new(
+        status: 200,
+        headers: {"Content-Type" => "application/json"},
+        body: "{}",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com",
+        http_method: :get,
+        protocol: "HTTP/1.1"
+      )
+
+      expect(response.content_type).to eq("application/json")
+    end
+
+    it "is case-insensitive" do
+      response = described_class.new(
+        status: 200,
+        headers: {"content-type" => "text/html"},
+        body: "<html></html>",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com",
+        http_method: :get,
+        protocol: "HTTP/1.1"
+      )
+
+      expect(response.content_type).to eq("text/html")
+    end
+
+    it "returns nil if Content-Type header is missing" do
+      response = described_class.new(
+        status: 200,
+        headers: {},
+        body: "No Content-Type",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com",
+        http_method: :get,
+        protocol: "HTTP/1.1"
+      )
+
+      expect(response.content_type).to be_nil
+    end
+  end
+
   describe "#json" do
     it "parses JSON body when Content-Type is application/json" do
       body = '{"name":"John","age":30}'

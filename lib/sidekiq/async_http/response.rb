@@ -111,13 +111,20 @@ module Sidekiq
         status >= 400 && status < 600
       end
 
+      # Get the Content-Type header
+      #
+      # @return [String, nil]
+      def content_type
+        headers["content-type"]
+      end
+
       # Parse response body as JSON
       # @return [Hash, Array] parsed JSON
       # @raise [RuntimeError] if Content-Type is not application/json
       # @raise [JSON::ParserError] if body is not valid JSON
       def json
-        content_type = headers["content-type"]
-        unless content_type&.include?("application/json")
+        type = content_type.to_s.downcase
+        unless type.match?(/\Aapplication\/[^ ]*json\b/) || type == "text/json"
           raise "Response Content-Type is not application/json (got: #{content_type.inspect})"
         end
 

@@ -1369,7 +1369,7 @@ class WebhookDeliveryWorker
 
   on_error do |error, webhook_id, payload|
     webhook = Webhook.find(webhook_id)
-    webhook.update!(status: "error", last_error: "#{error.class_name}: #{error.message}")
+    webhook.update!(status: "error", last_error: "#{error.error_class.name}: #{error.message}")
   end
 
   def perform(webhook_id, payload)

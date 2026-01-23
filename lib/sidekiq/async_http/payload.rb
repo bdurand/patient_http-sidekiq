@@ -37,7 +37,7 @@ module Sidekiq::AsyncHttp
       def encode(value, mimetype)
         return nil if value.nil?
 
-        if is_text_mimetype?(mimetype)
+        if is_text_mimetype?(mimetype) && value.encoding == Encoding::UTF_8
           if value.bytesize < 4096
             [:text, value]
           else

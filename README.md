@@ -84,7 +84,7 @@ The processor starts automatically with Sidekiq. When the HTTP request completes
 If an error is raised during the request, the `on_error` callback will be executed instead with the [error](Sidekiq::AsyncHttp::Error) information and the original job arguments. If no `on_error` is defined, the original job will be retried according to Sidekiq's retry rules.
 
 > [!IMPORTANT]
-> If you provide an `on_error` callback, do not re-raise the error as a mechanism for retrying the job. That will just result in the error callback job being retried instead. If you want to retry the original job from an `on_error` callback, you can call `perform_in` or `perform_async` from within the `on_error` callback.
+> If you provide an `on_error` callback, do not re-raise the error as a mechanism for retrying the job. That will just result in the error callback job being retried instead. If you want to retry the original job from an `on_error` callback, you can call `perform_in` or `perform_async` from within the `on_error` callback. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
 >
 > Also note that the error callback is only called when an exception is raised during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback. Instead, they are treated as completed requests and passed to the `on_completion` callback.
 
@@ -151,7 +151,9 @@ end
 
 ### Defining Your Own Callback Workers
 
-For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling:
+For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling.
+
+The `perform` methods of these workers will receive the response or error object serialized as a hash as the first argument, followed by the original job arguments. You can call `Sidekiq::AsyncHttp::Response.load` or `Sidekiq::AsyncHttp::Error.load` to deserialize them back into objects.
 
 ```ruby
 # Define dedicated callback workers

@@ -603,7 +603,7 @@ module Sidekiq
 
         @config.logger&.warn(
           "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \
-          "enqueued #{task.error_worker}"
+          "enqueued #{task.error_worker || task.sidekiq_job["class"]}\n#{exception.backtrace&.join("\n")}"
         )
       rescue => e
         # Log error but don't crash the processor
