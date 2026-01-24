@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "zlib"
+require "json"
 
 module Sidekiq
   module AsyncHttp
