@@ -153,7 +153,7 @@ end
 
 For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling.
 
-The `perform` methods of these workers will receive the response or error object sas the first argument, followed by the original job arguments. You can call `Sidekiq::AsyncHttp::Response.load` or `Sidekiq::AsyncHttp::Error.load` to deserialize them back into objects.
+The `perform` methods of these workers will receive the response or error object as the first argument, followed by the original job arguments. You can call `Sidekiq::AsyncHttp::Response.load` or `Sidekiq::AsyncHttp::Error.load` to deserialize them back into objects.
 
 ```ruby
 # Define dedicated callback workers
