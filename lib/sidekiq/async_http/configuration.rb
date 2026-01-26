@@ -129,7 +129,7 @@ module Sidekiq
 
       def validate_positive(attribute, value)
         unless value.is_a?(Numeric) && value > 0
-          raise ArgumentError, "#{attribute} must be a positive number, got: #{value.inspect}"
+          raise ArgumentError.new("#{attribute} must be a positive number, got: #{value.inspect}")
         end
       end
 
@@ -137,7 +137,7 @@ module Sidekiq
         return unless @heartbeat_interval && @orphan_threshold
 
         if @heartbeat_interval >= @orphan_threshold
-          raise ArgumentError, "heartbeat_interval (#{@heartbeat_interval}) must be less than orphan_threshold (#{@orphan_threshold})"
+          raise ArgumentError.new("heartbeat_interval (#{@heartbeat_interval}) must be less than orphan_threshold (#{@orphan_threshold})")
         end
       end
     end

@@ -91,7 +91,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
       error_worker = worker_class::ErrorCallback
       args = error_worker.instance_method(:perform).parameters
       expect(args.first).to eq([:req, :error]) # first arg is error
-      expect(args[1..]).to eq([[:rest, :args]]) # rest are
+      expect(args[1..]).to eq([[:rest, :args]]) # rest are splat args
     end
 
     it "allows setting Sidekiq options" do

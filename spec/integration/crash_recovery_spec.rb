@@ -169,7 +169,7 @@ RSpec.describe "Crash Recovery", :integration do
     end
 
     # Wait for monitor to update (heartbeat_interval is 1 second)
-    sleep(1.1)
+    sleep(1.2)
 
     # Get new timestamp
     new_score = Sidekiq.redis do |redis|

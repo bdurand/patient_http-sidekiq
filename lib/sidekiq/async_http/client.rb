@@ -58,7 +58,7 @@ module Sidekiq::AsyncHttp
       # Handle JSON body
       request_body = body
       if json
-        raise ArgumentError, "Cannot provide both body and json" if body
+        raise ArgumentError.new("Cannot provide both body and json") if body
 
         request_body = JSON.generate(json)
         merged_headers = merged_headers.merge({"Content-Type" => "application/json; encoding=utf-8"})

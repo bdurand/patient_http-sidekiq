@@ -14,6 +14,8 @@ Do not use suffixed conditionals with complex conditions with multiple logical o
 
 Prefer [:symbol_1, :symbol_2] array syntax over %i[] syntax for arrays of symbols.
 
+Use `raise SomeError.new("message")` instead of `raise SomeError, "message"` for raising exceptions.
+
 ## Testing
 
 Run the test suite with `bundle exec rspec`.

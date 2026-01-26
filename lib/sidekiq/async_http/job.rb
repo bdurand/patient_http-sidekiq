@@ -87,7 +87,7 @@ module Sidekiq::AsyncHttp
       # @raise [ArgumentError] if worker_class is not a valid Sidekiq job class
       def completion_callback_worker=(worker_class)
         unless worker_class.is_a?(Class) && worker_class.included_modules.include?(Sidekiq::Job)
-          raise ArgumentError, "completion_callback_worker must be a Sidekiq::Job class"
+          raise ArgumentError.new("completion_callback_worker must be a Sidekiq::Job class")
         end
 
         @completion_callback_worker = worker_class

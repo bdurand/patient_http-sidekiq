@@ -90,11 +90,11 @@ module Sidekiq::AsyncHttp
       end
 
       unless completion_worker.is_a?(Class) && completion_worker.include?(Sidekiq::Job)
-        raise ArgumentError, "completion_worker must be a class that includes Sidekiq::Job"
+        raise ArgumentError.new("completion_worker must be a class that includes Sidekiq::Job")
       end
 
       unless error_worker.is_a?(Class) && error_worker.include?(Sidekiq::Job)
-        raise ArgumentError, "error_worker must be a class that includes Sidekiq::Job"
+        raise ArgumentError.new("error_worker must be a class that includes Sidekiq::Job")
       end
 
       task = RequestTask.new(
@@ -114,7 +114,7 @@ module Sidekiq::AsyncHttp
       # Check if processor is running
       processor = Sidekiq::AsyncHttp.processor
       unless processor&.running?
-        raise Sidekiq::AsyncHttp::NotRunningError, "Cannot enqueue request: processor is not running"
+        raise Sidekiq::AsyncHttp::NotRunningError.new("Cannot enqueue request: processor is not running")
       end
 
       processor.enqueue(task)
@@ -129,7 +129,7 @@ module Sidekiq::AsyncHttp
     # @return [self] for chaining
     def validate!
       unless VALID_METHODS.include?(@http_method)
-        raise ArgumentError, "method must be one of #{VALID_METHODS.inspect}, got: #{@http_method.inspect}"
+        raise ArgumentError.new("method must be one of #{VALID_METHODS.inspect}, got: #{@http_method.inspect}")
       end
 
       if @url.nil? || (@url.is_a?(String) && @url.empty?)
@@ -137,7 +137,7 @@ module Sidekiq::AsyncHttp
       end
 
       unless @url.is_a?(String) || @url.is_a?(URI::Generic)
-        raise ArgumentError, "url must be a String or URI, got: #{@url.class}"
+        raise ArgumentError.new("url must be a String or URI, got: #{@url.class}")
       end
 
       if [:get, :delete].include?(@http_method) && !@body.nil?

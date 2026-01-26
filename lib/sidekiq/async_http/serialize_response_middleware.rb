@@ -9,7 +9,7 @@ module Sidekiq::AsyncHttp
     include Sidekiq::ClientMiddleware
 
     def call(worker_class, job, queue, redis_pool)
-      first_arg = job["args"].first
+      first_arg = job["args"]&.first
       if first_arg.is_a?(Response) || first_arg.is_a?(Error)
         job["args"][0] = first_arg.as_json.merge("_sidekiq_async_http_class" => first_arg.class.name)
       end
