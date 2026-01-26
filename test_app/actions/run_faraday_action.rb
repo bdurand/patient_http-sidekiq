@@ -10,12 +10,11 @@ require "faraday-sidekiq_async_http"
 # - "direct": Makes the Faraday request directly (outside Sidekiq context)
 class RunFaradayAction
   def call(env)
-    # Clear the previous response
-    FaradayRequestWorker.clear_response
-
     request = Rack::Request.new(env)
     return method_not_allowed_response unless request.post?
 
+    # Clear the previous response
+    FaradayRequestWorker.clear_response
     context = request.params["context"] || "sidekiq"
     timeout = request.params["timeout"]&.to_f || 30.0
     method = request.params["method"] || "GET"
