@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "time"
 require "sidekiq"
 require "sidekiq/throttled"
 require "sidekiq/encrypted_args"

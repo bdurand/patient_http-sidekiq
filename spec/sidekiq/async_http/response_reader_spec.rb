@@ -115,9 +115,10 @@ RSpec.describe Sidekiq::AsyncHttp::ResponseReader do
         headers_hash = {"content-type" => "text/html; charset=\"utf-8\""}
         result = response_reader.read_body(async_response, headers_hash)
 
-        # The regex will capture the quotes, but Encoding.find should handle it
-        # Let's test that it either works or falls back gracefully
+        # The regex may capture the quotes; this spec verifies that a quoted
+        # charset value does not cause an error and the body is still returned.
         expect(result).to eq("Hello")
+        expect(result.encoding).to eq(Encoding::UTF_8)
       end
 
       it "keeps original encoding when no charset is specified" do

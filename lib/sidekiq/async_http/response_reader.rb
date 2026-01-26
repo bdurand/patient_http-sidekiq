@@ -86,14 +86,19 @@ module Sidekiq
 
         # Match charset parameter in Content-Type header
         # Examples: "text/html; charset=utf-8", "application/json; charset=ISO-8859-1"
+        # Also handles quoted values: "text/html; charset="utf-8""
         match = content_type.match(/;\s*charset\s*=\s*([^;\s]+)/i)
-        match&.[](1)&.strip
+        return nil unless match
+
+        charset = match[1].strip
+        # Remove surrounding quotes if present
+        charset.gsub(/\A["']|["']\z/, "")
       end
 
       # Apply charset encoding to response body.
       #
       # Sets the string encoding based on the charset specified in the Content-Type header.
-      # Falls back to UTF-8 if charset is invalid or not recognized.
+      # Falls back to ASCII-8BIT if charset is invalid or not recognized.
       #
       # @param body [String] the response body
       # @param headers_hash [Hash] the response headers
