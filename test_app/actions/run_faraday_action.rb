@@ -57,17 +57,17 @@ class RunFaradayAction
     path += "?#{uri.query}" if uri.query
 
     connection = Faraday.new(url: base_url) do |f|
-      f.adapter :sidekiq_async_http
+      f.adapter :sidekiq_async_http,
+        completion_worker: FaradayRequestWorker::CompletionCallback,
+        error_worker: FaradayRequestWorker::ErrorCallback
     end
 
     connection.run_request(method.downcase.to_sym, path, nil, nil) do |req|
       req.options.timeout = timeout
       req.options.context = {
-        sidekiq_async_http: Faraday::SidekiqAsyncHttp::Adapter.async_options(
-          completion_worker: FaradayRequestWorker::CompletionCallback,
-          error_worker: FaradayRequestWorker::ErrorCallback,
-          callback_args: ["direct_request", Time.now.to_i]
-        )
+        sidekiq_async_http: {
+          callback_args: {mode: "inline", uuid: SecureRandom.uuid}
+        }
       }
     end
   end

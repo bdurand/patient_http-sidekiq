@@ -46,20 +46,21 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
 
       # Execute request
       request.execute(
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-123", "args" => ["arg1", "arg2"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-123", "args" => []},
         completion_worker: TestWorkers::CompletionWorker,
-        error_worker: TestWorkers::ErrorWorker
+        error_worker: TestWorkers::ErrorWorker,
+        callback_args: {arg1: "arg1", arg2: "arg2"}
       )
 
       # Verify completion worker was called inline (not enqueued)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
 
-      response, arg1, arg2 = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
       expect(response.status).to eq(200)
       expect(response.body).to eq('{"users": []}')
-      expect(arg1).to eq("arg1")
-      expect(arg2).to eq("arg2")
+      expect(response.callback_args[:arg1]).to eq("arg1")
+      expect(response.callback_args[:arg2]).to eq("arg2")
 
       # Verify no jobs were enqueued
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(0)
@@ -74,16 +75,17 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       request = client.async_post("/users", json: {name: "John"})
 
       request.execute(
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-456", "args" => ["create"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-456", "args" => []},
         completion_worker: TestWorkers::CompletionWorker,
-        error_worker: TestWorkers::ErrorWorker
+        error_worker: TestWorkers::ErrorWorker,
+        callback_args: {action: "create"}
       )
 
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      response, arg = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(201)
       expect(response.body).to eq('{"id": 123}')
-      expect(arg).to eq("create")
+      expect(response.callback_args[:action]).to eq("create")
     end
 
     it "handles 4xx and 5xx responses as successful (they are valid HTTP responses)" do
@@ -102,7 +104,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
       expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
 
-      response, = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(404)
       expect(response.client_error?).to be true
     end
@@ -117,19 +119,20 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       request = client.async_get("/users")
 
       request.execute(
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-error", "args" => ["arg1"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-error", "args" => []},
         completion_worker: TestWorkers::CompletionWorker,
-        error_worker: TestWorkers::ErrorWorker
+        error_worker: TestWorkers::ErrorWorker,
+        callback_args: {arg1: "arg1"}
       )
 
       # Verify error worker was called inline
       expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
 
-      error, arg1 = TestWorkers::ErrorWorker.calls.first
+      error = TestWorkers::ErrorWorker.calls.first.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_class).to eq(Errno::ECONNREFUSED)
-      expect(arg1).to eq("arg1")
+      expect(error.callback_args[:arg1]).to eq("arg1")
 
       # Verify no jobs were enqueued
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(0)
@@ -144,17 +147,18 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       request = client.async_get("/slow")
 
       request.execute(
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-timeout", "args" => ["slow"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "test-timeout", "args" => []},
         completion_worker: TestWorkers::CompletionWorker,
-        error_worker: TestWorkers::ErrorWorker
+        error_worker: TestWorkers::ErrorWorker,
+        callback_args: {action: "slow"}
       )
 
       expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
 
-      error, arg = TestWorkers::ErrorWorker.calls.first
+      error = TestWorkers::ErrorWorker.calls.first.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
-      expect(arg).to eq("slow")
+      expect(error.callback_args[:action]).to eq("slow")
     end
   end
   describe "with custom headers" do

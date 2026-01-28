@@ -54,14 +54,15 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       sidekiq_job = {
         "class" => "TestWorkers::Worker",
         "jid" => "test-jid-clean",
-        "args" => ["arg1", "arg2"]
+        "args" => []
       }
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {arg1: "arg1", arg2: "arg2"}
       )
 
       # Enqueue request
@@ -78,14 +79,14 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       # Verify success worker was called (request completed)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      response, arg1, arg2 = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
       expect(response.status).to eq(200)
       # Verify response contains request info
       response_data = JSON.parse(response.body)
       expect(response_data["status"]).to eq(200)
-      expect(arg1).to eq("arg1")
-      expect(arg2).to eq("arg2")
+      expect(response.callback_args[:arg1]).to eq("arg1")
+      expect(response.callback_args[:arg2]).to eq("arg2")
 
       # Verify original worker was NOT re-enqueued
       expect(TestWorkers::Worker.calls).to be_empty
@@ -105,7 +106,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       sidekiq_job = {
         "class" => "TestWorkers::Worker",
         "jid" => "test-jid-forced",
-        "args" => ["original_arg1", "original_arg2"]
+        "args" => %w[original_arg1 original_arg2]
       }
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
@@ -165,7 +166,8 @@ RSpec.describe "Processor Shutdown Integration", :integration do
           request: request,
           sidekiq_job: sidekiq_job,
           completion_worker: "TestWorkers::CompletionWorker",
-          error_worker: "TestWorkers::ErrorWorker"
+          error_worker: "TestWorkers::ErrorWorker",
+          callback_args: {request_name: "request_#{i + 1}"}
         )
 
         processor.enqueue(request_task)
@@ -189,7 +191,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       # Verify success worker was called for fast requests (1, 3, 5)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
-      success_args = TestWorkers::CompletionWorker.calls.map { |call| call[1] }
+      success_args = TestWorkers::CompletionWorker.calls.map { |call| call.first.callback_args[:request_name] }
       expect(success_args).to contain_exactly("request_1", "request_3", "request_5")
 
       # Verify original worker was called for slow requests (2, 4)

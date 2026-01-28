@@ -30,6 +30,7 @@ module Sidekiq
 
       class << self
         # Reconstruct a Response from a hash
+        #
         # @param hash [Hash] hash representation
         # @return [Response] reconstructed response
         def load(hash)
@@ -40,18 +41,23 @@ module Sidekiq
             duration: hash["duration"],
             request_id: hash["request_id"],
             url: hash["url"],
-            http_method: hash["http_method"]&.to_sym
+            http_method: hash["http_method"]&.to_sym,
+            callback_args: hash["callback_args"]
           )
         end
       end
 
       # Initialize a Response from an Async::HTTP::Response
       #
+      # @param status [Integer] HTTP status code
+      # @param headers [Hash, HttpHeaders] response headers
+      # @param body [String, nil] response body
       # @param duration [Float] request duration in seconds
       # @param request_id [String] the request ID
       # @param url [String] the request URL
       # @param http_method [Symbol] the HTTP method
-      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:)
+      # @param callback_args [Hash, nil] callback arguments (string keys)
+      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:, callback_args: nil)
         @status = status
         @headers = HttpHeaders.new(headers)
 
@@ -63,43 +69,54 @@ module Sidekiq
         @request_id = request_id
         @url = url
         @http_method = http_method
+        @callback_args_data = callback_args || {}
+      end
+
+      # Returns the callback arguments as a CallbackArgs object.
+      #
+      # @return [CallbackArgs] the callback arguments
+      def callback_args
+        @callback_args ||= CallbackArgs.load(@callback_args_data)
       end
 
       # Returns the response body, decoding it from the payload if necessary.
       #
       # @return [String, nil] The decoded response body or nil if there was no body.
       def body
-        if @body.equal?(UNDEFINED)
-          @body = @payload&.value
-        end
+        @body = @payload&.value if @body.equal?(UNDEFINED)
         @body
       end
 
       # Check if response is successful (2xx status)
+      #
       # @return [Boolean]
       def success?
         status >= 200 && status < 300
       end
 
       # Check if response is a redirect (3xx status)
+      #
       # @return [Boolean]
       def redirect?
         status >= 300 && status < 400
       end
 
       # Check if response is a client error (4xx status)
+      #
       # @return [Boolean]
       def client_error?
         status >= 400 && status < 500
       end
 
       # Check if response is a server error (5xx status)
+      #
       # @return [Boolean]
       def server_error?
         status >= 500 && status < 600
       end
 
       # Check if response is any error (4xx or 5xx status)
+      #
       # @return [Boolean]
       def error?
         status >= 400 && status < 600
@@ -113,12 +130,13 @@ module Sidekiq
       end
 
       # Parse response body as JSON
+      #
       # @return [Hash, Array] parsed JSON
       # @raise [RuntimeError] if Content-Type is not application/json
       # @raise [JSON::ParserError] if body is not valid JSON
       def json
         type = content_type.to_s.downcase
-        unless type.match?(/\Aapplication\/[^ ]*json\b/) || type == "text/json"
+        unless type.match?(%r{\Aapplication/[^ ]*json\b}) || type == "text/json"
           raise "Response Content-Type is not application/json (got: #{content_type.inspect})"
         end
 
@@ -126,6 +144,7 @@ module Sidekiq
       end
 
       # Convert to hash with string keys for serialization
+      #
       # @return [Hash] hash representation
       def as_json
         {
@@ -135,7 +154,8 @@ module Sidekiq
           "duration" => duration,
           "request_id" => request_id,
           "url" => url,
-          "http_method" => http_method.to_s
+          "http_method" => http_method.to_s,
+          "callback_args" => @callback_args_data
         }
       end
 

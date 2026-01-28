@@ -11,10 +11,12 @@ class ExampleWorker
 
     sidekiq_options encrypted_args: :response
 
-    def perform(response, method, url)
+    def perform(response)
       response = Sidekiq::AsyncHttp::Response.load(response)
+      method = response.callback_args[:method]
+      url = response.callback_args[:url]
       path = write_response(response)
-      Sidekiq.logger.info("ExampleWorker: Response written to #{path}")
+      Sidekiq.logger.info("ExampleWorker: Response written to #{path} for #{method.upcase} #{url}")
     end
 
     private
@@ -65,9 +67,11 @@ class ExampleWorker
 
     sidekiq_options encrypted_args: :error_hash
 
-    def perform(error_hash, method, url)
+    def perform(error_hash)
       error = Sidekiq::AsyncHttp::Error.load(error_hash)
-      Sidekiq.logger.error("ExampleWorker: Request to #{url} failed with error: #{error.error_class.name} #{error.message}")
+      method = error.callback_args[:method]
+      url = error.callback_args[:url]
+      Sidekiq.logger.error("ExampleWorker: Request #{method.upcase} #{url} failed with error: #{error.error_class.name} #{error.message}")
     end
   end
 
@@ -75,6 +79,6 @@ class ExampleWorker
   self.error_callback_worker = ErrorWorker
 
   def perform(method, url)
-    async_request(method, url)
+    async_request(method, url, callback_args: {method: method, url: url})
   end
 end

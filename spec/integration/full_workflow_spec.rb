@@ -34,7 +34,7 @@ RSpec.describe "Full Workflow Integration", :integration do
   end
 
   describe "successful POST request workflow" do
-    it "makes async POST request and calls success worker with response and original args" do
+    it "makes async POST request and calls success worker with response containing callback_args" do
       # Build request
       client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
       request = client.async_post(
@@ -50,14 +50,15 @@ RSpec.describe "Full Workflow Integration", :integration do
       sidekiq_job = {
         "class" => "TestWorkers::Worker",
         "jid" => "test-jid-123",
-        "args" => ["webhook_id", 1]
+        "args" => []
       }
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {webhook_id: "webhook_id", index: 1}
       )
 
       # Enqueue request
@@ -73,7 +74,7 @@ RSpec.describe "Full Workflow Integration", :integration do
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
 
       # Verify response details
-      response, *original_args = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
 
       # Verify response hash contains correct status, body
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
@@ -88,8 +89,9 @@ RSpec.describe "Full Workflow Integration", :integration do
       expect(response.headers["content-type"]).to eq("application/json")
       expect(response.success?).to be true
 
-      # Verify original_args passed through correctly
-      expect(original_args).to eq(["webhook_id", 1])
+      # Verify callback_args passed through correctly
+      expect(response.callback_args[:webhook_id]).to eq("webhook_id")
+      expect(response.callback_args[:index]).to eq(1)
 
       # Verify no error worker was called
       expect(TestWorkers::ErrorWorker.calls).to be_empty
@@ -109,14 +111,15 @@ RSpec.describe "Full Workflow Integration", :integration do
       sidekiq_job = {
         "class" => "TestWorkers::Worker",
         "jid" => "test-jid-456",
-        "args" => ["user", 123, "fetch"]
+        "args" => []
       }
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {resource: "user", id: 123, action: "fetch"}
       )
 
       # Enqueue and wait
@@ -129,14 +132,16 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Verify success worker called
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
 
-      response, *args = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(200)
 
       # Verify response contains request info
       response_data = JSON.parse(response.body)
       expect(response_data["status"]).to eq(200)
       expect(response_data["headers"]["authorization"]).to eq("Bearer token123")
-      expect(args).to eq(["user", 123, "fetch"])
+      expect(response.callback_args[:resource]).to eq("user")
+      expect(response.callback_args[:id]).to eq(123)
+      expect(response.callback_args[:action]).to eq("fetch")
     end
   end
 

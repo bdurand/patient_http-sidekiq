@@ -31,6 +31,34 @@ Tracks all in-flight HTTP requests for monitoring, crash recovery, and graceful 
 ### Metrics
 Collects runtime statistics about request throughput, latency, errors, and processor state.
 
+## Callback Pattern
+
+When HTTP requests complete, the processor enqueues callback workers to handle the response or error. Callbacks receive a single argument containing all the context they need:
+
+- **Success callbacks** receive a `Response` object with status, headers, body, and optional callback arguments
+- **Error callbacks** receive an `Error` object with error details and optional callback arguments
+- **Callback arguments** must be explicitly provided via the `callback_args:` option as a hash
+- Callback workers access these arguments via `response.callback_args[:key]` or `error.callback_args[:key]`
+
+Example:
+```ruby
+class MyWorker
+  include Sidekiq::AsyncHttp::Job
+
+  on_completion do |response|
+    user_id = response.callback_args[:user_id]
+    User.find(user_id).update!(data: response.json)
+  end
+
+  def perform(user_id, endpoint)
+    async_get(
+      "https://api.example.com/#{endpoint}",
+      callback_args: {user_id: user_id}
+    )
+  end
+end
+```
+
 ## Request Lifecycle
 
 ```mermaid
@@ -115,7 +143,7 @@ erDiagram
     JOB-MIXIN {
         class completion_worker
         class error_worker
-        array callback_args
+        hash callback_args
     }
 
     INFLIGHT-REGISTRY {

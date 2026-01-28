@@ -54,22 +54,31 @@ The simplest way to use this gem is to include `Sidekiq::AsyncHttp::Job` in your
 class FetchDataWorker
   include Sidekiq::AsyncHttp::Job
 
-  # Define callback for completed responses. Note that this will be called
-  # for all HTTP responses, including 4xx and 5xx status codes.
-  on_completion do |response, user_id, endpoint|
+  # Define callback for completed responses. The callback receives a Response object.
+  # Note that this will be called for all HTTP responses, including 4xx and 5xx status codes.
+  on_completion do |response|
+    user_id = response.callback_args[:user_id]
+    endpoint = response.callback_args[:endpoint]
     data = response.json
     User.find(user_id).update!(external_data: data)
   end
 
-  # Define callback for errors (optional). This is only called if an
-  # error was raised during the HTTP request (timeout, connection failure, etc).
-  on_error do |error, user_id, endpoint|
-    Rails.logger.error("Failed to fetch data for user #{user_id}: #{error.message}")
+  # Define callback for errors (optional). The callback receives an Error object.
+  # This is only called if an error was raised during the HTTP request
+  # (timeout, connection failure, etc).
+  on_error do |error|
+    user_id = error.callback_args[:user_id]
+    endpoint = error.callback_args[:endpoint]
+    Rails.logger.error("Failed to fetch #{endpoint} for user #{user_id}: #{error.message}")
   end
 
   def perform(user_id, endpoint)
-    # This returns immediately after enqueueing the HTTP request
-    async_get("https://api.example.com/#{endpoint}")
+    # This returns immediately after enqueueing the HTTP request. The callback args
+    # will be available in the callbacks.
+    async_get(
+      "https://api.example.com/#{endpoint}",
+      callback_args: {user_id: user_id, endpoint: endpoint}
+    )
   end
 end
 ```
@@ -79,9 +88,16 @@ end
 
 ### 2. That's It!
 
-The processor starts automatically with Sidekiq. When the HTTP request completes, your `on_completion` will be executed as a new Sidekiq job with the [response](Sidekiq::AsyncHttp::Response) and the original job arguments.
+The processor starts automatically with Sidekiq. When the HTTP request completes, your `on_completion` will be executed as a new Sidekiq job with the [response](Sidekiq::AsyncHttp::Response) object.
 
-If an error is raised during the request, the `on_error` callback will be executed instead with the [error](Sidekiq::AsyncHttp::Error) information and the original job arguments.
+If an error is raised during the request, the `on_error` callback will be executed instead with the [error](Sidekiq::AsyncHttp::Error) information.
+
+The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args:` option. You can access them using symbol or string keys:
+
+```ruby
+response.callback_args[:user_id]    # Symbol access
+response.callback_args["user_id"]   # String access
+```
 
 > [!IMPORTANT]
 > Do not re-raise the error as a mechanism in the error callback as a means to retry the job. That will just result in the error callback job being retried instead. If you want to retry the original job from an `on_error` callback, you can call `perform_in` or `perform_async` from within the `on_error` callback. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
@@ -103,8 +119,11 @@ class ApiWorker
                     headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
                     timeout: 60
 
-  # Callbacks receive the response/error plus original job arguments
-  on_completion do |response, resource_type, resource_id|
+  # Callbacks receive the response/error object with callback_args
+  on_completion do |response|
+    resource_type = response.callback_args[:resource_type]
+    resource_id = response.callback_args[:resource_id]
+
     if response.success?
       process_data(response.json, resource_type, resource_id)
     else
@@ -112,7 +131,10 @@ class ApiWorker
     end
   end
 
-  on_error do |error, resource_type, resource_id|
+  on_error do |error|
+    resource_type = error.callback_args[:resource_type]
+    resource_id = error.callback_args[:resource_id]
+
     case error.error_type
     when :timeout
       # Re-enqueue with exponential backoff
@@ -123,8 +145,11 @@ class ApiWorker
   end
 
   def perform(resource_type, resource_id)
-    # Uses the configured client
-    async_get("/#{resource_type}/#{resource_id}")
+    # Uses the configured client and passes callback arguments
+    async_get(
+      "/#{resource_type}/#{resource_id}",
+      callback_args: {resource_type: resource_type, resource_id: resource_id}
+    )
   end
 end
 ```
@@ -135,16 +160,21 @@ The job mixin can also be used with ActiveJob if the queue adapter is set to Sid
 class ActiveJobExample < ApplicationJob
   include Sidekiq::AsyncHttp::Job
 
-  on_completion do |response, record_id|
+  on_completion do |response|
+    record_id = response.callback_args[:record_id]
     Record.find(record_id).update!(data: response.json)
   end
 
-  on_error do |error, record_id|
+  on_error do |error|
+    record_id = error.callback_args[:record_id]
     Rails.logger.error("Failed to fetch record #{record_id}: #{error.message}")
   end
 
   def perform(record_id)
-    async_get("https://api.example.com/records/#{record_id}")
+    async_get(
+      "https://api.example.com/records/#{record_id}",
+      callback_args: {record_id: record_id}
+    )
   end
 end
 ```
@@ -153,7 +183,7 @@ end
 
 For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling.
 
-The `perform` methods of these workers will receive the response or error object as the first argument, followed by the original job arguments. You can call `Sidekiq::AsyncHttp::Response.load` or `Sidekiq::AsyncHttp::Error.load` to deserialize them back into objects.
+The `perform` methods of these workers will receive the response or error object as a single argument. You can access callback arguments via `response.callback_args` or `error.callback_args`:
 
 ```ruby
 # Define dedicated callback workers
@@ -161,7 +191,8 @@ class FetchCompletionWorker
   include Sidekiq::Job
   sidekiq_options queue: "critical", retry: 10
 
-  def perform(response, user_id)
+  def perform(response)
+    user_id = response.callback_args[:user_id]
     User.find(user_id).update!(data: response.json)
   end
 end
@@ -170,7 +201,8 @@ class FetchErrorWorker
   include Sidekiq::Job
   sidekiq_options queue: "low"
 
-  def perform(error, user_id)
+  def perform(error)
+    user_id = error.callback_args[:user_id]
     ErrorTracker.record(error, user_id: user_id)
   end
 end
@@ -184,7 +216,10 @@ class FetchUserDataWorker
   self.error_callback_worker = FetchErrorWorker
 
   def perform(user_id)
-    async_get("https://api.example.com/users/#{user_id}")
+    async_get(
+      "https://api.example.com/users/#{user_id}",
+      callback_args: {user_id: user_id}
+    )
   end
 end
 ```
@@ -215,48 +250,66 @@ end
 
 ### Callback Arguments
 
-By default, callback workers receive the original Sidekiq job arguments along with the response or error. If you need to pass different arguments to your callbacks, you can use the `callback_args` option:
+Callback workers receive a single Response or Error object as an argument. You can pass custom data to your callbacks using the `callback_args` option. This data will be accessible via `response.callback_args` or `error.callback_args`:
 
 ```ruby
 class FetchUserDataWorker
   include Sidekiq::AsyncHttp::Job
 
-  on_completion do |response, user_id, request_timestamp|
-    # Receives custom callback_args instead of original job args
+  on_completion do |response|
+    # Access callback_args using symbol or string keys
+    user_id = response.callback_args[:user_id]
+    request_timestamp = response.callback_args[:request_timestamp]
+
     User.find(user_id).update!(
       external_data: response.json,
       fetched_at: request_timestamp
     )
   end
 
-  on_error do |error, user_id, request_timestamp|
-    Rails.logger.error("Failed to fetch data for user #{user_id} at #{request_timestamp}: #{error.message}")
+  on_error do |error|
+    user_id = error.callback_args[:user_id]
+    request_timestamp = error.callback_args[:request_timestamp]
+
+    Rails.logger.error(
+      "Failed to fetch data for user #{user_id} at #{request_timestamp}: #{error.message}"
+    )
   end
 
   def perform(user_id, options = {})
-    # Original job has complex options hash, but callback only needs specific data
+    # Pass data via callback_args option
     timestamp = Time.now.iso8601
 
     async_get(
       "https://api.example.com/users/#{user_id}",
-      callback_args: [user_id, timestamp]
+      callback_args: {
+        user_id: user_id,
+        request_timestamp: timestamp
+      }
     )
   end
 end
 ```
 
+**Important details about callback_args:**
+
+- Must be a Hash (or respond to `to_h`) containing only JSON-native types: `nil`, `true`, `false`, `String`, `Integer`, `Float`, `Array`, or `Hash`
+- Hash keys will be converted to strings for serialization
+- Nested hashes and hashes in arrays also have their keys converted to strings
+- You can access callback_args using either symbol or string keys: `callback_args[:user_id]` or `callback_args["user_id"]`
+
 This is useful when:
 - Your original job arguments contain data not needed by the callback
 - You want to pass computed values from the original job to the callback
-- You need to simplify the callback signature
+- You need to pass additional context about when/why the request was made
 
-The `callback_args` option accepts any value and wraps it in an array using `Array()`. You can also use it when calling `Request#execute` directly:
+You can also use it when calling `Request#execute` directly:
 
 ```ruby
 request.execute(
   completion_worker: MyCompletionWorker,
   error_worker: MyErrorWorker,
-  callback_args: ["custom", "args"]
+  callback_args: {user_id: 123, action: "fetch"}
 )
 ```
 

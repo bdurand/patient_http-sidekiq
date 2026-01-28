@@ -42,7 +42,9 @@ class FaradayRequestWorker
     # @return [Faraday::Connection] The configured Faraday connection.
     def build_connection(base_url)
       Faraday.new(url: base_url) do |f|
-        f.adapter :sidekiq_async_http
+        f.adapter :sidekiq_async_http,
+          completion_worker: CompletionCallback,
+          error_worker: ErrorCallback
       end
     end
   end
@@ -64,10 +66,9 @@ class FaradayRequestWorker
     connection.run_request(method.downcase.to_sym, path, nil, nil) do |req|
       req.options.timeout = timeout if timeout
       req.options.context = {
-        sidekiq_async_http: Faraday::SidekiqAsyncHttp::Adapter.async_options(
-          completion_worker: CompletionCallback,
-          error_worker: ErrorCallback
-        )
+        sidekiq_async_http: {
+          callback_args: {mode: "async", uuid: SecureRandom.uuid}
+        }
       }
     end
   end
@@ -76,8 +77,9 @@ class FaradayRequestWorker
   class CompletionCallback
     include Sidekiq::Job
 
-    def perform(response, *args)
-      FaradayRequestWorker.set_response(response: response.as_json, args: args)
+    def perform(response_hash)
+      response = Sidekiq::AsyncHttp::Response.load(response_hash)
+      FaradayRequestWorker.set_response(response: response.as_json)
     end
   end
 
@@ -85,8 +87,9 @@ class FaradayRequestWorker
   class ErrorCallback
     include Sidekiq::Job
 
-    def perform(error, *args)
-      FaradayRequestWorker.set_response(error: error.as_json, args: args)
+    def perform(error_hash)
+      error = Sidekiq::AsyncHttp::Error.load(error_hash)
+      FaradayRequestWorker.set_response(error: error.as_json)
     end
   end
 end

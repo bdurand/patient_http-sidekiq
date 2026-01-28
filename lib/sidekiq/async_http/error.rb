@@ -28,6 +28,7 @@ module Sidekiq
 
       class << self
         # Reconstruct an Error from a hash
+        #
         # @param hash [Hash] hash representation
         # @return [Error] reconstructed error
         def load(hash)
@@ -39,7 +40,8 @@ module Sidekiq
             error_type: hash["error_type"]&.to_sym,
             duration: hash["duration"],
             url: hash["url"],
-            http_method: hash["http_method"]
+            http_method: hash["http_method"],
+            callback_args: hash["callback_args"]
           )
         end
 
@@ -50,8 +52,9 @@ module Sidekiq
         # @param request_id [String] the request ID
         # @param url [String] the request URL
         # @param http_method [Symbol, String] the HTTP method
+        # @param callback_args [Hash, nil] callback arguments (string keys)
         # @return [Error] the error object
-        def from_exception(exception, duration:, request_id:, url:, http_method:)
+        def from_exception(exception, duration:, request_id:, url:, http_method:, callback_args: nil)
           type = error_type(exception)
 
           new(
@@ -62,7 +65,8 @@ module Sidekiq
             error_type: type,
             duration: duration,
             url: url,
-            http_method: http_method
+            http_method: http_method,
+            callback_args: callback_args
           )
         end
 
@@ -99,7 +103,9 @@ module Sidekiq
       # @param request_id [String] Unique request identifier
       # @param url [String] Request URL
       # @param http_method [Symbol, String] HTTP method
-      def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, http_method:)
+      # @param callback_args [Hash, nil] callback arguments (string keys)
+      def initialize(class_name:, message:, backtrace:, error_type:, duration:, request_id:, url:, http_method:,
+        callback_args: nil)
         super(message)
         set_backtrace(backtrace)
         @class_name = class_name
@@ -108,9 +114,18 @@ module Sidekiq
         @request_id = request_id
         @url = url
         @http_method = http_method&.to_sym
+        @callback_args_data = callback_args || {}
+      end
+
+      # Returns the callback arguments as a CallbackArgs object.
+      #
+      # @return [CallbackArgs] the callback arguments
+      def callback_args
+        @callback_args ||= CallbackArgs.load(@callback_args_data)
       end
 
       # Convert to hash with string keys for serialization
+      #
       # @return [Hash] hash representation
       def as_json
         {
@@ -121,13 +136,15 @@ module Sidekiq
           "error_type" => error_type.to_s,
           "duration" => duration,
           "url" => url,
-          "http_method" => http_method.to_s
+          "http_method" => http_method.to_s,
+          "callback_args" => @callback_args_data
         }
       end
 
       alias_method :dump, :as_json
 
       # Get the actual Exception class constant from the class_name
+      #
       # @return [Class, nil] the exception class or nil if not found
       def error_class
         ClassHelper.resolve_class_name(@class_name)

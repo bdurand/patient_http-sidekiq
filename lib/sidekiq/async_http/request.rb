@@ -63,9 +63,11 @@ module Sidekiq::AsyncHttp
     # @param completion_worker [Class] Worker class (must include Sidekiq::Job) to call on successful response
     # @param error_worker [Class] Worker class (must include Sidekiq::Job) to call on error.
     # @param synchronous [Boolean] If true, runs the request inline (for testing).
-    # @param callback_args [Array, Object, nil] Custom arguments to pass to callback workers
-    #   instead of the original Sidekiq job args. If provided, will be wrapped in an array
-    #   using Array(). If nil, the original job args are used.
+    # @param callback_args [#to_h, nil] Arguments to pass to callback workers via the
+    #   Response/Error object. Must respond to to_h and contain only JSON-native types
+    #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys (including
+    #   nested hashes and hashes in arrays) will be deeply converted to strings for serialization.
+    #   Access via response.callback_args or error.callback_args using symbol or string keys.
     #
     # @return [String] the request ID
     def execute(completion_worker:, error_worker:, sidekiq_job: nil, synchronous: false, callback_args: nil)
@@ -77,17 +79,11 @@ module Sidekiq::AsyncHttp
         raise ArgumentError.new("sidekiq_job is required (provide hash or ensure Sidekiq::AsyncHttp::Context.current_job is set)")
       end
 
-      unless sidekiq_job.is_a?(Hash)
-        raise ArgumentError.new("sidekiq_job must be a Hash, got: #{sidekiq_job.class}")
-      end
+      raise ArgumentError.new("sidekiq_job must be a Hash, got: #{sidekiq_job.class}") unless sidekiq_job.is_a?(Hash)
 
-      unless sidekiq_job.key?("class")
-        raise ArgumentError.new("sidekiq_job must have 'class' key")
-      end
+      raise ArgumentError.new("sidekiq_job must have 'class' key") unless sidekiq_job.key?("class")
 
-      unless sidekiq_job["args"].is_a?(Array)
-        raise ArgumentError.new("sidekiq_job must have 'args' array")
-      end
+      raise ArgumentError.new("sidekiq_job must have 'args' array") unless sidekiq_job["args"].is_a?(Array)
 
       unless completion_worker.is_a?(Class) && completion_worker.include?(Sidekiq::Job)
         raise ArgumentError.new("completion_worker must be a class that includes Sidekiq::Job")
@@ -97,12 +93,15 @@ module Sidekiq::AsyncHttp
         raise ArgumentError.new("error_worker must be a class that includes Sidekiq::Job")
       end
 
+      # Validate and convert callback_args to a hash with string keys
+      validated_callback_args = validate_callback_args(callback_args)
+
       task = RequestTask.new(
         request: self,
         sidekiq_job: sidekiq_job,
         completion_worker: completion_worker,
         error_worker: error_worker,
-        callback_args: callback_args
+        callback_args: validated_callback_args
       )
 
       # Run the request inline if Sidekiq::Testing.inline! is enabled
@@ -124,6 +123,25 @@ module Sidekiq::AsyncHttp
 
     private
 
+    # Validate callback_args and convert to a hash with string keys.
+    #
+    # @param callback_args [#to_h, nil] the callback arguments
+    # @return [Hash, nil] validated hash with string keys, or nil
+    # @raise [ArgumentError] if callback_args is invalid
+    def validate_callback_args(callback_args)
+      return nil if callback_args.nil?
+
+      unless callback_args.respond_to?(:to_h)
+        raise ArgumentError.new("callback_args must respond to to_h, got #{callback_args.class.name}")
+      end
+
+      hash = callback_args.to_h
+      hash.each do |key, value|
+        CallbackArgs.validate_value!(value, key.to_s)
+      end
+      hash.transform_keys(&:to_s)
+    end
+
     # Validate the request has required HTTP parameters.
     # @raise [ArgumentError] if method or url is invalid
     # @return [self] for chaining
@@ -132,15 +150,13 @@ module Sidekiq::AsyncHttp
         raise ArgumentError.new("method must be one of #{VALID_METHODS.inspect}, got: #{@http_method.inspect}")
       end
 
-      if @url.nil? || (@url.is_a?(String) && @url.empty?)
-        raise ArgumentError.new("url is required")
-      end
+      raise ArgumentError.new("url is required") if @url.nil? || (@url.is_a?(String) && @url.empty?)
 
       unless @url.is_a?(String) || @url.is_a?(URI::Generic)
         raise ArgumentError.new("url must be a String or URI, got: #{@url.class}")
       end
 
-      if [:get, :delete].include?(@http_method) && !@body.nil?
+      if %i[get delete].include?(@http_method) && !@body.nil?
         raise ArgumentError.new("body is not allowed for #{@http_method.upcase} requests")
       end
 

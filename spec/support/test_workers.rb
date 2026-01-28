@@ -63,15 +63,15 @@ module TestWorkers
         @mutex.synchronize { @calls = [] }
       end
 
-      def record_call(response, *args)
-        @mutex.synchronize { @calls << [response, *args] }
+      def record_call(response)
+        @mutex.synchronize { @calls << [response] }
       end
     end
 
-    def perform(response, *args)
+    def perform(response)
       # Handle case in tests where the Sidekiq middleware is not used.
       response = Sidekiq::AsyncHttp::Response.load(response) if response.is_a?(Hash)
-      self.class.record_call(response, *args)
+      self.class.record_call(response)
     end
   end
 
@@ -88,15 +88,15 @@ module TestWorkers
         @mutex.synchronize { @calls = [] }
       end
 
-      def record_call(error, *args)
-        @mutex.synchronize { @calls << [error, *args] }
+      def record_call(error)
+        @mutex.synchronize { @calls << [error] }
       end
     end
 
-    def perform(error, *args)
+    def perform(error)
       # Handle case in tests where the Sidekiq middleware is not used.
       error = Sidekiq::AsyncHttp::Error.load(error) if error.is_a?(Hash)
-      self.class.record_call(error, *args)
+      self.class.record_call(error)
     end
   end
 end
