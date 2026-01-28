@@ -19,3 +19,8 @@ hi:
   async_http.no_active_processes: "कोई सक्रिय प्रक्रिया नहीं"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP स्थिति कोड"
+  async_http.status_code: "स्थिति कोड"
+  async_http.count: "गणना"
+  async_http.error_types: "त्रुटि प्रकार"
+  async_http.error_type: "त्रुटि प्रकार"

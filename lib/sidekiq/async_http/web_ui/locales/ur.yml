@@ -19,3 +19,8 @@ ur:
   async_http.no_active_processes: "کوئی فعال عمل نہیں"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP اسٹیٹس کوڈز"
+  async_http.status_code: "اسٹیٹس کوڈ"
+  async_http.count: "تعداد"
+  async_http.error_types: "غلطی کی اقسام"
+  async_http.error_type: "غلطی کی قسم"

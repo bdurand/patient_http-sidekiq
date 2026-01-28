@@ -19,3 +19,8 @@ vi:
   async_http.no_active_processes: "Không có tiến trình hoạt động"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "Mã trạng thái HTTP"
+  async_http.status_code: "Mã trạng thái"
+  async_http.count: "Số lượng"
+  async_http.error_types: "Loại lỗi"
+  async_http.error_type: "Loại lỗi"

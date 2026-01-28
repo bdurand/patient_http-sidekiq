@@ -102,12 +102,16 @@ module Sidekiq
         Sidekiq.redis do |redis|
           stats = redis.hgetall(TOTALS_KEY)
 
-          # Extract HTTP status counts
+          # Extract HTTP status counts and error type counts
           http_status_counts = {}
+          error_type_counts = {}
           stats.each do |key, value|
             if key.start_with?("http_status:")
               status = key.sub("http_status:", "").to_i
               http_status_counts[status] = value.to_i
+            elsif key.start_with?("errors:") && key != "errors"
+              error_type = key.sub("errors:", "")
+              error_type_counts[error_type] = value.to_i
             end
           end
 
@@ -116,7 +120,8 @@ module Sidekiq
             "duration" => (stats["duration"] || 0).to_f.round(6),
             "errors" => (stats["errors"] || 0).to_i,
             "refused" => (stats["refused"] || 0).to_i,
-            "http_status_counts" => http_status_counts
+            "http_status_counts" => http_status_counts,
+            "error_type_counts" => error_type_counts
           }
         end
       end

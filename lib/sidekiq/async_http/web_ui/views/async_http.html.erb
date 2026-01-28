@@ -86,6 +86,54 @@
           </table>
         </div>
       </div>
+
+      <!-- HTTP Status Codes Breakdown -->
+      <% http_status_counts = totals['http_status_counts'] || {} %>
+      <% unless http_status_counts.empty? %>
+        <div class="breakdown-section">
+          <h3><%= t('async_http.http_status_codes') %></h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th><%= t('async_http.status_code') %></th>
+                <th><%= t('async_http.count') %></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% http_status_counts.sort.each do |status, count| %>
+                <tr>
+                  <td><%= status %></td>
+                  <td><%= number_with_delimiter(count) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      <% end %>
+
+      <!-- Error Types Breakdown -->
+      <% error_type_counts = totals['error_type_counts'] || {} %>
+      <% unless error_type_counts.empty? %>
+        <div class="breakdown-section">
+          <h3><%= t('async_http.error_types') %></h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th><%= t('async_http.error_type') %></th>
+                <th><%= t('async_http.count') %></th>
+              </tr>
+            </thead>
+            <tbody>
+              <% error_type_counts.sort_by { |_, count| -count }.each do |error_type, count| %>
+                <tr>
+                  <td><%= h(error_type) %></td>
+                  <td><%= number_with_delimiter(count) %></td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      <% end %>
     </div>
   </div>
 </div>

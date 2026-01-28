@@ -19,3 +19,8 @@ it:
   async_http.no_active_processes: "Nessun processo attivo"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "Codici di stato HTTP"
+  async_http.status_code: "Codice di stato"
+  async_http.count: "Conteggio"
+  async_http.error_types: "Tipi di errori"
+  async_http.error_type: "Tipo di errore"

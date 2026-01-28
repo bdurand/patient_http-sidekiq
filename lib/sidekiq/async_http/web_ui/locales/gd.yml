@@ -19,3 +19,8 @@ gd:
   async_http.no_active_processes: "Chan eil pròiseasan gnìomhach ann"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "Còdan inbhe HTTP"
+  async_http.status_code: "Còd inbhe"
+  async_http.count: "Cunnt"
+  async_http.error_types: "Seòrsaichean mhearachdan"
+  async_http.error_type: "Seòrsa mearachd"

@@ -19,3 +19,8 @@ ar:
   async_http.no_active_processes: "لا توجد عمليات نشطة"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "رموز حالة HTTP"
+  async_http.status_code: "رمز الحالة"
+  async_http.count: "العدد"
+  async_http.error_types: "أنواع الأخطاء"
+  async_http.error_type: "نوع الخطأ"

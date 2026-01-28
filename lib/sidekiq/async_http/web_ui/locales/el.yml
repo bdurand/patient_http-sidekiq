@@ -19,3 +19,8 @@ el:
   async_http.no_active_processes: "Καμία ενεργή διεργασία"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "Κωδικοί κατάστασης HTTP"
+  async_http.status_code: "Κωδικός κατάστασης"
+  async_http.count: "Πλήθος"
+  async_http.error_types: "Τύποι σφαλμάτων"
+  async_http.error_type: "Τύπος σφάλματος"

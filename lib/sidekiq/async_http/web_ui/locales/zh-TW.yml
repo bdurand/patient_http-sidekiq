@@ -19,3 +19,8 @@ zh-TW:
   async_http.no_active_processes: "無活動處理程序"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP 狀態碼"
+  async_http.status_code: "狀態碼"
+  async_http.count: "數量"
+  async_http.error_types: "錯誤類型"
+  async_http.error_type: "錯誤類型"

@@ -19,3 +19,8 @@ tr:
   async_http.no_active_processes: "Etkin süreç yok"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP Durum Kodları"
+  async_http.status_code: "Durum Kodu"
+  async_http.count: "Sayı"
+  async_http.error_types: "Hata Türleri"
+  async_http.error_type: "Hata Türü"

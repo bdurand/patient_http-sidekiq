@@ -19,3 +19,8 @@ ta:
   async_http.no_active_processes: "செயலில் உள்ள செயல்முறைகள் இல்லை"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP நிலைக் குறியீடுகள்"
+  async_http.status_code: "நிலைக் குறியீடு"
+  async_http.count: "எண்ணிக்கை"
+  async_http.error_types: "பிழை வகைகள்"
+  async_http.error_type: "பிழை வகை"

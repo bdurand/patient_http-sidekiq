@@ -19,3 +19,8 @@ he:
   async_http.no_active_processes: "אין תהליכים פעילים"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "קודי סטטוס HTTP"
+  async_http.status_code: "קוד סטטוס"
+  async_http.count: "כמות"
+  async_http.error_types: "סוגי שגיאות"
+  async_http.error_type: "סוג שגיאה"

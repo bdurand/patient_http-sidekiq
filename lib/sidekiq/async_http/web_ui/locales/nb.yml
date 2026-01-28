@@ -19,3 +19,8 @@ nb:
   async_http.no_active_processes: "Ingen aktive prosesser"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP-statuskoder"
+  async_http.status_code: "Statuskode"
+  async_http.count: "Antall"
+  async_http.error_types: "Feiltyper"
+  async_http.error_type: "Feiltype"

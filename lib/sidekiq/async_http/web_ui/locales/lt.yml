@@ -19,3 +19,8 @@ lt:
   async_http.no_active_processes: "Nėra aktyvių procesų"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP būsenos kodai"
+  async_http.status_code: "Būsenos kodas"
+  async_http.count: "Skaičius"
+  async_http.error_types: "Klaidų tipai"
+  async_http.error_type: "Klaidos tipas"

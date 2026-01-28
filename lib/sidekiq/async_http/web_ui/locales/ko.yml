@@ -19,3 +19,8 @@ ko:
   async_http.no_active_processes: "활성 프로세스 없음"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP 상태 코드"
+  async_http.status_code: "상태 코드"
+  async_http.count: "개수"
+  async_http.error_types: "오류 유형"
+  async_http.error_type: "오류 유형"

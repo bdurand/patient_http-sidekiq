@@ -19,3 +19,8 @@ ja:
   async_http.no_active_processes: "アクティブなプロセスはありません"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTPステータスコード"
+  async_http.status_code: "ステータスコード"
+  async_http.count: "件数"
+  async_http.error_types: "エラー種別"
+  async_http.error_type: "エラー種別"

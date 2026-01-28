@@ -19,3 +19,8 @@ ru:
   async_http.no_active_processes: "Нет активных процессов"
   async_http.clear_stats: "Clear Statistics"
   async_http.clear_confirm: "Are you sure you want to clear all statistics? This cannot be undone."
+  async_http.http_status_codes: "HTTP коды состояния"
+  async_http.status_code: "Код состояния"
+  async_http.count: "Количество"
+  async_http.error_types: "Типы ошибок"
+  async_http.error_type: "Тип ошибки"
