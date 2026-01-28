@@ -12,7 +12,13 @@ Do not rewrite existing code just to satisfy style guidelines unless those are v
 
 Do not use suffixed conditionals with complex conditions with multiple logical operators. Use full `if`/`unless` blocks instead. Do not convert existing code to use suffixed conditionals if it is already using block conditionals.
 
-Prefer [:symbol_1, :symbol_2] array syntax over %i[] syntax for arrays of symbols.
+Use [:symbol_1, :symbol_2] syntax instead of %i[symbol_1 symbol_2] for arrays of symbols.
+
+Use ["string1", "string2"] syntax instead of %w[string1 string2] for single line arrays of strings.
+
+Use double quotes for strings instead of single quotes.
+
+Do not change existing code to break existing line length unless absolutely necessary. New code should adhere to a 100 character line length limit.
 
 Use `raise SomeError.new("message")` instead of `raise SomeError, "message"` for raising exceptions.
 

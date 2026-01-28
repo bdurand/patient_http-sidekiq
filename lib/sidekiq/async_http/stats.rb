@@ -31,11 +31,12 @@ module Sidekiq
       #
       # @param duration [Float] request duration in seconds
       # @return [void]
-      def record_request(duration)
+      def record_request(status, duration)
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
             transaction.hincrby(TOTALS_KEY, "requests", 1)
             transaction.hincrbyfloat(TOTALS_KEY, "duration", duration.to_f)
+            transaction.hincrby(TOTALS_KEY, "http_status:#{status}", 1) if status && status >= 100 && status < 600
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
@@ -51,6 +52,7 @@ module Sidekiq
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
             transaction.hincrby(TOTALS_KEY, "errors", 1)
+            transaction.hincrby(TOTALS_KEY, "errors:#{error_type}", 1)
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
@@ -95,15 +97,26 @@ module Sidekiq
 
       # Get running totals
       #
-      # @return [Hash] hash with requests, duration, errors, refused
+      # @return [Hash] hash with requests, duration, errors, refused, http_status_counts
       def get_totals
         Sidekiq.redis do |redis|
           stats = redis.hgetall(TOTALS_KEY)
+
+          # Extract HTTP status counts
+          http_status_counts = {}
+          stats.each do |key, value|
+            if key.start_with?("http_status:")
+              status = key.sub("http_status:", "").to_i
+              http_status_counts[status] = value.to_i
+            end
+          end
+
           {
             "requests" => (stats["requests"] || 0).to_i,
             "duration" => (stats["duration"] || 0).to_f.round(6),
             "errors" => (stats["errors"] || 0).to_i,
-            "refused" => (stats["refused"] || 0).to_i
+            "refused" => (stats["refused"] || 0).to_i,
+            "http_status_counts" => http_status_counts
           }
         end
       end

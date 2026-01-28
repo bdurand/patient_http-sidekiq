@@ -358,7 +358,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
       it "registers a callback block" do
         block_called = false
-        described_class.after_completion do |response|
+        described_class.after_completion do |_response|
           block_called = true
         end
 
@@ -389,7 +389,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
       it "registers a callback block" do
         block_called = false
-        described_class.after_error do |error|
+        described_class.after_error do |_error|
           block_called = true
         end
 
@@ -452,15 +452,15 @@ RSpec.describe Sidekiq::AsyncHttp do
       it "invokes callbacks in registration order" do
         call_order = []
 
-        described_class.after_completion do |response|
+        described_class.after_completion do |_response|
           call_order << :first
         end
 
-        described_class.after_completion do |response|
+        described_class.after_completion do |_response|
           call_order << :second
         end
 
-        described_class.after_completion do |response|
+        described_class.after_completion do |_response|
           call_order << :third
         end
 
@@ -492,10 +492,10 @@ RSpec.describe Sidekiq::AsyncHttp do
           errors << error
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::Error.load(error_data))
+        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
 
         expect(errors.size).to eq(2)
-        expect(errors.first).to be_a(Sidekiq::AsyncHttp::Error)
+        expect(errors.first).to be_a(Sidekiq::AsyncHttp::RequestError)
         expect(errors.first.error_class).to eq(Timeout::Error)
         expect(errors.first.message).to eq("Request timed out")
         expect(errors.first.error_type).to eq(:timeout)
@@ -509,9 +509,9 @@ RSpec.describe Sidekiq::AsyncHttp do
           error_received = error
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::Error.load(error_data))
+        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
 
-        expect(error_received).to be_a(Sidekiq::AsyncHttp::Error)
+        expect(error_received).to be_a(Sidekiq::AsyncHttp::RequestError)
         expect(error_received.error_class).to eq(Timeout::Error)
         expect(error_received.message).to eq("Request timed out")
         expect(error_received.backtrace).to eq(["line 1", "line 2", "line 3"])
@@ -522,26 +522,26 @@ RSpec.describe Sidekiq::AsyncHttp do
       it "invokes callbacks in registration order" do
         call_order = []
 
-        described_class.after_error do |error|
+        described_class.after_error do |_error|
           call_order << :first
         end
 
-        described_class.after_error do |error|
+        described_class.after_error do |_error|
           call_order << :second
         end
 
-        described_class.after_error do |error|
+        described_class.after_error do |_error|
           call_order << :third
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::Error.load(error_data))
+        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
 
         expect(call_order).to eq([:first, :second, :third])
       end
 
       it "does nothing when no callbacks are registered" do
         expect do
-          described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::Error.load(error_data))
+          described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
         end.not_to raise_error
       end
     end

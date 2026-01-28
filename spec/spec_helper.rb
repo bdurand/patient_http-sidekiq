@@ -38,6 +38,9 @@ Dir.glob(File.join(__dir__, "support", "**", "*.rb")).sort.each do |file|
   require file
 end
 
+# Set up Sidekiq middlewares for tests
+Sidekiq::AsyncHttp.append_middleware
+
 $test_web_server = nil # rubocop:disable Style/GlobalVars
 def test_web_server
   $test_web_server ||= TestWebServer.new # rubocop:disable Style/GlobalVars
@@ -51,9 +54,7 @@ RSpec.configure do |config|
   config.order = :random
   Kernel.srand config.seed
 
-  if config.files_to_run.length > 1
-    config.profile_examples = 5
-  end
+  config.profile_examples = 5 if config.files_to_run.length > 1
 
   if config.files_to_run.any? { |f| f.include?("/integration/") }
     config.before(:suite) do
@@ -72,17 +73,15 @@ RSpec.configure do |config|
       Sidekiq.redis(&:flushdb)
     rescue RedisClient::CannotConnectError
       retries -= 1
-      if retries > 0
-        sleep(0.5)
-        retry
-      else
-        raise
-      end
+      raise unless retries > 0
+
+      sleep(0.5)
+      retry
     end
   end
 
   # Flush Redis database after each test
-  config.before do |example|
+  config.before do |_example|
     Sidekiq.redis(&:flushdb)
     Sidekiq::Worker.clear_all
   end

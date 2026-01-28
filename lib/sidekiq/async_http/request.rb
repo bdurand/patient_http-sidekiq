@@ -68,9 +68,12 @@ module Sidekiq::AsyncHttp
     #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys (including
     #   nested hashes and hashes in arrays) will be deeply converted to strings for serialization.
     #   Access via response.callback_args or error.callback_args using symbol or string keys.
+    # @param raise_error_responses [Boolean] If true, raises an HttpError for non-2xx responses
+    #   and calls the error_worker instead of completion_worker. Defaults to false.
     #
     # @return [String] the request ID
-    def execute(completion_worker:, error_worker:, sidekiq_job: nil, synchronous: false, callback_args: nil)
+    def execute(completion_worker:, error_worker:, sidekiq_job: nil, synchronous: false, callback_args: nil,
+      raise_error_responses: false)
       # Get current job if not provided
       sidekiq_job ||= (defined?(Sidekiq::AsyncHttp::Context) ? Sidekiq::AsyncHttp::Context.current_job : nil)
 
@@ -101,7 +104,8 @@ module Sidekiq::AsyncHttp
         sidekiq_job: sidekiq_job,
         completion_worker: completion_worker,
         error_worker: error_worker,
-        callback_args: validated_callback_args
+        callback_args: validated_callback_args,
+        raise_error_responses: raise_error_responses
       )
 
       # Run the request inline if Sidekiq::Testing.inline! is enabled

@@ -102,7 +102,88 @@ response.callback_args["user_id"]   # String access
 > [!IMPORTANT]
 > Do not re-raise the error as a mechanism in the error callback as a means to retry the job. That will just result in the error callback job being retried instead. If you want to retry the original job from an `on_error` callback, you can call `perform_in` or `perform_async` from within the `on_error` callback. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
 >
-> Also note that the error callback is only called when an exception is raised during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback. Instead, they are treated as completed requests and passed to the `on_completion` callback.
+> Also note that the error callback is only called when an exception is raised during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback by default. Instead, they are treated as completed requests and passed to the `on_completion` callback. See the "Handling HTTP Error Responses" section below for how to treat HTTP errors as exceptions.
+
+### Handling HTTP Error Responses
+
+By default, HTTP error status codes (4xx, 5xx) are treated as successful responses and passed to the `on_completion` callback. You can check the status using `response.success?`, `response.client_error?`, or `response.server_error?`:
+
+```ruby
+class ApiWorker
+  include Sidekiq::AsyncHttp::Job
+
+  on_completion do |response|
+    if response.success?
+      process_data(response.json)
+    elsif response.client_error?
+      handle_client_error(response.status, response.body)
+    elsif response.server_error?
+      handle_server_error(response.status, response.body)
+    end
+  end
+
+  def perform(id)
+    async_get("https://api.example.com/data/#{id}")
+  end
+end
+```
+
+If you prefer to treat HTTP errors as exceptions, you can use the `raise_error_responses` option or the `!` method variants. When enabled, non-2xx responses will raise an `HttpError` and call the `on_error` callback instead:
+
+```ruby
+class ApiWorker
+  include Sidekiq::AsyncHttp::Job
+
+  on_completion do |response|
+    # Only called for 2xx responses
+    process_data(response.json)
+  end
+
+  on_error do |error|
+    # Called for exceptions AND HTTP errors when using raise_error_responses
+    if error.is_a?(Sidekiq::AsyncHttp::HttpError)
+      # Access the response via error.response
+      Rails.logger.error("HTTP #{error.status} from #{error.url}: #{error.response.body}")
+    else
+      # Regular request errors (timeout, connection, etc)
+      Rails.logger.error("Request failed: #{error.message}")
+    end
+  end
+
+  def perform(id)
+    # Option 1: Use the raise_error_responses option
+    async_get(
+      "https://api.example.com/data/#{id}",
+      raise_error_responses: true
+    )
+
+    # Option 2: Use the ! variant (shorthand for raise_error_responses: true)
+    async_get!("https://api.example.com/data/#{id}")
+  end
+end
+```
+
+The `HttpError` provides convenient access to the response:
+
+```ruby
+on_error do |error|
+  if error.is_a?(Sidekiq::AsyncHttp::HttpError)
+    puts error.status              # HTTP status code
+    puts error.url                 # Request URL
+    puts error.http_method         # HTTP method
+    puts error.response.body       # Response body
+    puts error.response.headers    # Response headers
+    puts error.response.json       # Parse JSON response (if applicable)
+  end
+end
+```
+
+All HTTP methods have `!` variants that automatically enable `raise_error_responses`:
+- `async_get!` - raises HttpError for non-2xx GET responses
+- `async_post!` - raises HttpError for non-2xx POST responses
+- `async_put!` - raises HttpError for non-2xx PUT responses
+- `async_patch!` - raises HttpError for non-2xx PATCH responses
+- `async_delete!` - raises HttpError for non-2xx DELETE responses
 
 ## Usage Patterns
 

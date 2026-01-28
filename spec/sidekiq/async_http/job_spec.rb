@@ -228,6 +228,32 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         task = request_tasks.first
         expect(task.callback_args).to eq({})
       end
+
+      it "uses global raise_error_responses config when not specified" do
+        original_config = Sidekiq::AsyncHttp.configuration.raise_error_responses
+        begin
+          Sidekiq::AsyncHttp.configuration.raise_error_responses = true
+          worker_instance.async_request(:get, "https://api.example.com/data")
+
+          task = request_tasks.first
+          expect(task.raise_error_responses).to eq(true)
+        ensure
+          Sidekiq::AsyncHttp.configuration.raise_error_responses = original_config
+        end
+      end
+
+      it "allows explicit raise_error_responses to override global config" do
+        original_config = Sidekiq::AsyncHttp.configuration.raise_error_responses
+        begin
+          Sidekiq::AsyncHttp.configuration.raise_error_responses = true
+          worker_instance.async_request(:get, "https://api.example.com/data", raise_error_responses: false)
+
+          task = request_tasks.first
+          expect(task.raise_error_responses).to eq(false)
+        ensure
+          Sidekiq::AsyncHttp.configuration.raise_error_responses = original_config
+        end
+      end
     end
 
     describe "#async_get" do

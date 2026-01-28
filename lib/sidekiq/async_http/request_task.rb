@@ -25,6 +25,9 @@ module Sidekiq::AsyncHttp
     # @return [Hash] Callback arguments to include in Response/Error objects (never nil, defaults to empty hash)
     attr_reader :callback_args
 
+    # @return [Boolean] Whether to raise HttpError for non-2xx responses
+    attr_reader :raise_error_responses
+
     # @return [Response, nil] The HTTP response, set on success
     attr_reader :response, :error
 
@@ -37,18 +40,26 @@ module Sidekiq::AsyncHttp
     # @param callback_args [Hash] Callback arguments (with string keys) to include
     #   in Response/Error objects. These will be accessible via response.callback_args
     #   or error.callback_args.
-    def initialize(request:, sidekiq_job:, completion_worker:, error_worker:, callback_args: {})
+    # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses.
+    def initialize(request:, sidekiq_job:, completion_worker:, error_worker:, callback_args: {},
+      raise_error_responses: false)
       @id = SecureRandom.uuid
       @request = request
       @sidekiq_job = sidekiq_job
       @completion_worker = completion_worker
       @error_worker = error_worker
       @callback_args = callback_args || {}
+      @raise_error_responses = raise_error_responses
       @enqueued_at = nil
       @started_at = nil
       @completed_at = nil
       @response = nil
       @error = nil
+
+      raise ArgumentError, "request is required" unless @request
+      raise ArgumentError, "sidekiq_job is required" unless @sidekiq_job
+      raise ArgumentError, "completion_worker is required" unless @completion_worker
+      raise ArgumentError, "error_worker is required" unless @error_worker
     end
 
     # Mark task as enqueued
@@ -127,6 +138,10 @@ module Sidekiq::AsyncHttp
     # Called with the HTTP response on a completed request. Note that
     # the response may represent an HTTP error (4xx or 5xx status).
     #
+    # If raise_error_responses is enabled and the response has a non-2xx status,
+    # this will create an HttpError and call the error_worker instead of the
+    # completion_worker.
+    #
     # @param response [Sidekiq::AsyncHttp::Response] the HTTP response
     # @return [void]
     def success!(response)
@@ -134,10 +149,17 @@ module Sidekiq::AsyncHttp
 
       @response = response
 
-      worker_class = ClassHelper.resolve_class_name(@completion_worker)
-      raise "Completion worker class not set" unless worker_class
+      # Check if we should raise an error for non-2xx responses
+      if @raise_error_responses && !response.success?
+        http_error = HttpError.new(response)
+        @error = http_error
 
-      worker_class.set(async_http_continuation: "completion").perform_async(response)
+        error_worker_class = ClassHelper.resolve_class_name(@error_worker)
+        error_worker_class.set(async_http_continuation: "error").perform_async(http_error)
+      else
+        completion_worker_class = ClassHelper.resolve_class_name(@completion_worker)
+        completion_worker_class.set(async_http_continuation: "completion").perform_async(response)
+      end
     end
 
     # Called with the HTTP error on a failed request.
@@ -149,16 +171,20 @@ module Sidekiq::AsyncHttp
 
       @error = exception
 
-      error = Error.from_exception(
-        exception,
-        request_id: @id,
-        duration: duration,
-        url: request.url,
-        http_method: request.http_method,
-        callback_args: @callback_args
-      )
+      wrapped_error = exception
+      unless wrapped_error.is_a?(Error)
+        wrapped_error = RequestError.from_exception(
+          exception,
+          request_id: @id,
+          duration: duration,
+          url: request.url,
+          http_method: request.http_method,
+          callback_args: @callback_args
+        )
+      end
+
       worker_class = ClassHelper.resolve_class_name(@error_worker)
-      worker_class.set(async_http_continuation: "error").perform_async(error)
+      worker_class.set(async_http_continuation: "error").perform_async(wrapped_error)
     end
 
     # Return true if the task successfully received a response from the server.

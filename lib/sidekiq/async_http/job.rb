@@ -156,6 +156,8 @@ module Sidekiq::AsyncHttp
     # @option options [Class] :error_worker Worker class to call on error
     # @option options [#to_h] :callback_args Arguments to include in the Response/Error object.
     #   Must respond to to_h and contain only JSON-native types. Access via response.callback_args.
+    # @option options [Boolean] :raise_error_responses If true, raises HttpError for non-2xx responses
+    #   and calls error_worker instead of completion_worker. Defaults to false.
     #
     # @return [String] request ID
     def async_request(method, url, **options)
@@ -163,6 +165,8 @@ module Sidekiq::AsyncHttp
       completion_worker = options.delete(:completion_worker)
       error_worker = options.delete(:error_worker)
       callback_args = options.delete(:callback_args)
+      raise_error_responses = options.delete(:raise_error_responses)
+      raise_error_responses = Sidekiq::AsyncHttp.configuration.raise_error_responses if raise_error_responses.nil?
 
       completion_worker ||= self.class.completion_callback_worker
       error_worker ||= self.class.error_callback_worker
@@ -171,7 +175,8 @@ module Sidekiq::AsyncHttp
       request.execute(
         completion_worker: completion_worker,
         error_worker: error_worker,
-        callback_args: callback_args
+        callback_args: callback_args,
+        raise_error_responses: raise_error_responses
       )
     end
 
@@ -185,6 +190,16 @@ module Sidekiq::AsyncHttp
       async_request(:get, url, **options)
     end
 
+    # Convenience method for GET requests that raises HttpError for non-2xx responses.
+    #
+    # @param url [String] the request URL
+    # @param options [Hash] additional request options (see {#async_request})
+    #
+    # @return [String] request ID
+    def async_get!(url, **options)
+      async_request(:get, url, **options.merge(raise_error_responses: true))
+    end
+
     # Convenience method for POST requests.
     #
     # @param url [String] the request URL
@@ -193,6 +208,16 @@ module Sidekiq::AsyncHttp
     # @return [String] request ID
     def async_post(url, **options)
       async_request(:post, url, **options)
+    end
+
+    # Convenience method for POST requests that raises HttpError for non-2xx responses.
+    #
+    # @param url [String] the request URL
+    # @param options [Hash] additional request options (see {#async_request})
+    #
+    # @return [String] request ID
+    def async_post!(url, **options)
+      async_request(:post, url, **options.merge(raise_error_responses: true))
     end
 
     # Convenience method for PUT requests.
@@ -205,6 +230,16 @@ module Sidekiq::AsyncHttp
       async_request(:put, url, **options)
     end
 
+    # Convenience method for PUT requests that raises HttpError for non-2xx responses.
+    #
+    # @param url [String] the request URL
+    # @param options [Hash] additional request options (see {#async_request})
+    #
+    # @return [String] request ID
+    def async_put!(url, **options)
+      async_request(:put, url, **options.merge(raise_error_responses: true))
+    end
+
     # Convenience method for PATCH requests.
     #
     # @param url [String] the request URL
@@ -215,6 +250,16 @@ module Sidekiq::AsyncHttp
       async_request(:patch, url, **options)
     end
 
+    # Convenience method for PATCH requests that raises HttpError for non-2xx responses.
+    #
+    # @param url [String] the request URL
+    # @param options [Hash] additional request options (see {#async_request})
+    #
+    # @return [String] request ID
+    def async_patch!(url, **options)
+      async_request(:patch, url, **options.merge(raise_error_responses: true))
+    end
+
     # Convenience method for DELETE requests.
     #
     # @param url [String] the request URL
@@ -223,6 +268,16 @@ module Sidekiq::AsyncHttp
     # @return [String] request ID
     def async_delete(url, **options)
       async_request(:delete, url, **options)
+    end
+
+    # Convenience method for DELETE requests that raises HttpError for non-2xx responses.
+    #
+    # @param url [String] the request URL
+    # @param options [Hash] additional request options (see {#async_request})
+    #
+    # @return [String] request ID
+    def async_delete!(url, **options)
+      async_request(:delete, url, **options.merge(raise_error_responses: true))
     end
 
     # Returns the HTTP client for this job instance.

@@ -9,7 +9,7 @@ module Sidekiq::AsyncHttp
   class ContinuationMiddleware
     include Sidekiq::ServerMiddleware
 
-    def call(worker, job, queue)
+    def call(_worker, job, _queue)
       deserialize_response_arg(job)
 
       continuation_type = job.dig("async_http_continuation")
@@ -29,11 +29,15 @@ module Sidekiq::AsyncHttp
     def deserialize_response_arg(job)
       first_arg = job["args"].first
       first_arg_class_name = first_arg["_sidekiq_async_http_class"] if first_arg.is_a?(Hash)
-      if first_arg_class_name == "Sidekiq::AsyncHttp::Response"
-        job["args"][0] = Sidekiq::AsyncHttp::Response.load(first_arg)
-      elsif first_arg_class_name == "Sidekiq::AsyncHttp::Error"
-        job["args"][0] = Sidekiq::AsyncHttp::Error.load(first_arg)
-      end
+      return unless first_arg_class_name.is_a?(String)
+
+      first_arg_class = ClassHelper.resolve_class_name(first_arg_class_name)
+      return unless first_arg_class <= Response || first_arg_class <= Error
+
+      job["args"][0] = first_arg_class.load(first_arg)
+    rescue NameError => e
+      Sidekiq.logger.error("Failed to deserialize Sidekiq::AsyncHttp callback argument: #{e.message}")
+      raise if Sidekiq::AsyncHttp.testing?
     end
   end
 end

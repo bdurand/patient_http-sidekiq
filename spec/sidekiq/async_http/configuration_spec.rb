@@ -13,6 +13,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         expect(config.default_request_timeout).to eq(60)
         expect(config.shutdown_timeout).to eq(Sidekiq.default_configuration[:timeout] - 2)
         expect(config.logger).to eq(Sidekiq.logger)
+        expect(config.raise_error_responses).to eq(false)
       end
     end
 
@@ -24,7 +25,8 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
           idle_connection_timeout: 120,
           default_request_timeout: 60,
           shutdown_timeout: 30,
-          logger: custom_logger
+          logger: custom_logger,
+          raise_error_responses: true
         )
 
         expect(config.max_connections).to eq(512)
@@ -32,6 +34,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         expect(config.default_request_timeout).to eq(60)
         expect(config.shutdown_timeout).to eq(30)
         expect(config.logger).to eq(custom_logger)
+        expect(config.raise_error_responses).to eq(true)
       end
     end
 
@@ -131,9 +134,9 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
       end
 
       it "allows heartbeat_interval < orphan_threshold" do
-        expect {
+        expect do
           described_class.new(heartbeat_interval: 60, orphan_threshold: 300)
-        }.not_to raise_error
+        end.not_to raise_error
       end
     end
   end
@@ -177,6 +180,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
       expect(hash["default_request_timeout"]).to eq(60)
       expect(hash["shutdown_timeout"]).to eq(30)
       expect(hash["logger"]).to eq(custom_logger)
+      expect(hash["raise_error_responses"]).to eq(false)
     end
   end
 end

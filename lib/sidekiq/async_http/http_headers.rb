@@ -77,5 +77,13 @@ module Sidekiq::AsyncHttp
     def include?(name)
       @headers.include?(name.to_s.downcase)
     end
+
+    def eql?(other)
+      other.is_a?(HttpHeaders) && @headers.eql?(other.to_h)
+    end
+
+    def hash
+      @headers.hash
+    end
   end
 end

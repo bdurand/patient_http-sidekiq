@@ -31,6 +31,9 @@ module Sidekiq
       # @return [String, nil] Default User-Agent header value
       attr_accessor :user_agent
 
+      # @return [Boolean] Whether to raise HttpError for non-2xx responses by default
+      attr_accessor :raise_error_responses
+
       # Initializes a new Configuration with the specified options.
       #
       # @param max_connections [Integer] Maximum number of concurrent connections
@@ -42,6 +45,7 @@ module Sidekiq
       # @param heartbeat_interval [Integer] Interval for updating inflight request heartbeats in seconds
       # @param orphan_threshold [Integer] Age threshold for detecting orphaned requests in seconds
       # @param user_agent [String, nil] Default User-Agent header value
+      # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses by default
       def initialize(
         max_connections: 256,
         idle_connection_timeout: 60,
@@ -51,7 +55,8 @@ module Sidekiq
         max_response_size: 1024 * 1024,
         heartbeat_interval: 60,
         orphan_threshold: 300,
-        user_agent: nil
+        user_agent: nil,
+        raise_error_responses: false
       )
         self.max_connections = max_connections
         self.idle_connection_timeout = idle_connection_timeout
@@ -62,6 +67,7 @@ module Sidekiq
         self.heartbeat_interval = heartbeat_interval
         self.orphan_threshold = orphan_threshold
         self.user_agent = user_agent
+        self.raise_error_responses = raise_error_responses
       end
 
       # Get the logger to use (configured logger or Sidekiq.logger)
@@ -121,24 +127,25 @@ module Sidekiq
           "max_response_size" => max_response_size,
           "heartbeat_interval" => heartbeat_interval,
           "orphan_threshold" => orphan_threshold,
-          "user_agent" => user_agent
+          "user_agent" => user_agent,
+          "raise_error_responses" => raise_error_responses
         }
       end
 
       private
 
       def validate_positive(attribute, value)
-        unless value.is_a?(Numeric) && value > 0
-          raise ArgumentError.new("#{attribute} must be a positive number, got: #{value.inspect}")
-        end
+        return if value.is_a?(Numeric) && value > 0
+
+        raise ArgumentError.new("#{attribute} must be a positive number, got: #{value.inspect}")
       end
 
       def validate_heartbeat_and_threshold
         return unless @heartbeat_interval && @orphan_threshold
 
-        if @heartbeat_interval >= @orphan_threshold
-          raise ArgumentError.new("heartbeat_interval (#{@heartbeat_interval}) must be less than orphan_threshold (#{@orphan_threshold})")
-        end
+        return unless @heartbeat_interval >= @orphan_threshold
+
+        raise ArgumentError.new("heartbeat_interval (#{@heartbeat_interval}) must be less than orphan_threshold (#{@orphan_threshold})")
       end
     end
   end

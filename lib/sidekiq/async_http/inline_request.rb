@@ -67,17 +67,23 @@ module Sidekiq::AsyncHttp
           callback_args: @task.callback_args
         )
 
-        # Invoke completion callback inline
-        @task.completion_worker.new.perform(response)
+        # Check if we should raise an error for non-2xx responses
+        if @task.raise_error_responses && !response.success?
+          http_error = HttpError.new(response)
+
+          # Invoke error callback inline with HttpError
+          @task.error_worker.new.perform(http_error)
+        else
+          # Invoke completion callback inline
+          @task.completion_worker.new.perform(response)
+        end
       rescue => e
         # Calculate duration
         end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         duration = end_time - start_time
 
-        raise e unless @task.error_worker
-
         # Build error object and invoke error callback inline
-        error = Error.from_exception(
+        error = RequestError.from_exception(
           e,
           request_id: @task.id,
           duration: duration,

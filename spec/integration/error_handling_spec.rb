@@ -154,5 +154,39 @@ RSpec.describe "Error Handling Integration", :integration do
       expect(response.server_error?).to be true
       expect(response.callback_args[:status]).to eq("unavailable")
     end
+
+    it "calls error worker with HttpError when raise_error_responses is enabled" do
+      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      request = client.async_get("/test/404")
+
+      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "404-error-test", "args" => []},
+        completion_worker: "TestWorkers::CompletionWorker",
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {"status" => "missing"},
+        raise_error_responses: true
+      )
+
+      processor.enqueue(request_task)
+      processor.wait_for_idle
+
+      # Process enqueued jobs
+      Sidekiq::Worker.drain_all
+
+      # With raise_error_responses, 404 should call error worker with HttpError
+      expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
+      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
+
+      error = TestWorkers::ErrorWorker.calls.first.first
+      expect(error).to be_a(Sidekiq::AsyncHttp::HttpError)
+      expect(error.status).to eq(404)
+      expect(error.url).to include("/test/404")
+      expect(error.http_method).to eq(:get)
+      expect(error.response).to be_a(Sidekiq::AsyncHttp::Response)
+      expect(error.response.status).to eq(404)
+      expect(error.response.client_error?).to be true
+      expect(error.callback_args[:status]).to eq("missing")
+    end
   end
 end

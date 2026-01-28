@@ -59,9 +59,9 @@ RSpec.describe Sidekiq::AsyncHttp::SerializeResponseMiddleware do
       end
     end
 
-    context "with an Error object as first argument" do
+    context "with a RequestError object as first argument" do
       let(:error) do
-        Sidekiq::AsyncHttp::Error.new(
+        Sidekiq::AsyncHttp::RequestError.new(
           class_name: "Timeout::Error",
           message: "Request timed out",
           backtrace: ["line 1", "line 2"],
@@ -81,16 +81,68 @@ RSpec.describe Sidekiq::AsyncHttp::SerializeResponseMiddleware do
         }
       end
 
-      it "serializes the Error object to a hash" do
+      it "serializes the RequestError object to a hash" do
         middleware.call(worker_class, job, queue, redis_pool) {}
 
         first_arg = job["args"][0]
         expect(first_arg).to be_a(Hash)
-        expect(first_arg["_sidekiq_async_http_class"]).to eq("Sidekiq::AsyncHttp::Error")
+        expect(first_arg["_sidekiq_async_http_class"]).to eq("Sidekiq::AsyncHttp::RequestError")
         expect(first_arg["class_name"]).to eq("Timeout::Error")
         expect(first_arg["message"]).to eq("Request timed out")
         expect(first_arg["error_type"]).to eq("timeout")
         expect(first_arg["request_id"]).to eq("req-456")
+      end
+
+      it "preserves other arguments" do
+        middleware.call(worker_class, job, queue, redis_pool) {}
+
+        expect(job["args"][1]).to eq("arg2")
+      end
+
+      it "yields to the next middleware" do
+        yielded = false
+        middleware.call(worker_class, job, queue, redis_pool) do
+          yielded = true
+        end
+
+        expect(yielded).to be true
+      end
+    end
+
+    context "with an HttpError object as first argument" do
+      let(:response) do
+        Sidekiq::AsyncHttp::Response.new(
+          status: 404,
+          headers: {"Content-Type" => "application/json"},
+          body: '{"error":"not found"}',
+          duration: 0.234,
+          request_id: "req-789",
+          url: "https://api.example.com/users/999",
+          http_method: :get
+        )
+      end
+
+      let(:http_error) do
+        Sidekiq::AsyncHttp::HttpError.new(response)
+      end
+
+      let(:job) do
+        {
+          "class" => "TestWorker",
+          "jid" => "test-789",
+          "args" => [http_error, "arg2"]
+        }
+      end
+
+      it "serializes the HttpError object to a hash" do
+        middleware.call(worker_class, job, queue, redis_pool) {}
+
+        first_arg = job["args"][0]
+        expect(first_arg).to be_a(Hash)
+        expect(first_arg["_sidekiq_async_http_class"]).to eq("Sidekiq::AsyncHttp::ClientError")
+        expect(first_arg["response"]).to be_a(Hash)
+        expect(first_arg["response"]["status"]).to eq(404)
+        expect(first_arg["response"]["request_id"]).to eq("req-789")
       end
 
       it "preserves other arguments" do
@@ -146,9 +198,9 @@ RSpec.describe Sidekiq::AsyncHttp::SerializeResponseMiddleware do
       end
 
       it "does not raise an error" do
-        expect {
+        expect do
           middleware.call(worker_class, job, queue, redis_pool) {}
-        }.not_to raise_error
+        end.not_to raise_error
       end
 
       it "yields to the next middleware" do

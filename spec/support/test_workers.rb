@@ -95,7 +95,10 @@ module TestWorkers
 
     def perform(error)
       # Handle case in tests where the Sidekiq middleware is not used.
-      error = Sidekiq::AsyncHttp::Error.load(error) if error.is_a?(Hash)
+      if error.is_a?(Hash) && error.include?("_sidekiq_async_http_class")
+        error_class = Sidekiq::AsyncHttp::ClassHelper.resolve_class_name(error["_sidekiq_async_http_class"])
+        error = error_class.load(error)
+      end
       self.class.record_call(error)
     end
   end

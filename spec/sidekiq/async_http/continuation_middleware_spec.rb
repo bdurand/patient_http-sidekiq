@@ -23,7 +23,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
 
   let(:error_data) do
     {
-      "_sidekiq_async_http_class" => "Sidekiq::AsyncHttp::Error",
+      "_sidekiq_async_http_class" => "Sidekiq::AsyncHttp::RequestError",
       "class_name" => "Timeout::Error",
       "message" => "Request timed out",
       "backtrace" => ["line 1", "line 2", "line 3"],
@@ -32,6 +32,21 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
       "request_id" => "req-456",
       "url" => "https://api.example.com/slow",
       "http_method" => "post"
+    }
+  end
+
+  let(:http_error_data) do
+    {
+      "_sidekiq_async_http_class" => "Sidekiq::AsyncHttp::HttpError",
+      "response" => {
+        "status" => 404,
+        "headers" => {"Content-Type" => "application/json"},
+        "body" => {"encoding" => "text", "value" => '{"error":"not found"}'},
+        "duration" => 0.234,
+        "request_id" => "req-789",
+        "url" => "https://api.example.com/users/999",
+        "http_method" => "get"
+      }
     }
   end
 
@@ -45,7 +60,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
       job = {
         "class" => "TestWorker",
         "jid" => "test-123",
-        "args" => ["arg1", "arg2"]
+        "args" => %w[arg1 arg2]
       }
 
       yielded = false
@@ -169,7 +184,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
 
         expect(yielded).to be true
         expect(errors.size).to eq(1)
-        expect(errors.first).to be_a(Sidekiq::AsyncHttp::Error)
+        expect(errors.first).to be_a(Sidekiq::AsyncHttp::RequestError)
         expect(errors.first.error_class).to eq(Timeout::Error)
         expect(errors.first.request_id).to eq("req-456")
       end
@@ -193,7 +208,7 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
 
         expect(errors.size).to eq(3)
         expect(errors.map(&:first)).to eq([:first, :second, :third])
-        expect(errors.map(&:last).map(&:class).uniq).to eq([Sidekiq::AsyncHttp::Error])
+        expect(errors.map(&:last).map(&:class).uniq).to eq([Sidekiq::AsyncHttp::RequestError])
       end
 
       it "passes the error data from job args to callbacks" do
@@ -219,6 +234,52 @@ RSpec.describe Sidekiq::AsyncHttp::ContinuationMiddleware do
         end
 
         expect(yielded).to be true
+      end
+    end
+
+    context "when processing HttpError continuation jobs" do
+      let(:job) do
+        {
+          "class" => "TestWorker::ErrorCallback",
+          "jid" => "test-789",
+          "args" => [http_error_data, "original_arg1"],
+          "async_http_continuation" => "error"
+        }
+      end
+
+      it "invokes error callbacks with HttpError before yielding" do
+        errors = []
+        Sidekiq::AsyncHttp.after_error do |error|
+          errors << error
+        end
+
+        yielded = false
+        middleware.call(worker, job, queue) do
+          yielded = true
+        end
+
+        expect(yielded).to be true
+        expect(errors.size).to eq(1)
+        expect(errors.first).to be_a(Sidekiq::AsyncHttp::HttpError)
+        expect(errors.first.status).to eq(404)
+        expect(errors.first.request_id).to eq("req-789")
+      end
+
+      it "passes the HttpError with response to callbacks" do
+        error_received = nil
+
+        Sidekiq::AsyncHttp.after_error do |error|
+          error_received = error
+        end
+
+        middleware.call(worker, job, queue) {}
+
+        expect(error_received).to be_a(Sidekiq::AsyncHttp::HttpError)
+        expect(error_received.url).to eq("https://api.example.com/users/999")
+        expect(error_received.http_method).to eq(:get)
+        expect(error_received.response).to be_a(Sidekiq::AsyncHttp::Response)
+        expect(error_received.response.status).to eq(404)
+        expect(error_received.response.body).to eq('{"error":"not found"}')
       end
     end
 

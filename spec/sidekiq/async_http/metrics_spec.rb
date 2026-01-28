@@ -102,12 +102,44 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     it "supports all error types" do
       error_types = %i[timeout connection ssl protocol unknown]
 
-      error_types.each_with_index do |type, index|
+      error_types.each_with_index do |type, _index|
         metrics.record_error(type)
       end
 
       expect(metrics.errors_by_type.keys).to match_array(error_types)
       expect(metrics.error_count).to eq(5)
+    end
+  end
+
+  describe "#record_http_error" do
+    it "increments error count" do
+      expect { metrics.record_http_error(404) }
+        .to change { metrics.error_count }.from(0).to(1)
+    end
+
+    it "tracks HTTP errors by status code" do
+      metrics.record_http_error(404)
+      expect(metrics.http_errors_by_status).to eq({404 => 1})
+    end
+
+    it "increments existing status codes" do
+      metrics.record_http_error(404)
+      metrics.record_http_error(404)
+      metrics.record_http_error(500)
+
+      expect(metrics.http_errors_by_status).to eq({404 => 2, 500 => 1})
+      expect(metrics.error_count).to eq(3)
+    end
+
+    it "supports various HTTP status codes" do
+      status_codes = [400, 401, 403, 404, 500, 502, 503, 504]
+
+      status_codes.each do |status|
+        metrics.record_http_error(status)
+      end
+
+      expect(metrics.http_errors_by_status.keys).to match_array(status_codes)
+      expect(metrics.error_count).to eq(8)
     end
   end
 
@@ -136,11 +168,30 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
     end
   end
 
+  describe "#http_errors_by_status" do
+    it "returns frozen hash" do
+      metrics.record_http_error(404)
+      result = metrics.http_errors_by_status
+
+      expect(result).to be_frozen
+    end
+
+    it "returns snapshot at time of call" do
+      metrics.record_http_error(404)
+      snapshot = metrics.http_errors_by_status
+
+      metrics.record_http_error(500)
+      expect(snapshot).to eq({404 => 1})
+      expect(metrics.http_errors_by_status).to eq({404 => 1, 500 => 1})
+    end
+  end
+
   describe "#to_h" do
     it "returns hash with all metrics" do
       metrics.record_request_start
       metrics.record_request_complete(1.5)
       metrics.record_error(:timeout)
+      metrics.record_http_error(404)
 
       hash = metrics.to_h
 
@@ -148,12 +199,13 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       expect(hash["inflight_count"]).to eq(0)
       expect(hash["total_requests"]).to eq(1)
       expect(hash["average_duration"]).to eq(1.5)
-      expect(hash["error_count"]).to eq(1)
+      expect(hash["error_count"]).to eq(2)
       expect(hash["errors_by_type"]).to eq({timeout: 1})
+      expect(hash["http_errors_by_status"]).to eq({404 => 1})
     end
 
     it "returns consistent snapshot" do
-      10.times do |i|
+      10.times do
         metrics.record_request_start
         metrics.record_request_complete(1.0)
       end
@@ -170,6 +222,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.record_request_start
       metrics.record_request_complete(1.5)
       metrics.record_error(:timeout)
+      metrics.record_http_error(404)
     end
 
     it "resets all counters to zero" do
@@ -185,6 +238,7 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       metrics.reset!
 
       expect(metrics.errors_by_type).to be_empty
+      expect(metrics.http_errors_by_status).to be_empty
     end
   end
 
@@ -194,9 +248,9 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       num_threads = 10
       requests_per_thread = 100
 
-      num_threads.times do |i|
+      num_threads.times do
         threads << Thread.new do
-          requests_per_thread.times do |j|
+          requests_per_thread.times do
             metrics.record_request_start
             metrics.record_request_complete(rand(0.1..2.0))
           end
@@ -215,9 +269,9 @@ RSpec.describe Sidekiq::AsyncHttp::Metrics do
       errors_per_thread = 50
       error_types = %i[timeout connection ssl protocol unknown]
 
-      num_threads.times do |i|
+      num_threads.times do
         threads << Thread.new do
-          errors_per_thread.times do |j|
+          errors_per_thread.times do
             error_type = error_types.sample
             metrics.record_error(error_type)
           end
