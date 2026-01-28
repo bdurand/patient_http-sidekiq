@@ -63,11 +63,12 @@ module Sidekiq::AsyncHttp
           duration: duration,
           request_id: @task.id,
           url: request.url,
-          http_method: request.http_method
+          http_method: request.http_method,
+          callback_args: @task.callback_args
         )
 
         # Invoke completion callback inline
-        @task.completion_worker.new.perform(response, *@task.callback_args)
+        @task.completion_worker.new.perform(response)
       rescue => e
         # Calculate duration
         end_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -76,9 +77,15 @@ module Sidekiq::AsyncHttp
         raise e unless @task.error_worker
 
         # Build error object and invoke error callback inline
-        error = Error.from_exception(e, request_id: @task.id, duration: duration, url: request.url,
-          http_method: request.http_method)
-        @task.error_worker.new.perform(error, *@task.callback_args)
+        error = Error.from_exception(
+          e,
+          request_id: @task.id,
+          duration: duration,
+          url: request.url,
+          http_method: request.http_method,
+          callback_args: @task.callback_args
+        )
+        @task.error_worker.new.perform(error)
       end
 
       @id

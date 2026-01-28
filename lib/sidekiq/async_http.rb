@@ -60,6 +60,7 @@ module Sidekiq::AsyncHttp
   autoload :TimeHelper, File.join(__dir__, "async_http/time_helper")
 
   # Autoload all components
+  autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
   autoload :Client, File.join(__dir__, "async_http/client")
   autoload :Configuration, File.join(__dir__, "async_http/configuration")
   autoload :Context, File.join(__dir__, "async_http/context")
@@ -91,7 +92,7 @@ module Sidekiq::AsyncHttp
   @testing = false
 
   class << self
-    attr_writer :configuration, :processor
+    attr_writer :configuration
 
     # Configure the gem with a block
     # @yield [Configuration] the configuration object
@@ -312,7 +313,7 @@ module Sidekiq::AsyncHttp
     # Returns the processor instance (internal accessor)
     # @return [Processor, nil]
     # @api private
-    attr_reader :processor
+    attr_accessor :processor
 
     # Returns the metrics from the processor
     # @return [Metrics, nil]

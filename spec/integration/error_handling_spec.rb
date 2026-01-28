@@ -41,9 +41,10 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "timeout-test", "args" => ["timeout_arg"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "timeout-test", "args" => []},
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {"arg" => "timeout_arg"}
       )
 
       processor.enqueue(request_task)
@@ -56,11 +57,11 @@ RSpec.describe "Error Handling Integration", :integration do
       expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
 
-      error, *original_args = TestWorkers::ErrorWorker.calls.first
+      error = TestWorkers::ErrorWorker.calls.first.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:timeout)
       expect(error.error_class.name).to match(/Timeout/)
-      expect(original_args).to eq(["timeout_arg"])
+      expect(error.callback_args[:arg]).to eq("timeout_arg")
     end
   end
 
@@ -72,9 +73,10 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "conn-test", "args" => ["connection_arg"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "conn-test", "args" => []},
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {"arg" => "connection_arg"}
       )
 
       processor.enqueue(request_task)
@@ -87,12 +89,12 @@ RSpec.describe "Error Handling Integration", :integration do
       expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
       expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
 
-      error, *original_args = TestWorkers::ErrorWorker.calls.first
+      error = TestWorkers::ErrorWorker.calls.first.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:connection)
       expect(error.error_class.name).to match(/Errno::E/)
       expect(error.message).to match(/refused|reset|connection/i)
-      expect(original_args).to eq(["connection_arg"])
+      expect(error.callback_args[:arg]).to eq("connection_arg")
     end
   end
 
@@ -103,9 +105,10 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "404-test", "args" => ["missing"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "404-test", "args" => []},
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {"status" => "missing"}
       )
 
       processor.enqueue(request_task)
@@ -118,10 +121,10 @@ RSpec.describe "Error Handling Integration", :integration do
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
       expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
 
-      response, *args = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(404)
       expect(response.client_error?).to be true
-      expect(args).to eq(["missing"])
+      expect(response.callback_args[:status]).to eq("missing")
     end
 
     it "calls success worker for 5xx responses (they are valid HTTP responses)" do
@@ -130,9 +133,10 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "503-test", "args" => ["unavailable"]},
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "503-test", "args" => []},
         completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        error_worker: "TestWorkers::ErrorWorker",
+        callback_args: {"status" => "unavailable"}
       )
 
       processor.enqueue(request_task)
@@ -145,10 +149,10 @@ RSpec.describe "Error Handling Integration", :integration do
       expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
       expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
 
-      response, *args = TestWorkers::CompletionWorker.calls.first
+      response = TestWorkers::CompletionWorker.calls.first.first
       expect(response.status).to eq(503)
       expect(response.server_error?).to be true
-      expect(args).to eq(["unavailable"])
+      expect(response.callback_args[:status]).to eq("unavailable")
     end
   end
 end

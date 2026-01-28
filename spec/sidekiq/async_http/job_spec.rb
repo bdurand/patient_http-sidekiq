@@ -43,8 +43,8 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
         @called_args = []
 
-        on_completion(retry: false) do |response, *args|
-          @called_args << [response, *args]
+        on_completion(retry: false) do |response|
+          @called_args << [response]
         end
       end
     end
@@ -58,8 +58,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     it "defines a CompletionCallback worker class" do
       completion_worker = worker_class::CompletionCallback
       args = completion_worker.instance_method(:perform).parameters
-      expect(args.first).to eq([:req, :response]) # first arg is response
-      expect(args[1..]).to eq([[:rest, :args]]) # rest are splat args
+      expect(args).to eq([%i[req response]]) # single response arg
     end
 
     it "allows setting Sidekiq options" do
@@ -75,8 +74,8 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
         @called_args = []
 
-        on_error(retry: false) do |error, *args|
-          @called_args << [error, *args]
+        on_error(retry: false) do |error|
+          @called_args << [error]
         end
       end
     end
@@ -90,8 +89,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
     it "defines an ErrorCallback worker class" do
       error_worker = worker_class::ErrorCallback
       args = error_worker.instance_method(:perform).parameters
-      expect(args.first).to eq([:req, :error]) # first arg is error
-      expect(args[1..]).to eq([[:rest, :args]]) # rest are splat args
+      expect(args).to eq([%i[req error]]) # single error arg
     end
 
     it "allows setting Sidekiq options" do
@@ -115,12 +113,12 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
         @called_args = []
 
-        on_completion do |response, *args|
-          @called_args << [response, *args]
+        on_completion do |response|
+          @called_args << [response]
         end
 
-        on_error do |error, *args|
-          @called_args << [error, *args]
+        on_error do |error|
+          @called_args << [error]
         end
       end
     end
@@ -217,18 +215,18 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         worker_instance.async_request(
           :get,
           "https://api.example.com/data",
-          callback_args: %w[custom callback args]
+          callback_args: {custom: "callback", action: "args"}
         )
 
         task = request_tasks.first
-        expect(task.callback_args).to eq(%w[custom callback args])
+        expect(task.callback_args).to eq({"custom" => "callback", "action" => "args"})
       end
 
-      it "sets callback_args to the current job args when not provided" do
+      it "defaults callback_args to empty hash when not provided" do
         worker_instance.async_request(:get, "https://api.example.com/data")
 
         task = request_tasks.first
-        expect(task.callback_args).to eq(["param1", 456, "action"])
+        expect(task.callback_args).to eq({})
       end
     end
 
@@ -278,12 +276,12 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
 
         @called_args = []
 
-        on_completion do |response, *args|
-          @called_args << [response, *args]
+        on_completion do |response|
+          @called_args << [response]
         end
 
-        on_error do |error, *args|
-          @called_args << [error, *args]
+        on_error do |error|
+          @called_args << [error]
         end
 
         class << self
@@ -327,7 +325,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
       end.to raise_error(/Asynchronous HTTP requests are not supported/)
     end
 
-    it "extracts job arguments correctly for callback_args" do
+    it "defaults callback_args to empty hash for ActiveJob" do
       sidekiq_job = {
         "class" => "TestWorkers::ActiveJobWorker",
         "jid" => "activejob-jid-123",
@@ -353,7 +351,7 @@ RSpec.describe Sidekiq::AsyncHttp::Job do
         worker_instance.async_request(:get, "https://api.example.com/data")
       end
 
-      expect(captured_task.callback_args).to eq(["arg1", 789, "action2"])
+      expect(captured_task.callback_args).to eq({})
     end
   end
 end

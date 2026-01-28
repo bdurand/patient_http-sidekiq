@@ -19,7 +19,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     jid: nil,
     job_args: [],
     completion_worker: "TestWorkers::CompletionWorker",
-    error_worker: "TestWorkers::ErrorWorker"
+    error_worker: "TestWorkers::ErrorWorker",
+    callback_args: {}
   )
     request = Sidekiq::AsyncHttp::Request.new(
       method,
@@ -33,7 +34,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       request: request,
       sidekiq_job: {"class" => worker_class, "jid" => jid || SecureRandom.uuid, "args" => job_args},
       completion_worker: completion_worker,
-      error_worker: error_worker
+      error_worker: error_worker,
+      callback_args: callback_args
     )
   end
 
@@ -42,7 +44,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     create_request_task(
       headers: {"Accept" => "application/json"},
       jid: "jid-123",
-      job_args: [1, "test_arg"]
+      job_args: [],
+      callback_args: {"id" => 1, "arg" => "test_arg"}
     )
   end
 
@@ -99,7 +102,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       # Transition to running then stopping to signal shutdown
       lifecycle.start!
       lifecycle.running!
-      lifecycle.stop!  # This sets the shutdown barrier
+      lifecycle.stop! # This sets the shutdown barrier
       expect(lifecycle.shutdown_signaled?).to be true
 
       lifecycle.stopped!  # Reset to stopped
@@ -189,13 +192,19 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       it "raises an error" do
         processor.drain
-        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is draining/)
+        expect do
+          processor.enqueue(request)
+        end.to raise_error(Sidekiq::AsyncHttp::NotRunningError,
+          /Cannot enqueue request: processor is draining/)
       end
     end
 
     context "when stopped" do
       it "raises an error" do
-        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is stopped/)
+        expect do
+          processor.enqueue(request)
+        end.to raise_error(Sidekiq::AsyncHttp::NotRunningError,
+          /Cannot enqueue request: processor is stopped/)
       end
     end
 
@@ -205,7 +214,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         lifecycle.start!
         lifecycle.running!
         lifecycle.stop!
-        expect { processor.enqueue(request) }.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /Cannot enqueue request: processor is stopping/)
+        expect do
+          processor.enqueue(request)
+        end.to raise_error(Sidekiq::AsyncHttp::NotRunningError,
+          /Cannot enqueue request: processor is stopping/)
       ensure
         lifecycle&.stopped!
       end
@@ -365,15 +377,15 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       count = 0
       mutex = Mutex.new
 
-      allow(processor).to receive(:dequeue_request) do |**args|
+      allow(processor).to receive(:dequeue_request) do |**_args|
         mutex.synchronize { count += 1 }
         nil # Return nil to prevent processing
       end
 
       processor.run do
-        threads = 10.times.map do |i|
+        threads = 10.times.map do |_i|
           Thread.new do
-            10.times do |j|
+            10.times do |_j|
               request = create_request_task
               processor.enqueue(request)
             end
@@ -429,9 +441,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       processor_with_logger.run do
         # Wait for the error to be logged
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 1
-        until error_logged.true? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-          Thread.pass
-        end
+        Thread.pass until error_logged.true? || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
 
         expect(log_output.string).to match(/Test error/)
       end
@@ -465,7 +475,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       requests_processed = []
       signal_queue = Queue.new
       processor = described_class.new(config)
-      processor.testing_callback = ->(task) {
+      processor.testing_callback = lambda { |task|
         requests_processed << task
         signal_queue << task
       }
@@ -487,13 +497,13 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       fiber_count = Concurrent::AtomicFixnum.new(0)
       signal_queue = Queue.new
       processor = described_class.new(config)
-      processor.testing_callback = ->(task) {
+      processor.testing_callback = lambda { |task|
         fiber_count.increment
         signal_queue << task
       }
       processor.run do
         # Enqueue multiple requests
-        3.times { |i| processor.enqueue(create_request_task) }
+        3.times { |_i| processor.enqueue(create_request_task) }
 
         # Wait for all 3 to complete
         3.times { signal_queue.pop }
@@ -517,7 +527,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       loop_running = Concurrent::AtomicBoolean.new(false)
 
       # Override dequeue_request to signal when loop is active
-      allow(processor).to receive(:dequeue_request) do |**args|
+      allow(processor).to receive(:dequeue_request) do |**_args|
         loop_running.make_true
         sleep(0.01) # Brief pause to allow shutdown check
         nil
@@ -546,7 +556,10 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     it "checks capacity before spawning fibers when at limit" do
       processor.run do
         allow(processor).to receive(:inflight_count).and_return(config.max_connections)
-        expect { processor.enqueue(create_request_task) }.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError, /already at max capacity/)
+        expect do
+          processor.enqueue(create_request_task)
+        end.to raise_error(Sidekiq::AsyncHttp::MaxCapacityError,
+          /already at max capacity/)
       end
     end
   end
@@ -669,7 +682,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       )
 
       captured_response = nil
-      allow(processor).to receive(:handle_success) do |req, resp|
+      allow(processor).to receive(:handle_success) do |_req, resp|
         captured_response = resp
       end
 
@@ -882,7 +895,8 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         "request_id" => "req-123",
         "url" => "https://api.example.com/users",
         "method" => "GET",
-        "duration" => 0.5
+        "duration" => 0.5,
+        "callback_args" => {"id" => 1, "arg" => "test_arg"}
       }
     end
 
@@ -899,14 +913,15 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
     end
 
-    it "enqueues success worker with response hash and original args tagged as a completion continuation" do
+    it "enqueues success worker with response hash containing callback_args and tagged as a completion continuation" do
       processor.send(:handle_success, mock_request, response)
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
       job = TestWorkers::CompletionWorker.jobs.last
       job_args = job["args"]
+      expect(job_args.size).to eq(1)
       expect(job_args[0]).to be_a(Hash)
       expect(job_args[0]["status"]).to eq(200)
-      expect(job_args[1..]).to eq([1, "test_arg"])
+      expect(job_args[0]["callback_args"]).to eq({"id" => 1, "arg" => "test_arg"})
       expect(job["async_http_continuation"]).to eq("completion")
     end
 
@@ -948,7 +963,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(error_hash["request_id"]).to eq(mock_request.id)
     end
 
-    it "enqueues error worker with error hash and original args tagged as an error continuation" do
+    it "enqueues error worker with error hash containing callback_args and tagged as an error continuation" do
       exception = StandardError.new("Test error")
 
       processor.send(:handle_error, mock_request, exception)
@@ -956,8 +971,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       job = TestWorkers::ErrorWorker.jobs.last
       job_args = job["args"]
+      expect(job_args.size).to eq(1)
       expect(job_args.first).to be_a(Hash)
-      expect(job_args[1..]).to eq([1, "test_arg"])
+      expect(job_args.first["callback_args"]).to eq({"id" => 1, "arg" => "test_arg"})
       expect(job["async_http_continuation"]).to eq("error")
     end
 
@@ -1032,9 +1048,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
 
       exception = StandardError.new("Test error")
 
-      expect {
+      expect do
         processor_with_logger.send(:handle_error, mock_request, exception)
-      }.not_to raise_error
+      end.not_to raise_error
 
       processor_with_logger.stop
       expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Failed to enqueue error worker for request #{Regexp.escape(mock_request.id)}/)
@@ -1221,9 +1237,9 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       processor_with_logger.wait_for_processing
 
       # Stop should not raise error
-      expect {
+      expect do
         processor_with_logger.stop(timeout: 0.001)
-      }.not_to raise_error
+      end.not_to raise_error
 
       # Check error was logged
       expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Failed to re-enqueue request #{Regexp.escape(request.id)}/)

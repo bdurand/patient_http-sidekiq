@@ -155,24 +155,23 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
             sidekiq_job: job_hash,
             completion_worker: TestWorkers::CompletionWorker,
             error_worker: TestWorkers::ErrorWorker,
-            callback_args: %w[custom args]
+            callback_args: {custom: "args", action: "test"}
           )
 
-          expect(captured_task.callback_args).to eq(%w[custom args])
+          expect(captured_task.callback_args).to eq({"custom" => "args", "action" => "test"})
         end
 
-        it "wraps a single value in an array" do
-          captured_task = nil
-          allow(processor).to receive(:enqueue) { |task| captured_task = task }
+        it "requires callback_args to be a hash" do
+          allow(processor).to receive(:enqueue)
 
-          request.execute(
-            sidekiq_job: job_hash,
-            completion_worker: TestWorkers::CompletionWorker,
-            error_worker: TestWorkers::ErrorWorker,
-            callback_args: "single_value"
-          )
-
-          expect(captured_task.callback_args).to eq(["single_value"])
+          expect do
+            request.execute(
+              sidekiq_job: job_hash,
+              completion_worker: TestWorkers::CompletionWorker,
+              error_worker: TestWorkers::ErrorWorker,
+              callback_args: "single_value"
+            )
+          end.to raise_error(ArgumentError, /callback_args must respond to to_h/)
         end
 
         it "uses callback_args when provided" do
@@ -183,13 +182,13 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
             sidekiq_job: job_hash,
             completion_worker: TestWorkers::CompletionWorker,
             error_worker: TestWorkers::ErrorWorker,
-            callback_args: %w[custom args]
+            callback_args: {custom: "args"}
           )
 
-          expect(captured_task.callback_args).to eq(%w[custom args])
+          expect(captured_task.callback_args).to eq({"custom" => "args"})
         end
 
-        it "uses original job args when callback_args is nil" do
+        it "defaults to empty hash when callback_args is not provided" do
           captured_task = nil
           allow(processor).to receive(:enqueue) { |task| captured_task = task }
 
@@ -199,7 +198,7 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
             error_worker: TestWorkers::ErrorWorker
           )
 
-          expect(captured_task.callback_args).to eq([1, 2, 3])
+          expect(captured_task.callback_args).to eq({})
         end
       end
     end
