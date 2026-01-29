@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "concurrent"
-require "async"
-require "async/queue"
-require "async/http"
 module Sidekiq
   module AsyncHttp
     # Core processor that handles async HTTP requests in a dedicated thread
@@ -19,9 +15,6 @@ module Sidekiq
 
       # @return [Configuration] the configuration object for the processor
       attr_reader :config
-
-      # @return [Metrics] the metrics maintained by the processor
-      attr_reader :metrics
 
       # @return [InflightRegistry] the inflight request registry
       attr_reader :inflight_registry
@@ -40,7 +33,6 @@ module Sidekiq
         @request_builder = RequestBuilder.new(@config)
         @response_reader = ResponseReader.new(@config)
         @lifecycle = LifecycleManager.new
-        @metrics = Metrics.new
         @stats = Stats.new(@config)
         @inflight_registry = InflightRegistry.new(@config)
         @queue = Thread::Queue.new
@@ -163,7 +155,6 @@ module Sidekiq
 
         # Check capacity - raise error if at max connections
         if inflight_count >= @config.max_connections
-          @metrics.record_refused
           @stats.record_refused
           raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
@@ -257,7 +248,7 @@ module Sidekiq
       # @return [Boolean] true if processing completed, false if timeout reached
       # @api private
       def wait_for_idle(timeout: 1)
-        @lifecycle.wait_for_idle(timeout: timeout) { idle? }
+        @lifecycle.wait_for_condition(timeout: timeout) { idle? }
       end
 
       # Wait for at least one request to start processing. This is mainly for use in tests.
@@ -266,7 +257,7 @@ module Sidekiq
       # @return [Boolean] true if a request started processing, false if timeout reached
       # @api private
       def wait_for_processing(timeout: 1)
-        @lifecycle.wait_for_processing(timeout: timeout) do
+        @lifecycle.wait_for_condition(timeout: timeout) do
           !@inflight_requests.empty? || !@pending_tasks.empty?
         end
       end
@@ -366,9 +357,6 @@ module Sidekiq
         # Mark task as started
         task.started!
 
-        # Record request start
-        @metrics.record_request_start
-
         begin
           client = @http_client_factory.build(task.request)
           http_request = @request_builder.build(task.request)
@@ -399,7 +387,6 @@ module Sidekiq
           response = task.build_response(**response_data)
           if task.raise_error_responses && !response.success?
             http_error = HttpError.new(response)
-            @metrics.record_error(http_error.error_type)
             @stats.record_error(http_error.error_type)
             handle_error(task, http_error)
           else
@@ -407,7 +394,6 @@ module Sidekiq
           end
         rescue => e
           error_type = RequestError.error_type(e)
-          @metrics.record_error(error_type)
           @stats.record_error(error_type)
           handle_error(task, e)
         ensure
@@ -415,7 +401,7 @@ module Sidekiq
           @tasks_lock.synchronize do
             @inflight_requests.delete(task.id)
           end
-          @metrics.record_request_complete(task.duration)
+          @inflight_registry.unregister(task.id)
           @stats.record_request(task.response&.status, task.duration)
 
           @testing_callback&.call(task) if AsyncHttp.testing?
@@ -434,9 +420,6 @@ module Sidekiq
         end
 
         task.completed!(response)
-
-        # Unregister from Redis after successful callback enqueue
-        @inflight_registry.unregister(task.id)
 
         @config.logger&.debug(
           "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
@@ -476,7 +459,6 @@ module Sidekiq
         # Check for redirect errors
         error = check_too_many_redirects(task, location) || check_recursive_redirect(task, redirect_url)
         if error
-          @metrics.record_error(:redirect)
           @stats.record_error(:redirect)
           handle_error(task, error)
           return
@@ -553,9 +535,6 @@ module Sidekiq
         end
 
         task.error!(exception)
-
-        # Unregister from Redis after error callback enqueue
-        @inflight_registry.unregister(task.id)
 
         @config.logger&.warn(
           "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \

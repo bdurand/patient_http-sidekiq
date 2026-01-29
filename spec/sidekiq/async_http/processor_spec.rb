@@ -5,7 +5,6 @@ require "spec_helper"
 RSpec.describe Sidekiq::AsyncHttp::Processor do
   let(:config) { Sidekiq::AsyncHttp.configuration }
   let(:processor) { described_class.new(config) }
-  let(:metrics) { processor.metrics }
 
   # Helper to create request tasks for testing
   def create_request_task(
@@ -54,17 +53,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
   end
 
   describe ".new" do
-    it "initializes with provided config and metrics" do
-      expect(processor.config).to eq(config)
-      expect(processor.metrics).to eq(metrics)
-    end
-
-    it "initializes with defaults if not provided" do
-      processor = described_class.new
-      expect(processor.config).to be_a(Sidekiq::AsyncHttp::Configuration)
-      expect(processor.metrics).to be_a(Sidekiq::AsyncHttp::Metrics)
-    end
-
     it "starts in stopped state" do
       expect(processor).to be_stopped
       expect(processor.state).to eq(:stopped)
@@ -571,12 +559,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
     let(:async_response) { instance_double(Async::HTTP::Protocol::Response) }
     let(:response_body) { instance_double(Protocol::HTTP::Body::Buffered) }
 
-    before do
-      allow(metrics).to receive(:record_request_start)
-      allow(metrics).to receive(:record_request_complete)
-      allow(metrics).to receive(:record_error)
-    end
-
     around do |example|
       processor.run do
         example.run
@@ -624,16 +606,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       allow(async_response).to receive(:protocol).and_return(protocol)
     end
 
-    it "records request start in metrics" do
-      stub_http_response
-
-      Async do
-        processor.send(:process_request, mock_request)
-      end
-
-      expect(metrics).to have_received(:record_request_start)
-    end
-
     it "builds Async::HTTP::Request from request object" do
       expected_request = nil
       stub_http_response
@@ -663,16 +635,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       end
 
       expect(response_body).to have_received(:each)
-    end
-
-    it "records request completion with duration" do
-      stub_http_response
-
-      Async do
-        processor.send(:process_request, mock_request)
-      end
-
-      expect(metrics).to have_received(:record_request_complete).with(kind_of(Float))
     end
 
     it "builds response with all attributes" do
@@ -719,7 +681,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
         allow(client).to receive(:call).and_raise(test_case[:error_class].new(test_case[:error_message]))
 
         expect(processor).to receive(:handle_error).with(mock_request, kind_of(test_case[:error_class]))
-        expect(metrics).to receive(:record_error).with(test_case[:error_type])
 
         Async do
           processor.send(:process_request, mock_request)
@@ -731,7 +692,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       stub_http_response(headers: {"content-length" => "20000000"})
 
       expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
-      expect(metrics).to receive(:record_error).with(:response_too_large)
 
       Async do
         processor.send(:process_request, mock_request)
@@ -746,7 +706,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       allow(response_body).to receive(:each).and_yield(large_chunk).and_yield(large_chunk)
 
       expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
-      expect(metrics).to receive(:record_error).with(:response_too_large)
 
       processor.run do
         Async do
@@ -759,7 +718,6 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       stub_http_response(headers: {"content-length" => "20000000"})
 
       expect(processor).to receive(:handle_error).with(mock_request, kind_of(Sidekiq::AsyncHttp::ResponseTooLargeError))
-      expect(metrics).to receive(:record_error).with(:response_too_large)
 
       Async do
         processor.send(:process_request, mock_request)
@@ -1096,17 +1054,11 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       )
       processor.enqueue(request)
 
-      # Wait for request to complete
-      processor.wait_for_idle(timeout: 2)
-
-      # Verify request completed (no in-flight)
-      expect(metrics.inflight_count).to eq(0)
-
       # Stop with timeout
-      processor.stop(timeout: 1)
+      processor.stop
 
       # Should have completed the request (still no in-flight after stop)
-      expect(metrics.inflight_count).to eq(0)
+      expect(processor.inflight_count).to eq(0)
     end
 
     it "re-enqueues incomplete requests when timeout expires" do

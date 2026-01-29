@@ -78,7 +78,6 @@ module Sidekiq::AsyncHttp
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
   autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
   autoload :Job, File.join(__dir__, "async_http/job")
-  autoload :Metrics, File.join(__dir__, "async_http/metrics")
   autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
@@ -321,12 +320,6 @@ module Sidekiq::AsyncHttp
     # @return [Processor, nil]
     # @api private
     attr_accessor :processor
-
-    # Returns the metrics from the processor
-    # @return [Metrics, nil]
-    def metrics
-      processor&.metrics
-    end
   end
 end
 

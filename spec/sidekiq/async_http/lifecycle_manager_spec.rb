@@ -218,26 +218,14 @@ RSpec.describe Sidekiq::AsyncHttp::LifecycleManager do
     end
   end
 
-  describe "#wait_for_idle" do
+  describe "#wait_for_condition" do
     it "returns true when block yields true" do
-      result = lifecycle.wait_for_idle(timeout: 0.1) { true }
+      result = lifecycle.wait_for_condition(timeout: 0.1) { true }
       expect(result).to be true
     end
 
     it "returns false when timeout reached" do
-      result = lifecycle.wait_for_idle(timeout: 0.01) { false }
-      expect(result).to be false
-    end
-  end
-
-  describe "#wait_for_processing" do
-    it "returns true when block yields true" do
-      result = lifecycle.wait_for_processing(timeout: 0.1) { true }
-      expect(result).to be true
-    end
-
-    it "returns false when timeout reached" do
-      result = lifecycle.wait_for_processing(timeout: 0.01) { false }
+      result = lifecycle.wait_for_condition(timeout: 0.01) { false }
       expect(result).to be false
     end
   end
