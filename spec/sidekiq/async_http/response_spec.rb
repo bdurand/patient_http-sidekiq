@@ -84,6 +84,35 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
       expect(response.callback_args).to be_a(Sidekiq::AsyncHttp::CallbackArgs)
       expect(response.callback_args).to be_empty
     end
+
+    it "accepts redirects array" do
+      response = described_class.new(
+        status: 200,
+        headers: {},
+        body: "",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com/final",
+        http_method: :get,
+        redirects: ["http://test.com/first", "http://test.com/second"]
+      )
+
+      expect(response.redirects).to eq(["http://test.com/first", "http://test.com/second"])
+    end
+
+    it "defaults redirects to empty array" do
+      response = described_class.new(
+        status: 200,
+        headers: {},
+        body: "",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com",
+        http_method: :get
+      )
+
+      expect(response.redirects).to eq([])
+    end
   end
 
   describe "#success?" do
@@ -417,7 +446,8 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         "request_id" => "req-123",
         "url" => "https://api.example.com/items",
         "http_method" => "post",
-        "callback_args" => {"user_id" => 123}
+        "callback_args" => {"user_id" => 123},
+        "redirects" => []
       })
     end
 
@@ -435,8 +465,25 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
       hash = response.as_json
 
       expect(hash.keys).to contain_exactly(
-        "status", "headers", "body", "duration", "request_id", "url", "http_method", "callback_args"
+        "status", "headers", "body", "duration", "request_id", "url", "http_method", "callback_args", "redirects"
       )
+    end
+
+    it "includes redirects in serialization" do
+      response = described_class.new(
+        status: 200,
+        headers: {},
+        body: "",
+        duration: 0.1,
+        request_id: "1",
+        url: "http://test.com/final",
+        http_method: :get,
+        redirects: ["http://test.com/first"]
+      )
+
+      hash = response.as_json
+
+      expect(hash["redirects"]).to eq(["http://test.com/first"])
     end
 
     it "handles nil body" do
@@ -466,7 +513,8 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
         "request_id" => "req-456",
         "url" => "https://example.com/page",
         "http_method" => "get",
-        "callback_args" => {"user_id" => 123}
+        "callback_args" => {"user_id" => 123},
+        "redirects" => ["https://example.com/first"]
       }
 
       response = described_class.load(hash)
@@ -479,6 +527,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
       expect(response.url).to eq("https://example.com/page")
       expect(response.http_method).to eq(:get)
       expect(response.callback_args[:user_id]).to eq(123)
+      expect(response.redirects).to eq(["https://example.com/first"])
     end
 
     it "round-trips through as_json" do

@@ -28,6 +28,9 @@ module Sidekiq
       # @return [Symbol] HTTP method
       attr_reader :http_method
 
+      # @return [Array<String>] URLs visited during redirect chain (empty if no redirects)
+      attr_reader :redirects
+
       class << self
         # Reconstruct a Response from a hash
         #
@@ -42,7 +45,8 @@ module Sidekiq
             request_id: hash["request_id"],
             url: hash["url"],
             http_method: hash["http_method"]&.to_sym,
-            callback_args: hash["callback_args"]
+            callback_args: hash["callback_args"],
+            redirects: hash["redirects"]
           )
         end
       end
@@ -57,7 +61,8 @@ module Sidekiq
       # @param url [String] the request URL
       # @param http_method [Symbol] the HTTP method
       # @param callback_args [Hash, nil] callback arguments (string keys)
-      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:, callback_args: nil)
+      # @param redirects [Array<String>, nil] URLs visited during redirect chain
+      def initialize(status:, headers:, body:, duration:, request_id:, url:, http_method:, callback_args: nil, redirects: nil)
         @status = status
         @headers = HttpHeaders.new(headers)
 
@@ -70,6 +75,7 @@ module Sidekiq
         @url = url
         @http_method = http_method
         @callback_args_data = callback_args || {}
+        @redirects = redirects || []
       end
 
       # Returns the callback arguments as a CallbackArgs object.
@@ -155,7 +161,8 @@ module Sidekiq
           "request_id" => request_id,
           "url" => url,
           "http_method" => http_method.to_s,
-          "callback_args" => @callback_args_data
+          "callback_args" => @callback_args_data,
+          "redirects" => @redirects
         }
       end
 

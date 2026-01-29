@@ -1245,4 +1245,221 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(log_output.string).to match(/\[Sidekiq::AsyncHttp\] Failed to re-enqueue request #{Regexp.escape(request.id)}/)
     end
   end
+
+  describe "redirect handling" do
+    it "follows 302 redirect with Location header" do
+      stub_request(:get, "https://api.example.com/old-path")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/new-path"})
+
+      stub_request(:get, "https://api.example.com/new-path")
+        .to_return(status: 200, body: "final response", headers: {})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/old-path")
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["url"]).to eq("https://api.example.com/new-path")
+      expect(response_data["redirects"]).to eq(["https://api.example.com/old-path"])
+    end
+
+    it "follows redirect chain" do
+      stub_request(:get, "https://api.example.com/1")
+        .to_return(status: 301, headers: {"Location" => "https://api.example.com/2"})
+
+      stub_request(:get, "https://api.example.com/2")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/3"})
+
+      stub_request(:get, "https://api.example.com/3")
+        .to_return(status: 200, body: "final", headers: {})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/1")
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["url"]).to eq("https://api.example.com/3")
+      expect(response_data["redirects"]).to eq([
+        "https://api.example.com/1",
+        "https://api.example.com/2"
+      ])
+    end
+
+    it "converts POST to GET on 302 redirect" do
+      stub_request(:post, "https://api.example.com/submit")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/result"})
+
+      stub_request(:get, "https://api.example.com/result")
+        .to_return(status: 200, body: "success", headers: {})
+
+      processor.start
+
+      request = create_request_task(method: :post, url: "https://api.example.com/submit", body: '{"data":"test"}')
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["http_method"]).to eq("get")
+    end
+
+    it "preserves POST method on 307 redirect" do
+      stub_request(:post, "https://api.example.com/submit")
+        .to_return(status: 307, headers: {"Location" => "https://api.example.com/new-submit"})
+
+      stub_request(:post, "https://api.example.com/new-submit")
+        .with(body: '{"data":"test"}')
+        .to_return(status: 200, body: "success", headers: {})
+
+      processor.start
+
+      request = create_request_task(method: :post, url: "https://api.example.com/submit", body: '{"data":"test"}')
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["http_method"]).to eq("post")
+    end
+
+    it "raises TooManyRedirectsError when max redirects exceeded" do
+      # Set up redirect loop that exceeds max
+      (1..10).each do |i|
+        stub_request(:get, "https://api.example.com/#{i}")
+          .to_return(status: 302, headers: {"Location" => "https://api.example.com/#{i + 1}"})
+      end
+
+      processor.start
+
+      # Use max_redirects of 3
+      request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/1", max_redirects: 3)
+      task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => SecureRandom.uuid, "args" => []},
+        completion_worker: "TestWorkers::CompletionWorker",
+        error_worker: "TestWorkers::ErrorWorker"
+      )
+      processor.enqueue(task)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
+      job = TestWorkers::ErrorWorker.jobs.first
+      error_data = job["args"].first
+      expect(error_data["error_class"]).to eq("TooManyRedirectsError")
+      expect(error_data["redirects"].size).to eq(4) # original + 3 redirects
+    end
+
+    it "raises RecursiveRedirectError on redirect loop" do
+      stub_request(:get, "https://api.example.com/a")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/b"})
+
+      stub_request(:get, "https://api.example.com/b")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/a"})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/a")
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
+      job = TestWorkers::ErrorWorker.jobs.first
+      error_data = job["args"].first
+      expect(error_data["error_class"]).to eq("RecursiveRedirectError")
+      expect(error_data["url"]).to eq("https://api.example.com/a")
+    end
+
+    it "does not follow redirect when max_redirects is 0" do
+      stub_request(:get, "https://api.example.com/old")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/new"})
+
+      processor.start
+
+      request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/old", max_redirects: 0)
+      task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => SecureRandom.uuid, "args" => []},
+        completion_worker: "TestWorkers::CompletionWorker",
+        error_worker: "TestWorkers::ErrorWorker"
+      )
+      processor.enqueue(task)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(302)
+      expect(response_data["redirects"]).to eq([])
+    end
+
+    it "handles relative redirect URLs" do
+      stub_request(:get, "https://api.example.com/path/old")
+        .to_return(status: 302, headers: {"Location" => "/path/new"})
+
+      stub_request(:get, "https://api.example.com/path/new")
+        .to_return(status: 200, body: "success", headers: {})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/path/old")
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(200)
+      expect(response_data["url"]).to eq("https://api.example.com/path/new")
+    end
+
+    it "does not follow redirect without Location header" do
+      stub_request(:get, "https://api.example.com/broken")
+        .to_return(status: 302, headers: {})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/broken")
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["status"]).to eq(302)
+      expect(response_data["redirects"]).to eq([])
+    end
+
+    it "preserves callback_args through redirect chain" do
+      stub_request(:get, "https://api.example.com/1")
+        .to_return(status: 302, headers: {"Location" => "https://api.example.com/2"})
+
+      stub_request(:get, "https://api.example.com/2")
+        .to_return(status: 200, body: "success", headers: {})
+
+      processor.start
+
+      request = create_request_task(url: "https://api.example.com/1", callback_args: {"user_id" => 123, "action" => "fetch"})
+      processor.enqueue(request)
+      processor.wait_for_idle(timeout: 2)
+
+      expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
+      job = TestWorkers::CompletionWorker.jobs.first
+      response_data = job["args"].first
+      expect(response_data["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+    end
+  end
 end

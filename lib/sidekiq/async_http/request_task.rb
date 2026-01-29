@@ -28,6 +28,9 @@ module Sidekiq::AsyncHttp
     # @return [Boolean] Whether to raise HttpError for non-2xx responses
     attr_reader :raise_error_responses
 
+    # @return [Array<String>] URLs visited during redirect chain
+    attr_reader :redirects
+
     # @return [Response, nil] The HTTP response, set on success
     attr_reader :response, :error
 
@@ -41,8 +44,16 @@ module Sidekiq::AsyncHttp
     #   in Response/Error objects. These will be accessible via response.callback_args
     #   or error.callback_args.
     # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses.
-    def initialize(request:, sidekiq_job:, completion_worker:, error_worker:, callback_args: {},
-      raise_error_responses: false)
+    # @param redirects [Array<String>] URLs visited during redirect chain.
+    def initialize(
+      request:,
+      sidekiq_job:,
+      completion_worker:,
+      error_worker:,
+      callback_args: {},
+      raise_error_responses: false,
+      redirects: []
+    )
       @id = SecureRandom.uuid
       @request = request
       @sidekiq_job = sidekiq_job
@@ -50,6 +61,7 @@ module Sidekiq::AsyncHttp
       @error_worker = error_worker
       @callback_args = callback_args || {}
       @raise_error_responses = raise_error_responses
+      @redirects = redirects || []
       @enqueued_at = nil
       @started_at = nil
       @completed_at = nil
@@ -189,6 +201,57 @@ module Sidekiq::AsyncHttp
       !@error.nil?
     end
 
+    # Returns the maximum number of redirects to follow.
+    # Uses the request's max_redirects if set, otherwise falls back to config.
+    #
+    # @return [Integer] maximum number of redirects
+    def max_redirects
+      request.max_redirects || Sidekiq::AsyncHttp.configuration.max_redirects
+    end
+
+    # Create a new RequestTask for following a redirect.
+    #
+    # @param location [String] The redirect URL from the Location header
+    # @param status [Integer] The HTTP status code of the redirect response
+    # @return [RequestTask] A new task configured for the redirect
+    def for_redirect(location:, status:)
+      # Determine the HTTP method and body for the redirect
+      # 301, 302, 303: Convert to GET (no body) - standard browser behavior
+      # 307, 308: Preserve original method and body
+      if [301, 302, 303].include?(status)
+        redirect_method = :get
+        redirect_body = nil
+      else
+        redirect_method = request.http_method
+        redirect_body = request.body
+      end
+
+      # Resolve the redirect URL (handle relative URLs)
+      redirect_url = resolve_redirect_url(location)
+
+      # Create a new request for the redirect
+      redirect_request = Request.new(
+        redirect_method,
+        redirect_url,
+        headers: request.headers,
+        body: redirect_body,
+        timeout: request.timeout,
+        connect_timeout: request.connect_timeout,
+        max_redirects: request.max_redirects
+      )
+
+      # Create the new task with updated redirects chain
+      self.class.new(
+        request: redirect_request,
+        sidekiq_job: @sidekiq_job,
+        completion_worker: @completion_worker,
+        error_worker: @error_worker,
+        callback_args: @callback_args,
+        raise_error_responses: @raise_error_responses,
+        redirects: @redirects + [request.url]
+      )
+    end
+
     # Build a Response object from async response data.
     #
     # @param status [Integer] HTTP status code
@@ -205,8 +268,26 @@ module Sidekiq::AsyncHttp
         request_id: id,
         url: request.url,
         http_method: request.http_method,
-        callback_args: @callback_args
+        callback_args: @callback_args,
+        redirects: @redirects
       )
+    end
+
+    private
+
+    # Resolve a redirect URL, handling relative URLs.
+    #
+    # @param location [String] The Location header value
+    # @return [String] The resolved absolute URL
+    def resolve_redirect_url(location)
+      base_uri = URI.parse(request.url)
+      redirect_uri = URI.parse(location)
+
+      # If the redirect URL is absolute, use it directly
+      return location if redirect_uri.absolute?
+
+      # Otherwise, resolve it relative to the original URL
+      base_uri.merge(redirect_uri).to_s
     end
   end
 end

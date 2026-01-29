@@ -14,6 +14,9 @@ module Sidekiq
       DEQUEUE_TIMEOUT = 1.0          # Seconds to wait when dequeueing requests
       INFLIGHT_UPDATE_INTERVAL = 5   # Seconds between inflight stats updates
 
+      # HTTP redirect status codes that should be followed
+      FOLLOWABLE_REDIRECT_STATUSES = [301, 302, 303, 307, 308].freeze
+
       # @return [Configuration] the configuration object for the processor
       attr_reader :config
 
@@ -387,6 +390,12 @@ module Sidekiq
 
           return if stopping? || stopped?
 
+          # Check for redirect handling
+          if should_follow_redirect?(task, response_data)
+            handle_redirect(task, response_data)
+            return
+          end
+
           response = task.build_response(**response_data)
           if task.raise_error_responses && !response.success?
             http_error = HttpError.new(response)
@@ -433,6 +442,103 @@ module Sidekiq
           "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
           "enqueued #{task.completion_worker}"
         )
+      end
+
+      # Check if a redirect response should be followed.
+      #
+      # @param task [RequestTask] the request task
+      # @param response_data [Hash] the response data with status, headers, body
+      # @return [Boolean] true if the redirect should be followed
+      def should_follow_redirect?(task, response_data)
+        status = response_data[:status]
+        return false unless FOLLOWABLE_REDIRECT_STATUSES.include?(status)
+
+        # Check if redirects are enabled for this task
+        return false if task.max_redirects == 0
+
+        # Check for Location header
+        location = response_data[:headers]["location"]
+        return false if location.nil? || location.empty?
+
+        true
+      end
+
+      # Handle a redirect response.
+      #
+      # @param task [RequestTask] the request task
+      # @param response_data [Hash] the response data with status, headers, body
+      # @return [void]
+      def handle_redirect(task, response_data)
+        status = response_data[:status]
+        location = response_data[:headers]["location"]
+        redirect_url = resolve_redirect_url(task.request.url, location)
+
+        # Check for redirect errors
+        error = check_too_many_redirects(task, location) || check_recursive_redirect(task, redirect_url)
+        if error
+          @metrics.record_error(:redirect)
+          @stats.record_error(:redirect)
+          handle_error(task, error)
+          return
+        end
+
+        # Create redirect task and enqueue it
+        redirect_task = task.for_redirect(location: location, status: status)
+        redirect_task.enqueued!
+        @queue.push(redirect_task)
+
+        @config.logger&.debug("[Sidekiq::AsyncHttp] Request #{task.id} redirected (#{status}) to #{redirect_url}")
+      end
+
+      # Check if the redirect count has exceeded the maximum.
+      #
+      # @param task [RequestTask] the request task
+      # @param location [String] the redirect location URL
+      # @return [TooManyRedirectsError, nil] error if exceeded, nil otherwise
+      def check_too_many_redirects(task, location)
+        return nil if task.redirects.size < task.max_redirects
+
+        TooManyRedirectsError.new(
+          url: location,
+          http_method: task.request.http_method,
+          duration: task.duration,
+          request_id: task.id,
+          redirects: task.redirects + [task.request.url],
+          callback_args: task.callback_args.to_h
+        )
+      end
+
+      # Check if the redirect URL has already been visited (redirect loop).
+      #
+      # @param task [RequestTask] the request task
+      # @param redirect_url [String] the resolved redirect URL
+      # @return [RecursiveRedirectError, nil] error if loop detected, nil otherwise
+      def check_recursive_redirect(task, redirect_url)
+        visited_urls = task.redirects + [task.request.url]
+        return nil unless visited_urls.include?(redirect_url)
+
+        RecursiveRedirectError.new(
+          url: redirect_url,
+          http_method: task.request.http_method,
+          duration: task.duration,
+          request_id: task.id,
+          redirects: visited_urls,
+          callback_args: task.callback_args.to_h
+        )
+      end
+
+      # Resolve a redirect URL, handling relative URLs.
+      #
+      # @param base_url [String] The base URL
+      # @param location [String] The Location header value
+      # @return [String] The resolved absolute URL
+      def resolve_redirect_url(base_url, location)
+        base_uri = URI.parse(base_url)
+        redirect_uri = URI.parse(location)
+
+        return location if redirect_uri.absolute?
+
+        base_uri.merge(redirect_uri).to_s
       end
 
       # Handle error response.
