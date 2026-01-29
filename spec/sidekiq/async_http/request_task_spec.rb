@@ -219,6 +219,8 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(job["args"].size).to eq(1)
       response_json = job["args"].first
       expect(response_json["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+      expect(task.duration).to be > 0
+      expect(task.completed_at).not_to be_nil
     end
 
     it "uses empty callback_args when not provided" do
@@ -238,6 +240,8 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         url: "https://api.example.com/users",
         http_method: :get
       )
+      task.started!
+      sleep(0.001)
 
       task.completed!(response)
       expect(TestWorkers::CompletionWorker.jobs.size).to eq(1)
@@ -259,6 +263,8 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       )
 
       exception = StandardError.new("Something went wrong")
+      task.started!
+      sleep(0.001)
 
       task.error!(exception)
       expect(task.error).to eq(exception)
@@ -269,6 +275,8 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(job["args"].size).to eq(1)
       error_json = job["args"].first
       expect(error_json["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+      expect(task.duration).to be > 0
+      expect(task.completed_at).not_to be_nil
     end
 
     it "uses empty callback_args when not provided" do

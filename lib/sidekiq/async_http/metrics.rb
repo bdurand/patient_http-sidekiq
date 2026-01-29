@@ -16,7 +16,6 @@ module Sidekiq
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @inflight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
-        @http_errors_by_status = Concurrent::Map.new
       end
 
       # Record the start of a request
@@ -52,20 +51,6 @@ module Sidekiq
 
         # Get or create atomic counter for this error type and increment it
         counter = @errors_by_type.compute_if_absent(error_type) do
-          Concurrent::AtomicFixnum.new(0)
-        end
-        counter.increment
-      end
-
-      # Record an HTTP error (non-2xx response when raise_error_responses is enabled)
-      #
-      # @param status [Integer] HTTP status code
-      # @return [void]
-      def record_http_error(status)
-        @error_count.increment
-
-        # Get or create atomic counter for this status code and increment it
-        counter = @http_errors_by_status.compute_if_absent(status) do
           Concurrent::AtomicFixnum.new(0)
         end
         counter.increment
@@ -119,17 +104,6 @@ module Sidekiq
         result.freeze
       end
 
-      # Get HTTP errors grouped by status code
-      #
-      # @return [Hash<Integer, Integer>] frozen hash of status code to count
-      def http_errors_by_status
-        result = {}
-        @http_errors_by_status.each_pair do |status, count|
-          result[status] = count.value
-        end
-        result.freeze
-      end
-
       # Get total refused request count
       #
       # @return [Integer]
@@ -147,7 +121,6 @@ module Sidekiq
           "average_duration" => average_duration,
           "error_count" => error_count,
           "errors_by_type" => errors_by_type,
-          "http_errors_by_status" => http_errors_by_status,
           "refused_count" => @refused_count.value
         }
       end
@@ -161,7 +134,6 @@ module Sidekiq
         @total_duration = Concurrent::AtomicReference.new(0.0)
         @inflight_requests = Concurrent::AtomicFixnum.new(0)
         @errors_by_type = Concurrent::Map.new
-        @http_errors_by_status = Concurrent::Map.new
         @refused_count = Concurrent::AtomicFixnum.new(0)
         @last_inflight_update = Concurrent::AtomicReference.new(Time.now.to_f)
       end

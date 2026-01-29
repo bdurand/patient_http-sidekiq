@@ -32,6 +32,7 @@ module Sidekiq::AsyncHttp
       return unless first_arg_class_name.is_a?(String)
 
       first_arg_class = ClassHelper.resolve_class_name(first_arg_class_name)
+      return if first_arg_class.nil?
       return unless first_arg_class <= Response || first_arg_class <= Error
 
       job["args"][0] = first_arg_class.load(first_arg)

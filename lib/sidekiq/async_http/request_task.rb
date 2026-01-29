@@ -19,7 +19,7 @@ module Sidekiq::AsyncHttp
     # @return [String] Class name for the success callback worker
     attr_reader :completion_worker
 
-    # @return [String, nil] Class name for the error callback worker, optional
+    # @return [String] Class name for the error callback worker
     attr_reader :error_worker
 
     # @return [Hash] Callback arguments to include in Response/Error objects (never nil, defaults to empty hash)
@@ -169,6 +169,8 @@ module Sidekiq::AsyncHttp
       end
 
       worker_class = ClassHelper.resolve_class_name(@error_worker)
+      raise "Error worker class #{@error_worker} not found" unless worker_class
+
       worker_class.set(async_http_continuation: "error").perform_async(wrapped_error)
     end
 
