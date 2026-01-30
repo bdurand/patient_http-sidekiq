@@ -8,7 +8,6 @@ module Sidekiq
 
       # Timing constants for the reactor loop
       DEQUEUE_TIMEOUT = 1.0          # Seconds to wait when dequeueing requests
-      INFLIGHT_UPDATE_INTERVAL = 5   # Seconds between inflight stats updates
 
       # HTTP redirect status codes that should be followed
       FOLLOWABLE_REDIRECT_STATUSES = [301, 302, 303, 307, 308].freeze
@@ -43,6 +42,7 @@ module Sidekiq
           -> { @tasks_lock.synchronize { @inflight_requests.keys } }
         )
         @inflight_requests = Concurrent::Hash.new
+        @inflight_task_ids = Concurrent::Hash.new  # Maps task.id -> registry task_id
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
         @testing_callback = nil
@@ -102,16 +102,15 @@ module Sidekiq
           @lifecycle.stopped!
           tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
           @inflight_requests.clear
+          @inflight_task_ids.clear
           @pending_tasks.clear
         end
-
-        # Clean up process-specific keys from Redis
-        @stats.cleanup_process_keys
 
         # Re-enqueue each incomplete task
         tasks_to_reenqueue.each do |task|
           # Re-enqueue the original job
           task.reenqueue_job
+          @inflight_registry.unregister(task)
 
           # Log re-enqueue
           @config.logger&.info(
@@ -124,6 +123,8 @@ module Sidekiq
 
           raise if AsyncHttp.testing?
         end
+
+        @inflight_registry.remove_process
 
         @reactor_thread.join(1) if @reactor_thread&.alive?
         @reactor_thread.kill if @reactor_thread&.alive?
@@ -287,16 +288,9 @@ module Sidekiq
 
           @config.logger&.info("[Sidekiq::AsyncHttp] Processor started")
 
-          last_inflight_update = monotonic_time - INFLIGHT_UPDATE_INTERVAL
           # Main loop: monitor shutdown/drain and process requests
           loop do
             break if stopping? || stopped?
-
-            # Update inflight stats periodically
-            if monotonic_time - last_inflight_update >= INFLIGHT_UPDATE_INTERVAL
-              @stats.update_inflight(inflight_count, @config.max_connections)
-              last_inflight_update = monotonic_time
-            end
 
             # Pop request task from queue with timeout to periodically check shutdown
             request_task = dequeue_request(timeout: DEQUEUE_TIMEOUT)
@@ -345,10 +339,13 @@ module Sidekiq
       # @param task [RequestTask] the request task to process
       # @return [void]
       def process_request(task)
+        full_task_id = @inflight_registry.task_id_for(task)
+
         # Move from pending to in-flight tracking
         @tasks_lock.synchronize do
           @pending_tasks.delete(task.id)
-          @inflight_requests[task.id] = task
+          @inflight_requests[full_task_id] = task
+          @inflight_task_ids[task.id] = full_task_id
         end
 
         # Register in Redis for crash recovery
@@ -399,9 +396,10 @@ module Sidekiq
         ensure
           # Remove from in-flight tracking
           @tasks_lock.synchronize do
-            @inflight_requests.delete(task.id)
+            @inflight_requests.delete(full_task_id)
+            @inflight_task_ids.delete(task.id)
           end
-          @inflight_registry.unregister(task.id)
+          @inflight_registry.unregister(task)
           @stats.record_request(task.response&.status, task.duration)
 
           @testing_callback&.call(task) if AsyncHttp.testing?

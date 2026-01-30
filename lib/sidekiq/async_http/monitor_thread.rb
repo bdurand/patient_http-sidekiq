@@ -41,14 +41,17 @@ module Sidekiq
         @running.make_true
         @stop_signal.reset
 
+        @inflight_registry.ping_process
+
         @thread = Thread.new do
-          Thread.current.name = "async-http-monitor"
           run
         rescue => e
           # Log error but don't crash
           @config.logger&.error("[Sidekiq::AsyncHttp] Monitor error: #{e.message}\n#{e.backtrace.join("\n")}")
           raise if AsyncHttp.testing?
         end
+
+        @thread.name = "async-http-monitor"
       end
 
       # Stop the monitor thread.
@@ -87,7 +90,9 @@ module Sidekiq
 
           # Update heartbeats for all inflight requests
           if current_time - last_heartbeat_update >= @config.heartbeat_interval
-            update_heartbeats
+            request_ids = @inflight_ids_callback.call
+            @inflight_registry.ping_process
+            update_heartbeats(request_ids)
             last_heartbeat_update = current_time
           end
 
@@ -108,9 +113,10 @@ module Sidekiq
 
       # Update heartbeats for all inflight requests.
       #
+      # @param request_ids [Array<String>] the request IDs to update heartbeats for
+      #
       # @return [void]
-      def update_heartbeats
-        request_ids = @inflight_ids_callback.call
+      def update_heartbeats(request_ids)
         return if request_ids.empty?
 
         @inflight_registry.update_heartbeats(request_ids)

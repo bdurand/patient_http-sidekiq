@@ -19,23 +19,17 @@ module Sidekiq
           app.get "/async-http" do
             stats = Sidekiq::AsyncHttp::Stats.new
 
-            # Get process-level inflight and capacity data
-            all_inflight = stats.get_all_inflight
-            processes = all_inflight.transform_values do |data|
-              {
-                inflight: data[:count],
-                max_capacity: data[:max]
-              }
-            end
+            # Get process-level inflight and capacity data from InflightRegistry
+            processes = Sidekiq::AsyncHttp::InflightRegistry.inflight_counts_by_process
 
             # Get totals and calculate derived values
             totals = stats.get_totals
             total_requests = totals["requests"] || 0
             avg_duration = (total_requests > 0) ? ((totals["duration"] || 0).to_f / total_requests).round(3) : 0.0
 
-            # Capacity metrics
-            max_capacity = stats.get_total_max_connections
-            current_inflight = stats.get_total_inflight
+            # Capacity metrics from InflightRegistry
+            max_capacity = processes.values.sum { |data| data[:max_capacity] }
+            current_inflight = processes.values.sum { |data| data[:inflight] }
             utilization = (max_capacity > 0) ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
 
             erb(:async_http, views: Sidekiq::AsyncHttp::WebUI::VIEWS, locals: {
@@ -53,31 +47,6 @@ module Sidekiq
           app.post "/async-http/clear" do
             Sidekiq::AsyncHttp::Stats.new.reset!
             redirect "#{root_path}async-http"
-          end
-
-          # API endpoint for fetching stats as JSON
-          app.get "/api/async-http/stats" do
-            stats = Sidekiq::AsyncHttp::Stats.new
-
-            # Get process-level inflight and capacity data
-            all_inflight = stats.get_all_inflight
-            processes = all_inflight.transform_values do |data|
-              {
-                inflight: data[:count],
-                max_capacity: data[:max]
-              }
-            end
-
-            # Compile response
-            response = {
-              totals: stats.get_totals,
-              current_inflight: stats.get_total_inflight,
-              max_capacity: stats.get_total_max_connections,
-              processes: processes,
-              timestamp: Time.now.utc.iso8601
-            }
-
-            json(response)
           end
         end
       end
