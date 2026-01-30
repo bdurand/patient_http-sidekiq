@@ -27,7 +27,7 @@ module Sidekiq
         # @param hash [Hash] hash representation
         # @return [RedirectError] reconstructed error
         def load(hash)
-          error_class = (hash["error_class"] == "TooManyRedirectsError") ? TooManyRedirectsError : RecursiveRedirectError
+          error_class = ClassHelper.resolve_class_name(hash["error_class"])
           error_class.new(
             url: hash["url"],
             http_method: hash["http_method"]&.to_sym,
@@ -82,7 +82,7 @@ module Sidekiq
       # @return [Hash] hash representation
       def as_json
         {
-          "error_class" => self.class.name.split("::").last,
+          "error_class" => self.class.name,
           "url" => url,
           "http_method" => http_method.to_s,
           "duration" => duration,

@@ -68,7 +68,7 @@ module Sidekiq
 
         # Get all inflight counts across all processes and the number of max connections.
         #
-        # @return [Hash] hash of "hostname:pid:hex" => { count: Integer, max: Integer }
+        # @return [Hash] hash of "hostname:pid" => { inflight: Integer, max_capacity: Integer }
         def inflight_counts_by_process
           process_ids = nil
           max_connections = nil

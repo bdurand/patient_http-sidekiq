@@ -6,7 +6,7 @@ RSpec.describe Sidekiq::AsyncHttp::RedirectError do
   describe ".load" do
     it "reconstructs TooManyRedirectsError from hash" do
       hash = {
-        "error_class" => "TooManyRedirectsError",
+        "error_class" => Sidekiq::AsyncHttp::TooManyRedirectsError.name,
         "url" => "https://example.com/final",
         "http_method" => "get",
         "duration" => 1.0,
@@ -26,7 +26,7 @@ RSpec.describe Sidekiq::AsyncHttp::RedirectError do
 
     it "reconstructs RecursiveRedirectError from hash" do
       hash = {
-        "error_class" => "RecursiveRedirectError",
+        "error_class" => Sidekiq::AsyncHttp::RecursiveRedirectError,
         "url" => "https://example.com/cycle",
         "http_method" => "post",
         "duration" => 0.5,
@@ -82,7 +82,7 @@ RSpec.describe Sidekiq::AsyncHttp::TooManyRedirectsError do
 
       hash = error.as_json
 
-      expect(hash["error_class"]).to eq("TooManyRedirectsError")
+      expect(hash["error_class"]).to eq(Sidekiq::AsyncHttp::TooManyRedirectsError.name)
       expect(hash["url"]).to eq("https://example.com/final")
       expect(hash["http_method"]).to eq("post")
       expect(hash["duration"]).to eq(2.0)

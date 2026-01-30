@@ -1311,7 +1311,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       job = TestWorkers::ErrorWorker.jobs.first
       error_data = job["args"].first
-      expect(error_data["error_class"]).to eq("TooManyRedirectsError")
+      expect(error_data["error_class"]).to eq(Sidekiq::AsyncHttp::TooManyRedirectsError.name)
       expect(error_data["redirects"].size).to eq(4) # original + 3 redirects
     end
 
@@ -1331,7 +1331,7 @@ RSpec.describe Sidekiq::AsyncHttp::Processor do
       expect(TestWorkers::ErrorWorker.jobs.size).to eq(1)
       job = TestWorkers::ErrorWorker.jobs.first
       error_data = job["args"].first
-      expect(error_data["error_class"]).to eq("RecursiveRedirectError")
+      expect(error_data["error_class"]).to eq(Sidekiq::AsyncHttp::RecursiveRedirectError.name)
       expect(error_data["url"]).to eq("https://api.example.com/a")
     end
 

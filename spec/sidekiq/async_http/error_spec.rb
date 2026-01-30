@@ -23,7 +23,7 @@ RSpec.describe Sidekiq::AsyncHttp::Error do
 
     it "dispatches to RedirectError for redirect errors" do
       hash = {
-        "error_class" => "TooManyRedirectsError",
+        "error_class" => Sidekiq::AsyncHttp::TooManyRedirectsError.name,
         "url" => "https://example.com",
         "http_method" => "get",
         "duration" => 1.0,
