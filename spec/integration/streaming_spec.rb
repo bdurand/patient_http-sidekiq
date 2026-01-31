@@ -6,7 +6,7 @@ RSpec.describe "Streaming Response Integration", :integration do
   let(:config) do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 3
-      c.default_request_timeout = 10
+      c.request_timeout = 10
     end
   end
 

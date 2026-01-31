@@ -49,14 +49,14 @@ RSpec.describe Sidekiq::AsyncHttp do
       config = described_class.configure do |c|
         c.max_connections = 512
         c.idle_connection_timeout = 120
-        c.default_request_timeout = 60
+        c.request_timeout = 60
         c.shutdown_timeout = 30
         c.logger = custom_logger
       end
 
       expect(config.max_connections).to eq(512)
       expect(config.idle_connection_timeout).to eq(120)
-      expect(config.default_request_timeout).to eq(60)
+      expect(config.request_timeout).to eq(60)
       expect(config.shutdown_timeout).to eq(30)
       expect(config.logger).to eq(custom_logger)
     end

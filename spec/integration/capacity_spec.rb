@@ -8,7 +8,7 @@ RSpec.describe "Capacity Limit Integration", :integration do
   let(:config) do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 2 # Set low limit for testing
-      c.default_request_timeout = 10
+      c.request_timeout = 10
     end
   end
 

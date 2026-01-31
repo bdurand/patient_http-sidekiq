@@ -75,7 +75,6 @@ module Sidekiq::AsyncHttp
   autoload :TooManyRedirectsError, File.join(__dir__, "async_http/redirect_error")
   autoload :RecursiveRedirectError, File.join(__dir__, "async_http/redirect_error")
   autoload :RequestError, File.join(__dir__, "async_http/request_error")
-  autoload :HttpClientFactory, File.join(__dir__, "async_http/http_client_factory")
   autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
   autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
@@ -85,7 +84,6 @@ module Sidekiq::AsyncHttp
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
   autoload :Processor, File.join(__dir__, "async_http/processor")
   autoload :Request, File.join(__dir__, "async_http/request")
-  autoload :RequestBuilder, File.join(__dir__, "async_http/request_builder")
   autoload :RequestTask, File.join(__dir__, "async_http/request_task")
   autoload :Response, File.join(__dir__, "async_http/response")
   autoload :ResponseReader, File.join(__dir__, "async_http/response_reader")
@@ -211,7 +209,6 @@ module Sidekiq::AsyncHttp
     # @param body [String, nil] request body
     # @param json [Object, nil] JSON object to serialize as body
     # @param timeout [Float] request timeout in seconds
-    # @param connect_timeout [Float, nil] connection open timeout in seconds
     # @param sidekiq_job [Sidekiq::Job, nil] the Sidekiq job context for the current worker
     # @return [String] request ID
     def request(
@@ -223,11 +220,10 @@ module Sidekiq::AsyncHttp
       body: nil,
       json: nil,
       timeout: nil,
-      connect_timeout: nil,
       raise_error_responses: nil,
       sidekiq_job: nil
     )
-      client = Client.new(timeout: timeout, connect_timeout: connect_timeout)
+      client = Client.new(timeout: timeout)
       request = client.async_request(method, url, body: body, json: json, headers: headers)
       request.execute(
         completion_worker_class: completion_worker,

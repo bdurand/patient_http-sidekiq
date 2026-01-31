@@ -20,20 +20,15 @@ module Sidekiq::AsyncHttp
     # @return [Float] Default request timeout in seconds
     attr_accessor :timeout
 
-    # @return [Float, nil] Default connection timeout in seconds
-    attr_accessor :connect_timeout
-
     # Initializes a new Client.
     #
     # @param base_url [String, URI::HTTP, nil] Base URL for relative URIs
     # @param headers [Hash] Default headers for all requests
     # @param timeout [Float] Default request timeout in seconds
-    # @param connect_timeout [Float, nil] Default connection timeout in seconds
-    def initialize(base_url: nil, headers: {}, timeout: 30, connect_timeout: nil)
+    def initialize(base_url: nil, headers: {}, timeout: 30)
       @base_url = base_url
       @headers = HttpHeaders.new(headers)
       @timeout = timeout
-      @connect_timeout = connect_timeout
     end
 
     # Build an async HTTP request. Returns a Request. The Request object that must have
@@ -45,7 +40,7 @@ module Sidekiq::AsyncHttp
     # @param headers [Hash] additional headers to merge with client headers
     # @param params [Hash] query parameters to add to URL
     # @return [Request] request object
-    def async_request(method, uri, body: nil, json: nil, headers: {}, params: {}, timeout: nil, connect_timeout: nil)
+    def async_request(method, uri, body: nil, json: nil, headers: {}, params: {}, timeout: nil)
       full_uri = @base_url ? URI.join(@base_url, uri.to_s) : URI(uri)
       if params.any?
         query_string = URI.encode_www_form(params)
@@ -70,8 +65,7 @@ module Sidekiq::AsyncHttp
         full_uri.to_s,
         headers: merged_headers.to_h,
         body: request_body,
-        timeout: timeout || @timeout,
-        connect_timeout: connect_timeout || @connect_timeout
+        timeout: timeout || @timeout
       )
     end
 

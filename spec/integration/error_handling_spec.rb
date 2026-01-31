@@ -8,7 +8,7 @@ RSpec.describe "Error Handling Integration", :integration do
   let(:config) do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 10
-      c.default_request_timeout = 5
+      c.request_timeout = 5
     end
   end
 
@@ -68,7 +68,7 @@ RSpec.describe "Error Handling Integration", :integration do
   describe "connection errors" do
     it "calls error worker with connection error when server is not listening" do
       # Make request to a port that's not listening
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "http://127.0.0.1:1", connect_timeout: 0.1)
+      client = Sidekiq::AsyncHttp::Client.new(base_url: "http://127.0.0.1:1")
       request = client.async_get("/nowhere")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(

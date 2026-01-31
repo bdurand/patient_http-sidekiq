@@ -10,22 +10,22 @@ module Sidekiq
       # @return [Integer] Maximum number of concurrent connections
       attr_reader :max_connections
 
-      # @return [Integer] Idle connection timeout in seconds
+      # @return [Numeric] Idle connection timeout in seconds
       attr_reader :idle_connection_timeout
 
-      # @return [Integer] Default request timeout in seconds
-      attr_reader :default_request_timeout
+      # @return [Numeric] Default request timeout in seconds
+      attr_reader :request_timeout
 
-      # @return [Integer] Graceful shutdown timeout in seconds
+      # @return [Numeric] Graceful shutdown timeout in seconds
       attr_reader :shutdown_timeout
 
       # @return [Integer] Maximum response size in bytes
       attr_reader :max_response_size
 
-      # @return [Integer] Heartbeat update interval in seconds
+      # @return [Numeric] Heartbeat update interval in seconds
       attr_reader :heartbeat_interval
 
-      # @return [Integer] Orphan detection threshold in seconds
+      # @return [Numeric] Orphan detection threshold in seconds
       attr_reader :orphan_threshold
 
       # @return [String, nil] Default User-Agent header value
@@ -40,9 +40,9 @@ module Sidekiq
       # Initializes a new Configuration with the specified options.
       #
       # @param max_connections [Integer] Maximum number of concurrent connections
-      # @param idle_connection_timeout [Integer] Idle connection timeout in seconds
-      # @param default_request_timeout [Integer] Default request timeout in seconds
-      # @param shutdown_timeout [Integer] Graceful shutdown timeout in seconds
+      # @param idle_connection_timeout [Numeric] Idle connection timeout in seconds
+      # @param request_timeout [Numeric] Default request timeout in seconds
+      # @param shutdown_timeout [Numeric] Graceful shutdown timeout in seconds
       # @param logger [Logger, nil] Logger instance to use
       # @param max_response_size [Integer] Maximum response size in bytes
       # @param heartbeat_interval [Integer] Interval for updating inflight request heartbeats in seconds
@@ -53,19 +53,19 @@ module Sidekiq
       def initialize(
         max_connections: 256,
         idle_connection_timeout: 60,
-        default_request_timeout: 60,
+        request_timeout: 60,
         shutdown_timeout: (Sidekiq.default_configuration[:timeout] || 25) - 2,
         logger: nil,
         max_response_size: 1024 * 1024,
         heartbeat_interval: 60,
         orphan_threshold: 300,
-        user_agent: nil,
+        user_agent: "Sidekiq-AsyncHttp",
         raise_error_responses: false,
         max_redirects: 5
       )
         self.max_connections = max_connections
         self.idle_connection_timeout = idle_connection_timeout
-        self.default_request_timeout = default_request_timeout
+        self.request_timeout = request_timeout
         self.shutdown_timeout = shutdown_timeout
         self.logger = logger
         self.max_response_size = max_response_size
@@ -94,9 +94,9 @@ module Sidekiq
         @idle_connection_timeout = value
       end
 
-      def default_request_timeout=(value)
-        validate_positive(:default_request_timeout, value)
-        @default_request_timeout = value
+      def request_timeout=(value)
+        validate_positive(:request_timeout, value)
+        @request_timeout = value
       end
 
       def shutdown_timeout=(value)
@@ -132,7 +132,7 @@ module Sidekiq
         {
           "max_connections" => max_connections,
           "idle_connection_timeout" => idle_connection_timeout,
-          "default_request_timeout" => default_request_timeout,
+          "request_timeout" => request_timeout,
           "shutdown_timeout" => shutdown_timeout,
           "logger" => logger,
           "max_response_size" => max_response_size,

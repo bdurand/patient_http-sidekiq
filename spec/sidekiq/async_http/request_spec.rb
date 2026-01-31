@@ -15,7 +15,12 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
 
       expect(request.http_method).to eq(:get)
       expect(request.url).to eq("https://api.example.com/users")
-      expect(request.headers.to_h).to eq({"authorization" => "Bearer token"})
+      expect(request.headers.to_h).to eq(
+        {
+          "authorization" => "Bearer token",
+          "user-agent" => Sidekiq::AsyncHttp.configuration.user_agent.to_s
+        }
+      )
       expect(request.body).to be_nil
       expect(request.timeout).to eq(30)
     end
@@ -98,6 +103,36 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
         expect do
           described_class.new(:get, 123)
         end.to raise_error(ArgumentError, "url must be a String or URI, got: Integer")
+      end
+
+      it "validates body is not allowed for GET requests" do
+        expect do
+          described_class.new(:get, "https://example.com", body: "some body")
+        end.to raise_error(ArgumentError, "body is not allowed for GET requests")
+      end
+
+      it "validates body is not allowed for DELETE requests" do
+        expect do
+          described_class.new(:delete, "https://example.com", body: "some body")
+        end.to raise_error(ArgumentError, "body is not allowed for DELETE requests")
+      end
+
+      it "validates body must be a String when provided" do
+        expect do
+          described_class.new(:post, "https://example.com", body: {data: "value"})
+        end.to raise_error(ArgumentError, "body must be a String, got: Hash")
+      end
+
+      it "allows nil body for POST requests" do
+        expect do
+          described_class.new(:post, "https://example.com", body: nil)
+        end.not_to raise_error
+      end
+
+      it "allows String body for POST requests" do
+        expect do
+          described_class.new(:post, "https://example.com", body: '{"data":"value"}')
+        end.not_to raise_error
       end
     end
   end

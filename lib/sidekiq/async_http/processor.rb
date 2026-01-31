@@ -28,8 +28,7 @@ module Sidekiq
       # @return [void]
       def initialize(config = nil)
         @config = config || Sidekiq::AsyncHttp.configuration
-        @http_client_factory = HttpClientFactory.new(@config)
-        @request_builder = RequestBuilder.new(@config)
+        @http_client = Async::HTTP::Internet.new(retries: 1, limit: @config.max_connections)
         @response_reader = ResponseReader.new(@config)
         @lifecycle = LifecycleManager.new
         @stats = Stats.new(@config)
@@ -355,13 +354,13 @@ module Sidekiq
         task.started!
 
         begin
-          client = @http_client_factory.build(task.request)
-          http_request = @request_builder.build(task.request)
-          http_request.headers.add("x-request-id", task.id)
+          req = task.request
+          headers = req.headers.to_h.merge("x-request-id" => task.id)
+          body = Protocol::HTTP::Body::Buffered.wrap([req.body.to_s]) if req.body
 
           # Execute with timeout
-          response_data = Async::Task.current.with_timeout(task.request.timeout || @config.default_request_timeout) do
-            async_response = client.call(http_request)
+          response_data = Async::Task.current.with_timeout(task.request.timeout || @config.request_timeout) do
+            async_response = @http_client.call(req.http_method, req.url, headers, body)
             headers_hash = async_response.headers.to_h.transform_values(&:to_s)
             body = @response_reader.read_body(async_response, headers_hash) unless stopping? || stopped?
 

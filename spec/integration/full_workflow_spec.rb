@@ -8,7 +8,7 @@ RSpec.describe "Full Workflow Integration", :integration do
   let(:config) do
     Sidekiq::AsyncHttp::Configuration.new.tap do |c|
       c.max_connections = 10
-      c.default_request_timeout = 5
+      c.request_timeout = 5
     end
   end
 

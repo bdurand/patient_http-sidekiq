@@ -28,11 +28,6 @@ RSpec.describe Sidekiq::AsyncHttp::Client do
       expect(client.timeout).to eq(60)
     end
 
-    it "allows custom connect_timeout" do
-      client = described_class.new(connect_timeout: 10)
-      expect(client.connect_timeout).to eq(10)
-    end
-
     it "initializes with empty headers by default" do
       client = described_class.new
       expect(client.headers.to_h).to eq({})
@@ -303,12 +298,6 @@ RSpec.describe Sidekiq::AsyncHttp::Client do
       client = described_class.new
       client.timeout = 45
       expect(client.timeout).to eq(45)
-    end
-
-    it "allows setting and getting connect_timeout" do
-      client = described_class.new
-      client.connect_timeout = 5
-      expect(client.connect_timeout).to eq(5)
     end
   end
 end

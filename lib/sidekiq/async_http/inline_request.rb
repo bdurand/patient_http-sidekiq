@@ -74,11 +74,12 @@ module Sidekiq::AsyncHttp
     # @param request [Request] the request object
     # @return [Net::HTTPResponse] the HTTP response
     def make_http_request(request)
+      timeout = request.timeout || Sidekiq::AsyncHttp.configuration.request_timeout
       uri = URI.parse(request.url)
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = (uri.scheme == "https")
-      http.open_timeout = request.connect_timeout if request.connect_timeout
-      http.read_timeout = request.timeout if request.timeout
+      http.open_timeout = timeout
+      http.read_timeout = timeout
       http.request(construct_net_http_request(request))
     end
 
@@ -106,11 +107,6 @@ module Sidekiq::AsyncHttp
         req[key] = value
       end
       req["x-request-id"] = @task.id
-
-      unless request.headers["user-agent"]
-        user_agent = Sidekiq::AsyncHttp.configuration.user_agent&.to_s || RequestBuilder::DEFAULT_USER_AGENT
-        req["user-agent"] = user_agent
-      end
 
       # Set body if present
       req.body = request.body if request.body

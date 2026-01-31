@@ -316,7 +316,6 @@ class FlexibleWorker
   def perform(url, method, data = nil)
     client = Sidekiq::AsyncHttp::Client.new(
       timeout: 120,
-      connect_timeout: 10,
       headers: {"User-Agent" => "MyApp/1.0"}
     )
 
@@ -443,7 +442,7 @@ Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = 256
 
   # Default timeout for HTTP requests in seconds (default: 60)
-  config.default_request_timeout = 60
+  config.request_timeout = 60
 
   # Default User-Agent header for all requests (optional)
   config.user_agent = "MyApp/1.0"
@@ -477,7 +476,7 @@ See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) d
 ### Tuning Tips
 
 - `max_connections`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
-- `default_request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
+- `request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
 - `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
 
 > [!IMPORTANT]

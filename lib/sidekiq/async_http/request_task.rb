@@ -236,7 +236,6 @@ module Sidekiq::AsyncHttp
         headers: request.headers,
         body: redirect_body,
         timeout: request.timeout,
-        connect_timeout: request.connect_timeout,
         max_redirects: request.max_redirects
       )
 
