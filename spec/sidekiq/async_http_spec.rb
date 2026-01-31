@@ -532,28 +532,133 @@ RSpec.describe Sidekiq::AsyncHttp do
   describe "HTTP request helpers" do
     describe ".request" do
       it "enqueues an async HTTP request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/data")
+        request_id = described_class.request(:get, "https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
 
+      it "passes through all options to the worker" do
+        request = Sidekiq::AsyncHttp::Request.new(
+          :post,
+          "https://api.example.com/submit",
+          headers: {"Content-Type" => "application/json"},
+          body: '{"name":"test"}'
+        )
+
+        request_id = described_class.request(
+          :post,
+          "https://api.example.com/submit",
+          callback: TestCallback,
+          headers: {"Content-Type" => "application/json"},
+          body: '{"name":"test"}',
+          raise_error_responses: true,
+          callback_args: {user_id: 42}
+        )
+
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(true)
+        expect(callback_args).to eq({"user_id" => 42})
+        expect(req_id).to eq(request_id)
+      end
+
+      it "can pass the request body as json" do
+        request = Sidekiq::AsyncHttp::Request.new(
+          :post,
+          "https://api.example.com/submit",
+          headers: {"Content-Type" => "application/json; encoding=utf-8"},
+          body: JSON.generate({"name" => "test"})
+        )
+
+        described_class.request(
+          :post,
+          "https://api.example.com/submit",
+          callback: TestCallback,
+          json: {name: "test"}
+        )
+
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, _, _, _, _ = job["args"]
+        expect(request_data).to eq(request.as_json)
       end
     end
 
     describe ".get" do
-      it "enqueues an async GET request in a worker"
+      it "enqueues an async GET request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/data")
+        request_id = described_class.get("https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
     end
 
     describe ".post" do
-      it "enqueues an async POST request in a worker"
+      it "enqueues an async POST request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:post, "https://api.example.com/data")
+        request_id = described_class.post("https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
     end
 
     describe ".put" do
-      it "enqueues an async PUT request in a worker"
+      it "enqueues an async PUT request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:put, "https://api.example.com/data")
+        request_id = described_class.put("https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
     end
 
     describe ".patch" do
-      it "enqueues an async PATCH request in a worker"
+      it "enqueues an async PATCH request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:patch, "https://api.example.com/data")
+        request_id = described_class.patch("https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
     end
 
     describe ".delete" do
-      it "enqueues an async DELETE request in a worker"
+      it "enqueues an async DELETE request in a worker" do
+        request = Sidekiq::AsyncHttp::Request.new(:delete, "https://api.example.com/data")
+        request_id = described_class.delete("https://api.example.com/data", callback: TestCallback)
+        job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
+        expect(request_data).to eq(request.as_json)
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(nil)
+        expect(callback_args).to eq(nil)
+        expect(req_id).to eq(request_id)
+      end
     end
   end
 end

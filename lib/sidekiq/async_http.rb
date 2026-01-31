@@ -79,7 +79,6 @@ module Sidekiq::AsyncHttp
   autoload :RequestWorker, File.join(__dir__, "async_http/request_worker")
   autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
-  autoload :Job, File.join(__dir__, "async_http/job")
   autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
@@ -193,8 +192,8 @@ module Sidekiq::AsyncHttp
     # @param callback_args [Hash, nil] arguments to pass to callback via response/error
     # @return [String] request ID
     def request(
-      method:,
-      url:,
+      method,
+      url,
       callback:,
       headers: {},
       body: nil,
@@ -214,42 +213,47 @@ module Sidekiq::AsyncHttp
 
     # Convenience method for GET requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def get(url, **options)
-      request(method: :get, url: url, **options)
+    def get(url, callback:, **options)
+      request(:get, url, callback: callback, **options)
     end
 
     # Convenience method for POST requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def post(url, **options)
-      request(method: :post, url: url, **options)
+    def post(url, callback:, **options)
+      request(:post, url, callback: callback, **options)
     end
 
     # Convenience method for PUT requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def put(url, **options)
-      request(method: :put, url: url, **options)
+    def put(url, callback:, **options)
+      request(:put, url, callback: callback, **options)
     end
 
     # Convenience method for PATCH requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def patch(url, **options)
-      request(method: :patch, url: url, **options)
+    def patch(url, callback:, **options)
+      request(:patch, url, callback: callback, **options)
     end
 
     # Convenience method for DELETE requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def delete(url, **options)
-      request(method: :delete, url: url, **options)
+    def delete(url, callback:, **options)
+      request(:delete, url, callback: callback, **options)
     end
 
     # Start the processor

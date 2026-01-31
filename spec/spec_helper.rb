@@ -88,7 +88,7 @@ RSpec.configure do |config|
   # Flush Redis database after each test
   config.before do |_example|
     Sidekiq.redis(&:flushdb)
-    Sidekiq::Worker.clear_all
+    Sidekiq::Job.clear_all
   end
 
   config.after do
@@ -146,7 +146,7 @@ class TestCallback
   end
 end
 
-# Test worker that records all job calls
+# Test worker used in shutdown specs.
 class TestWorker
   include Sidekiq::Job
 
@@ -167,22 +167,5 @@ class TestWorker
 
   def perform(*args)
     self.class.record_call(*args)
-  end
-end
-
-# Test worker with pre-configured HTTP client
-class TestWorkerWithClient
-  include Sidekiq::AsyncHttp::Job
-
-  async_http_client base_url: "https://example.org", headers: {"X-Custom-Header" => "Test"}
-
-  callback do
-    def on_complete(response)
-      TestCallback.record_completion(response)
-    end
-
-    def on_error(error)
-      TestCallback.record_error(error)
-    end
   end
 end
