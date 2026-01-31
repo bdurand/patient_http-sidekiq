@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "concurrent"
-require "async"
-require "async/queue"
-require "async/http"
 module Sidekiq
   module AsyncHttp
     # Core processor that handles async HTTP requests in a dedicated thread
@@ -12,13 +8,12 @@ module Sidekiq
 
       # Timing constants for the reactor loop
       DEQUEUE_TIMEOUT = 1.0          # Seconds to wait when dequeueing requests
-      INFLIGHT_UPDATE_INTERVAL = 5   # Seconds between inflight stats updates
+
+      # HTTP redirect status codes that should be followed
+      FOLLOWABLE_REDIRECT_STATUSES = [301, 302, 303, 307, 308].freeze
 
       # @return [Configuration] the configuration object for the processor
       attr_reader :config
-
-      # @return [Metrics] the metrics maintained by the processor
-      attr_reader :metrics
 
       # @return [InflightRegistry] the inflight request registry
       attr_reader :inflight_registry
@@ -37,7 +32,6 @@ module Sidekiq
         @request_builder = RequestBuilder.new(@config)
         @response_reader = ResponseReader.new(@config)
         @lifecycle = LifecycleManager.new
-        @metrics = Metrics.new
         @stats = Stats.new(@config)
         @inflight_registry = InflightRegistry.new(@config)
         @queue = Thread::Queue.new
@@ -48,6 +42,7 @@ module Sidekiq
           -> { @tasks_lock.synchronize { @inflight_requests.keys } }
         )
         @inflight_requests = Concurrent::Hash.new
+        @inflight_task_ids = Concurrent::Hash.new  # Maps task.id -> registry task_id
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
         @testing_callback = nil
@@ -107,16 +102,15 @@ module Sidekiq
           @lifecycle.stopped!
           tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
           @inflight_requests.clear
+          @inflight_task_ids.clear
           @pending_tasks.clear
         end
-
-        # Clean up process-specific keys from Redis
-        @stats.cleanup_process_keys
 
         # Re-enqueue each incomplete task
         tasks_to_reenqueue.each do |task|
           # Re-enqueue the original job
           task.reenqueue_job
+          @inflight_registry.unregister(task)
 
           # Log re-enqueue
           @config.logger&.info(
@@ -129,6 +123,8 @@ module Sidekiq
 
           raise if AsyncHttp.testing?
         end
+
+        @inflight_registry.remove_process
 
         @reactor_thread.join(1) if @reactor_thread&.alive?
         @reactor_thread.kill if @reactor_thread&.alive?
@@ -160,7 +156,6 @@ module Sidekiq
 
         # Check capacity - raise error if at max connections
         if inflight_count >= @config.max_connections
-          @metrics.record_refused
           @stats.record_refused
           raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
@@ -254,7 +249,7 @@ module Sidekiq
       # @return [Boolean] true if processing completed, false if timeout reached
       # @api private
       def wait_for_idle(timeout: 1)
-        @lifecycle.wait_for_idle(timeout: timeout) { idle? }
+        @lifecycle.wait_for_condition(timeout: timeout) { idle? }
       end
 
       # Wait for at least one request to start processing. This is mainly for use in tests.
@@ -263,7 +258,7 @@ module Sidekiq
       # @return [Boolean] true if a request started processing, false if timeout reached
       # @api private
       def wait_for_processing(timeout: 1)
-        @lifecycle.wait_for_processing(timeout: timeout) do
+        @lifecycle.wait_for_condition(timeout: timeout) do
           !@inflight_requests.empty? || !@pending_tasks.empty?
         end
       end
@@ -293,16 +288,9 @@ module Sidekiq
 
           @config.logger&.info("[Sidekiq::AsyncHttp] Processor started")
 
-          last_inflight_update = monotonic_time - INFLIGHT_UPDATE_INTERVAL
           # Main loop: monitor shutdown/drain and process requests
           loop do
             break if stopping? || stopped?
-
-            # Update inflight stats periodically
-            if monotonic_time - last_inflight_update >= INFLIGHT_UPDATE_INTERVAL
-              @stats.update_inflight(inflight_count, @config.max_connections)
-              last_inflight_update = monotonic_time
-            end
 
             # Pop request task from queue with timeout to periodically check shutdown
             request_task = dequeue_request(timeout: DEQUEUE_TIMEOUT)
@@ -351,10 +339,13 @@ module Sidekiq
       # @param task [RequestTask] the request task to process
       # @return [void]
       def process_request(task)
+        full_task_id = @inflight_registry.task_id_for(task)
+
         # Move from pending to in-flight tracking
         @tasks_lock.synchronize do
           @pending_tasks.delete(task.id)
-          @inflight_requests[task.id] = task
+          @inflight_requests[full_task_id] = task
+          @inflight_task_ids[task.id] = full_task_id
         end
 
         # Register in Redis for crash recovery
@@ -362,9 +353,6 @@ module Sidekiq
 
         # Mark task as started
         task.started!
-
-        # Record request start
-        @metrics.record_request_start
 
         begin
           client = @http_client_factory.build(task.request)
@@ -387,10 +375,15 @@ module Sidekiq
 
           return if stopping? || stopped?
 
+          # Check for redirect handling
+          if should_follow_redirect?(task, response_data)
+            handle_redirect(task, response_data)
+            return
+          end
+
           response = task.build_response(**response_data)
           if task.raise_error_responses && !response.success?
             http_error = HttpError.new(response)
-            @metrics.record_error(http_error.error_type)
             @stats.record_error(http_error.error_type)
             handle_error(task, http_error)
           else
@@ -398,15 +391,15 @@ module Sidekiq
           end
         rescue => e
           error_type = RequestError.error_type(e)
-          @metrics.record_error(error_type)
           @stats.record_error(error_type)
           handle_error(task, e)
         ensure
           # Remove from in-flight tracking
           @tasks_lock.synchronize do
-            @inflight_requests.delete(task.id)
+            @inflight_requests.delete(full_task_id)
+            @inflight_task_ids.delete(task.id)
           end
-          @metrics.record_request_complete(task.duration)
+          @inflight_registry.unregister(task)
           @stats.record_request(task.response&.status, task.duration)
 
           @testing_callback&.call(task) if AsyncHttp.testing?
@@ -426,13 +419,106 @@ module Sidekiq
 
         task.completed!(response)
 
-        # Unregister from Redis after successful callback enqueue
-        @inflight_registry.unregister(task.id)
-
         @config.logger&.debug(
           "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
           "enqueued #{task.completion_worker}"
         )
+      end
+
+      # Check if a redirect response should be followed.
+      #
+      # @param task [RequestTask] the request task
+      # @param response_data [Hash] the response data with status, headers, body
+      # @return [Boolean] true if the redirect should be followed
+      def should_follow_redirect?(task, response_data)
+        status = response_data[:status]
+        return false unless FOLLOWABLE_REDIRECT_STATUSES.include?(status)
+
+        # Check if redirects are enabled for this task
+        return false if task.max_redirects == 0
+
+        # Check for Location header
+        location = response_data[:headers]["location"]
+        return false if location.nil? || location.empty?
+
+        true
+      end
+
+      # Handle a redirect response.
+      #
+      # @param task [RequestTask] the request task
+      # @param response_data [Hash] the response data with status, headers, body
+      # @return [void]
+      def handle_redirect(task, response_data)
+        status = response_data[:status]
+        location = response_data[:headers]["location"]
+        redirect_url = resolve_redirect_url(task.request.url, location)
+
+        # Check for redirect errors
+        error = check_too_many_redirects(task, location) || check_recursive_redirect(task, redirect_url)
+        if error
+          @stats.record_error(:redirect)
+          handle_error(task, error)
+          return
+        end
+
+        # Create redirect task and enqueue it
+        redirect_task = task.for_redirect(location: location, status: status)
+        redirect_task.enqueued!
+        @queue.push(redirect_task)
+
+        @config.logger&.debug("[Sidekiq::AsyncHttp] Request #{task.id} redirected (#{status}) to #{redirect_url}")
+      end
+
+      # Check if the redirect count has exceeded the maximum.
+      #
+      # @param task [RequestTask] the request task
+      # @param location [String] the redirect location URL
+      # @return [TooManyRedirectsError, nil] error if exceeded, nil otherwise
+      def check_too_many_redirects(task, location)
+        return nil if task.redirects.size < task.max_redirects
+
+        TooManyRedirectsError.new(
+          url: location,
+          http_method: task.request.http_method,
+          duration: task.duration,
+          request_id: task.id,
+          redirects: task.redirects + [task.request.url],
+          callback_args: task.callback_args.to_h
+        )
+      end
+
+      # Check if the redirect URL has already been visited (redirect loop).
+      #
+      # @param task [RequestTask] the request task
+      # @param redirect_url [String] the resolved redirect URL
+      # @return [RecursiveRedirectError, nil] error if loop detected, nil otherwise
+      def check_recursive_redirect(task, redirect_url)
+        visited_urls = task.redirects + [task.request.url]
+        return nil unless visited_urls.include?(redirect_url)
+
+        RecursiveRedirectError.new(
+          url: redirect_url,
+          http_method: task.request.http_method,
+          duration: task.duration,
+          request_id: task.id,
+          redirects: visited_urls,
+          callback_args: task.callback_args.to_h
+        )
+      end
+
+      # Resolve a redirect URL, handling relative URLs.
+      #
+      # @param base_url [String] The base URL
+      # @param location [String] The Location header value
+      # @return [String] The resolved absolute URL
+      def resolve_redirect_url(base_url, location)
+        base_uri = URI.parse(base_url)
+        redirect_uri = URI.parse(location)
+
+        return location if redirect_uri.absolute?
+
+        base_uri.merge(redirect_uri).to_s
       end
 
       # Handle error response.
@@ -447,9 +533,6 @@ module Sidekiq
         end
 
         task.error!(exception)
-
-        # Unregister from Redis after error callback enqueue
-        @inflight_registry.unregister(task.id)
 
         @config.logger&.warn(
           "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \

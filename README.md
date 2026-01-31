@@ -438,7 +438,6 @@ end
 The gem can be configured globally in an initializer:
 
 ```ruby
-# config/initializers/sidekiq_async_http.rb
 Sidekiq::AsyncHttp.configure do |config|
   # Maximum concurrent HTTP requests (default: 256)
   config.max_connections = 256

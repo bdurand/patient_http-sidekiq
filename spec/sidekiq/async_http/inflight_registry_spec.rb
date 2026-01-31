@@ -25,19 +25,12 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
   end
 
   describe "#register" do
-    it "adds request to Redis sorted set and hash" do
+    it "adds request to registry" do
       registry.register(task)
 
-      Sidekiq.redis do |redis|
-        # Check sorted set
-        expect(redis.zcard(described_class::INFLIGHT_INDEX_KEY)).to eq(1)
-        expect(redis.zscore(described_class::INFLIGHT_INDEX_KEY, task.id)).to be > 0
-
-        # Check hash
-        job_payload = redis.hget(described_class::INFLIGHT_JOBS_KEY, task.id)
-        expect(job_payload).not_to be_nil
-        expect(JSON.parse(job_payload)).to eq(sidekiq_job)
-      end
+      expect(registry.registered?(task)).to be true
+      expect(registry.inflight_count).to eq(1)
+      expect(registry.heartbeat_timestamp_for(task)).to be > 0
     end
 
     it "sets TTL on both keys" do
@@ -62,34 +55,11 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       registry.register(task)
     end
 
-    it "removes request from both Redis structures" do
-      registry.unregister(task.id)
+    it "removes request from registry" do
+      registry.unregister(task)
 
-      Sidekiq.redis do |redis|
-        expect(redis.zcard(described_class::INFLIGHT_INDEX_KEY)).to eq(0)
-        expect(redis.hexists(described_class::INFLIGHT_JOBS_KEY, task.id)).to eq(0)
-      end
-    end
-  end
-
-  describe "#update_heartbeat" do
-    before do
-      registry.register(task)
-      sleep(0.01) # Small delay to ensure timestamp changes
-    end
-
-    it "updates the timestamp for a request" do
-      old_score = Sidekiq.redis do |redis|
-        redis.zscore(described_class::INFLIGHT_INDEX_KEY, task.id)
-      end
-
-      registry.update_heartbeat(task.id)
-
-      new_score = Sidekiq.redis do |redis|
-        redis.zscore(described_class::INFLIGHT_INDEX_KEY, task.id)
-      end
-
-      expect(new_score).to be > old_score
+      expect(registry.registered?(task)).to be false
+      expect(registry.inflight_count).to eq(0)
     end
   end
 
@@ -110,24 +80,23 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
     end
 
     it "updates timestamps for multiple requests" do
-      old_scores = Sidekiq.redis do |redis|
-        [
-          redis.zscore(described_class::INFLIGHT_INDEX_KEY, task.id),
-          redis.zscore(described_class::INFLIGHT_INDEX_KEY, task2.id)
-        ]
-      end
+      full_task_id = registry.task_id_for(task)
+      full_task_id2 = registry.task_id_for(task2)
 
-      registry.update_heartbeats([task.id, task2.id])
+      old_timestamps = [
+        registry.heartbeat_timestamp_for(task),
+        registry.heartbeat_timestamp_for(task2)
+      ]
 
-      new_scores = Sidekiq.redis do |redis|
-        [
-          redis.zscore(described_class::INFLIGHT_INDEX_KEY, task.id),
-          redis.zscore(described_class::INFLIGHT_INDEX_KEY, task2.id)
-        ]
-      end
+      registry.update_heartbeats([full_task_id, full_task_id2])
 
-      expect(new_scores[0]).to be > old_scores[0]
-      expect(new_scores[1]).to be > old_scores[1]
+      new_timestamps = [
+        registry.heartbeat_timestamp_for(task),
+        registry.heartbeat_timestamp_for(task2)
+      ]
+
+      expect(new_timestamps[0]).to be > old_timestamps[0]
+      expect(new_timestamps[1]).to be > old_timestamps[1]
     end
 
     it "handles empty array" do
@@ -195,9 +164,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       # Manually set its timestamp to be old
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
-      Sidekiq.redis do |redis|
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-      end
+      set_task_timestamp(registry, task, old_timestamp_ms)
 
       # Expect job to be re-enqueued
       expect(Sidekiq::Client).to receive(:push).with(sidekiq_job)
@@ -206,11 +173,9 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       expect(count).to eq(1)
 
-      # Request should be removed from Redis
-      Sidekiq.redis do |redis|
-        expect(redis.zcard(described_class::INFLIGHT_INDEX_KEY)).to eq(0)
-        expect(redis.hexists(described_class::INFLIGHT_JOBS_KEY, task.id)).to eq(0)
-      end
+      # Request should be removed from registry
+      expect(registry.registered?(task)).to be false
+      expect(registry.inflight_count).to eq(0)
     end
 
     it "does not re-enqueue recent requests" do
@@ -222,34 +187,29 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       expect(count).to eq(0)
 
-      # Request should still be in Redis
-      Sidekiq.redis do |redis|
-        expect(redis.zcard(described_class::INFLIGHT_INDEX_KEY)).to eq(1)
-      end
+      # Request should still be in registry
+      expect(registry.registered?(task)).to be true
+      expect(registry.inflight_count).to eq(1)
     end
 
-    it "handles race condition when heartbeat updated during cleanup" do
+    it "handles race condition atomically with Lua script" do
       # Register a task
       registry.register(task)
+      registry.task_id_for(task)
 
       # Set old timestamp
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
-      Sidekiq.redis do |redis|
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-      end
+      set_task_timestamp(registry, task, old_timestamp_ms)
 
-      # Simulate heartbeat update in another thread right before removal
-      allow(Sidekiq::Client).to receive(:push) do
-        # Update heartbeat to current time
-        registry.update_heartbeat(task.id)
-      end
+      # The Lua script atomically checks and removes, so there's no race window.
+      # This test verifies the atomic behavior by checking that exactly one
+      # re-enqueue happens when the task is orphaned.
+      expect(Sidekiq::Client).to receive(:push).once.with(sidekiq_job)
 
-      # This should detect the race and not remove the request
       count = registry.cleanup_orphaned_requests(300, logger)
 
-      # Job may or may not be enqueued depending on timing, but it shouldn't be removed from Redis
-      # if the heartbeat was updated
-      expect(count).to be <= 1
+      expect(count).to eq(1)
+      expect(registry.registered?(task)).to be false
     end
 
     it "handles multiple orphaned requests" do
@@ -273,10 +233,8 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       # Make first two old, leave third recent
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
-      Sidekiq.redis do |redis|
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task2.id)
-      end
+      set_task_timestamp(registry, task, old_timestamp_ms)
+      set_task_timestamp(registry, task2, old_timestamp_ms)
 
       expect(Sidekiq::Client).to receive(:push).twice
 
@@ -297,10 +255,8 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       registry.register(task2)
 
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
-      Sidekiq.redis do |redis|
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-        redis.zadd(described_class::INFLIGHT_INDEX_KEY, old_timestamp_ms, task2.id)
-      end
+      set_task_timestamp(registry, task, old_timestamp_ms)
+      set_task_timestamp(registry, task2, old_timestamp_ms)
 
       # First push fails, second succeeds
       call_count = 0
@@ -314,6 +270,94 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       count = registry.cleanup_orphaned_requests(300, logger)
 
       expect(count).to eq(1)
+    end
+  end
+
+  describe "#ping_process" do
+    it "adds process to the process set" do
+      registry.ping_process
+
+      expect(described_class.registered_process_ids.size).to eq(1)
+    end
+
+    it "stores max connections for the process" do
+      registry.ping_process
+
+      max_conn = described_class.total_max_connections
+      expect(max_conn).to eq(config.max_connections)
+    end
+  end
+
+  describe ".inflight_counts_by_process" do
+    it "returns all inflight counts and max connections" do
+      registry.ping_process
+      registry.register(task)
+
+      all_inflight = described_class.inflight_counts_by_process
+      expect(all_inflight).to be_a(Hash)
+      expect(all_inflight.size).to eq(1)
+      expect(all_inflight.values.first[:inflight]).to eq(1)
+      expect(all_inflight.values.first[:max_capacity]).to eq(config.max_connections)
+    end
+
+    it "returns empty hash when no inflight data" do
+      all_inflight = described_class.inflight_counts_by_process
+      expect(all_inflight).to eq({})
+    end
+
+    it "removes stale process entries" do
+      # Add a fake process entry without corresponding max_connections key
+      Sidekiq.redis do |redis|
+        redis.sadd(described_class::PROCESS_SET_KEY, "stale_process_id")
+      end
+
+      all_inflight = described_class.inflight_counts_by_process
+      expect(all_inflight).to eq({})
+
+      # Verify the stale entry was removed
+      expect(described_class.registered_process_ids).not_to include("stale_process_id")
+    end
+  end
+
+  describe ".inflight_count" do
+    it "sums all inflight counts" do
+      registry.ping_process
+      registry.register(task)
+
+      total = described_class.inflight_count
+      expect(total).to eq(1)
+    end
+
+    it "returns 0 when no inflight data" do
+      total = described_class.inflight_count
+      expect(total).to eq(0)
+    end
+  end
+
+  describe ".total_max_connections" do
+    it "sums all max connections" do
+      registry.ping_process
+
+      total = described_class.total_max_connections
+      expect(total).to eq(config.max_connections)
+    end
+
+    it "returns 0 when no max connections data" do
+      total = described_class.total_max_connections
+      expect(total).to eq(0)
+    end
+
+    it "removes stale process entries" do
+      # Add a fake process entry without corresponding max_connections key
+      Sidekiq.redis do |redis|
+        redis.sadd(described_class::PROCESS_SET_KEY, "stale_process_id")
+      end
+
+      total = described_class.total_max_connections
+      expect(total).to eq(0)
+
+      # Verify the stale entry was removed
+      expect(described_class.registered_process_ids).not_to include("stale_process_id")
     end
   end
 
@@ -336,8 +380,118 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       expect(registry.inflight_count).to eq(2)
 
-      registry.unregister(task.id)
+      registry.unregister(task)
       expect(registry.inflight_count).to eq(1)
+    end
+  end
+
+  describe "#registered?" do
+    it "returns false for unregistered task" do
+      expect(registry.registered?(task)).to be false
+    end
+
+    it "returns true for registered task" do
+      registry.register(task)
+      expect(registry.registered?(task)).to be true
+    end
+
+    it "returns false after task is unregistered" do
+      registry.register(task)
+      registry.unregister(task)
+      expect(registry.registered?(task)).to be false
+    end
+  end
+
+  describe "#heartbeat_timestamp_for" do
+    it "returns nil for unregistered task" do
+      expect(registry.heartbeat_timestamp_for(task)).to be_nil
+    end
+
+    it "returns timestamp for registered task" do
+      registry.register(task)
+      timestamp = registry.heartbeat_timestamp_for(task)
+
+      expect(timestamp).to be_a(Integer)
+      expect(timestamp).to be > 0
+    end
+
+    it "returns updated timestamp after heartbeat" do
+      registry.register(task)
+      old_timestamp = registry.heartbeat_timestamp_for(task)
+
+      sleep(0.01)
+      registry.update_heartbeats([registry.task_id_for(task)])
+
+      new_timestamp = registry.heartbeat_timestamp_for(task)
+      expect(new_timestamp).to be > old_timestamp
+    end
+  end
+
+  describe "#registered_task_ids" do
+    it "returns empty array when no tasks registered" do
+      expect(registry.registered_task_ids).to eq([])
+    end
+
+    it "returns task IDs for this registry only" do
+      registry.register(task)
+
+      task2 = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
+        completion_worker: "TestWorker::CompletionCallback",
+        error_worker: "TestWorker::ErrorCallback"
+      )
+      registry.register(task2)
+
+      task_ids = registry.registered_task_ids
+      expect(task_ids.size).to eq(2)
+      expect(task_ids).to include(registry.task_id_for(task))
+      expect(task_ids).to include(registry.task_id_for(task2))
+    end
+
+    it "does not include tasks from other registries" do
+      registry.register(task)
+
+      other_registry = described_class.new(config)
+      other_task = Sidekiq::AsyncHttp::RequestTask.new(
+        request: request,
+        sidekiq_job: sidekiq_job.merge("jid" => "other-jid"),
+        completion_worker: "TestWorker::CompletionCallback",
+        error_worker: "TestWorker::ErrorCallback"
+      )
+      other_registry.register(other_task)
+
+      expect(registry.registered_task_ids.size).to eq(1)
+      expect(other_registry.registered_task_ids.size).to eq(1)
+    end
+  end
+
+  describe ".registered_process_ids" do
+    it "returns empty array when no processes registered" do
+      expect(described_class.registered_process_ids).to eq([])
+    end
+
+    it "returns process IDs after ping" do
+      registry.ping_process
+
+      process_ids = described_class.registered_process_ids
+      expect(process_ids.size).to eq(1)
+    end
+  end
+
+  describe ".clear_all!" do
+    it "clears all registry data" do
+      registry.ping_process
+      registry.register(task)
+      registry.acquire_gc_lock
+
+      expect(registry.inflight_count).to eq(1)
+      expect(described_class.registered_process_ids.size).to eq(1)
+
+      described_class.clear_all!
+
+      expect(registry.inflight_count).to eq(0)
+      expect(described_class.registered_process_ids).to eq([])
     end
   end
 end

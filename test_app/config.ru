@@ -60,6 +60,10 @@ map "/error" do
   run ->(_env) { [500, {"Content-Type" => "text/plain; charset=utf-8"}, ["Internal Server Error"]] }
 end
 
+map "/redirect" do
+  run ->(_env) { [302, {"Location" => "/time"}, []] }
+end
+
 map "/styles.css" do
   run StylesAction.new
 end

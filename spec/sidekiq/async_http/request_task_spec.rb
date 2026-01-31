@@ -69,6 +69,52 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(task.callback_args).to eq({})
     end
 
+    it "accepts redirects array" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker,
+        redirects: ["https://example.com/1", "https://example.com/2"]
+      )
+
+      expect(task.redirects).to eq(["https://example.com/1", "https://example.com/2"])
+    end
+
+    it "defaults redirects to empty array" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker
+      )
+
+      expect(task.redirects).to eq([])
+    end
+
+    it "uses request max_redirects when set" do
+      request_with_redirects = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com", max_redirects: 3)
+      task = described_class.new(
+        request: request_with_redirects,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker
+      )
+
+      expect(task.max_redirects).to eq(3)
+    end
+
+    it "uses config max_redirects as fallback" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker
+      )
+
+      expect(task.max_redirects).to eq(Sidekiq::AsyncHttp.configuration.max_redirects)
+    end
+
     it "generates a unique ID" do
       task1 = described_class.new(
         request: request,
@@ -295,6 +341,188 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
       expect(job["args"].size).to eq(1)
       error_json = job["args"].first
       expect(error_json["callback_args"]).to eq({})
+    end
+  end
+
+  describe "#for_redirect" do
+    let(:post_request) do
+      Sidekiq::AsyncHttp::Request.new(:post, "https://api.example.com/submit", body: '{"data":"value"}', timeout: 30)
+    end
+
+    it "creates a new task for the redirect URL" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker
+      )
+
+      redirect_task = task.for_redirect(location: "https://api.example.com/new-location", status: 302)
+
+      expect(redirect_task).to be_a(described_class)
+      expect(redirect_task.request.url).to eq("https://api.example.com/new-location")
+      expect(redirect_task.id).not_to eq(task.id)
+    end
+
+    it "adds the original URL to the redirects chain" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker,
+        redirects: ["https://example.com/first"]
+      )
+
+      redirect_task = task.for_redirect(location: "https://api.example.com/third", status: 302)
+
+      expect(redirect_task.redirects).to eq(["https://example.com/first", "https://api.example.com/users"])
+    end
+
+    it "preserves callback workers and args" do
+      task = described_class.new(
+        request: request,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker,
+        callback_args: {"user_id" => 123}
+      )
+
+      redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 301)
+
+      expect(redirect_task.completion_worker).to eq(completion_worker)
+      expect(redirect_task.error_worker).to eq(error_worker)
+      expect(redirect_task.callback_args).to eq({"user_id" => 123})
+    end
+
+    it "preserves max_redirects setting from request" do
+      request_with_max = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/users", max_redirects: 3)
+      task = described_class.new(
+        request: request_with_max,
+        sidekiq_job: sidekiq_job,
+        completion_worker: completion_worker,
+        error_worker: error_worker
+      )
+
+      redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 302)
+
+      expect(redirect_task.max_redirects).to eq(3)
+    end
+
+    context "with 301, 302, 303 redirects" do
+      it "converts POST to GET and removes body for 301" do
+        task = described_class.new(
+          request: post_request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 301)
+
+        expect(redirect_task.request.http_method).to eq(:get)
+        expect(redirect_task.request.body).to be_nil
+      end
+
+      it "converts POST to GET and removes body for 302" do
+        task = described_class.new(
+          request: post_request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 302)
+
+        expect(redirect_task.request.http_method).to eq(:get)
+        expect(redirect_task.request.body).to be_nil
+      end
+
+      it "converts POST to GET and removes body for 303" do
+        task = described_class.new(
+          request: post_request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 303)
+
+        expect(redirect_task.request.http_method).to eq(:get)
+        expect(redirect_task.request.body).to be_nil
+      end
+    end
+
+    context "with 307, 308 redirects" do
+      it "preserves method and body for 307" do
+        task = described_class.new(
+          request: post_request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 307)
+
+        expect(redirect_task.request.http_method).to eq(:post)
+        expect(redirect_task.request.body).to eq('{"data":"value"}')
+      end
+
+      it "preserves method and body for 308" do
+        task = described_class.new(
+          request: post_request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 308)
+
+        expect(redirect_task.request.http_method).to eq(:post)
+        expect(redirect_task.request.body).to eq('{"data":"value"}')
+      end
+    end
+
+    context "with relative URLs" do
+      it "resolves relative URL against base URL" do
+        task = described_class.new(
+          request: request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "/new-path", status: 302)
+
+        expect(redirect_task.request.url).to eq("https://api.example.com/new-path")
+      end
+
+      it "resolves relative URL with query string" do
+        task = described_class.new(
+          request: request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "/search?q=test", status: 302)
+
+        expect(redirect_task.request.url).to eq("https://api.example.com/search?q=test")
+      end
+    end
+
+    context "with absolute URLs" do
+      it "uses absolute URL directly" do
+        task = described_class.new(
+          request: request,
+          sidekiq_job: sidekiq_job,
+          completion_worker: completion_worker,
+          error_worker: error_worker
+        )
+
+        redirect_task = task.for_redirect(location: "https://other.example.com/path", status: 302)
+
+        expect(redirect_task.request.url).to eq("https://other.example.com/path")
+      end
     end
   end
 end

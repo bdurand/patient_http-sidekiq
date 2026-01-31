@@ -14,6 +14,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         expect(config.shutdown_timeout).to eq(Sidekiq.default_configuration[:timeout] - 2)
         expect(config.logger).to eq(Sidekiq.logger)
         expect(config.raise_error_responses).to eq(false)
+        expect(config.max_redirects).to eq(5)
       end
     end
 
@@ -118,6 +119,38 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
       end
     end
 
+    context "with invalid max_redirects" do
+      it "raises ArgumentError for negative value" do
+        expect { described_class.new(max_redirects: -1) }.to raise_error(
+          ArgumentError,
+          "max_redirects must be a non-negative integer, got: -1"
+        )
+      end
+
+      it "raises ArgumentError for non-integer" do
+        expect { described_class.new(max_redirects: 5.5) }.to raise_error(
+          ArgumentError,
+          "max_redirects must be a non-negative integer, got: 5.5"
+        )
+      end
+
+      it "raises ArgumentError for string" do
+        expect { described_class.new(max_redirects: "5") }.to raise_error(
+          ArgumentError,
+          /max_redirects must be a non-negative integer/
+        )
+      end
+
+      it "allows zero to disable redirects" do
+        expect { described_class.new(max_redirects: 0) }.not_to raise_error
+      end
+
+      it "allows positive integers" do
+        config = described_class.new(max_redirects: 10)
+        expect(config.max_redirects).to eq(10)
+      end
+    end
+
     context "with invalid heartbeat_interval and orphan_threshold relationship" do
       it "raises ArgumentError when heartbeat_interval >= orphan_threshold" do
         expect { described_class.new(heartbeat_interval: 300, orphan_threshold: 300) }.to raise_error(
@@ -181,6 +214,7 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
       expect(hash["shutdown_timeout"]).to eq(30)
       expect(hash["logger"]).to eq(custom_logger)
       expect(hash["raise_error_responses"]).to eq(false)
+      expect(hash["max_redirects"]).to eq(5)
     end
   end
 end

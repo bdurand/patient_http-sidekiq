@@ -47,6 +47,21 @@ RSpec.describe Sidekiq::AsyncHttp::Request do
       expect(request.url).to eq(uri.to_s)
     end
 
+    it "accepts max_redirects parameter" do
+      request = described_class.new(:get, "https://api.example.com", max_redirects: 10)
+      expect(request.max_redirects).to eq(10)
+    end
+
+    it "allows max_redirects of 0 to disable redirects" do
+      request = described_class.new(:get, "https://api.example.com", max_redirects: 0)
+      expect(request.max_redirects).to eq(0)
+    end
+
+    it "defaults max_redirects to nil" do
+      request = described_class.new(:get, "https://api.example.com")
+      expect(request.max_redirects).to be_nil
+    end
+
     context "validation" do
       it "casts method to a symbol" do
         request = described_class.new("POST", "https://example.com")

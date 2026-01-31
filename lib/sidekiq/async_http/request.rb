@@ -32,6 +32,9 @@ module Sidekiq::AsyncHttp
     # @return [Float, nil] Connect timeout in seconds
     attr_reader :connect_timeout
 
+    # @return [Integer, nil] Maximum number of redirects to follow (nil uses config default, 0 disables)
+    attr_reader :max_redirects
+
     # Initializes a new Request.
     #
     # @param http_method [Symbol, String] HTTP method (:get, :post, :put, :patch, :delete).
@@ -40,7 +43,8 @@ module Sidekiq::AsyncHttp
     # @param body [String, nil] Request body.
     # @param timeout [Float, nil] Overall timeout in seconds.
     # @param connect_timeout [Float, nil] Connect timeout in seconds.
-    def initialize(http_method, url, headers: {}, body: nil, timeout: nil, connect_timeout: nil)
+    # @param max_redirects [Integer, nil] Maximum redirects to follow (nil uses config, 0 disables).
+    def initialize(http_method, url, headers: {}, body: nil, timeout: nil, connect_timeout: nil, max_redirects: nil)
       @http_method = http_method.is_a?(String) ? http_method.downcase.to_sym : http_method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
@@ -50,6 +54,7 @@ module Sidekiq::AsyncHttp
       @body = body
       @timeout = timeout
       @connect_timeout = connect_timeout
+      @max_redirects = max_redirects
       validate!
     end
 

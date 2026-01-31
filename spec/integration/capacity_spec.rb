@@ -113,9 +113,6 @@ RSpec.describe "Capacity Limit Integration", :integration do
       expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
       expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
 
-      # Verify no errors in metrics
-      expect(processor.metrics.error_count).to eq(0)
-
       # Verify processor is still running
       expect(processor.running?).to be true
     end

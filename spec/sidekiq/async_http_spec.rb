@@ -129,24 +129,6 @@ RSpec.describe Sidekiq::AsyncHttp do
     end
   end
 
-  describe ".metrics" do
-    after do
-      described_class.reset!
-    end
-
-    it "returns nil when no processor exists" do
-      expect(described_class.metrics).to be_nil
-    end
-
-    it "returns the processor's metrics when processor exists" do
-      described_class.start
-      metrics = described_class.metrics
-
-      expect(metrics).to be_a(Sidekiq::AsyncHttp::Metrics)
-      expect(metrics).to eq(described_class.processor.metrics)
-    end
-  end
-
   describe ".running?" do
     after do
       described_class.reset!

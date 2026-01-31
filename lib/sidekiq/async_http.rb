@@ -7,6 +7,8 @@ require "concurrent-ruby"
 require "json"
 require "uri"
 require "zlib"
+require "time"
+require "socket"
 
 # Main module for the Sidekiq Async HTTP gem.
 #
@@ -66,16 +68,18 @@ module Sidekiq::AsyncHttp
   autoload :Context, File.join(__dir__, "async_http/context")
   autoload :ContinuationMiddleware, File.join(__dir__, "async_http/continuation_middleware")
   autoload :Error, File.join(__dir__, "async_http/error")
-  autoload :HttpError, File.join(__dir__, "async_http/error")
-  autoload :ClientError, File.join(__dir__, "async_http/error")
-  autoload :ServerError, File.join(__dir__, "async_http/error")
-  autoload :RequestError, File.join(__dir__, "async_http/error")
+  autoload :HttpError, File.join(__dir__, "async_http/http_error")
+  autoload :ClientError, File.join(__dir__, "async_http/http_error")
+  autoload :ServerError, File.join(__dir__, "async_http/http_error")
+  autoload :RedirectError, File.join(__dir__, "async_http/redirect_error")
+  autoload :TooManyRedirectsError, File.join(__dir__, "async_http/redirect_error")
+  autoload :RecursiveRedirectError, File.join(__dir__, "async_http/redirect_error")
+  autoload :RequestError, File.join(__dir__, "async_http/request_error")
   autoload :HttpClientFactory, File.join(__dir__, "async_http/http_client_factory")
   autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
   autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
   autoload :Job, File.join(__dir__, "async_http/job")
-  autoload :Metrics, File.join(__dir__, "async_http/metrics")
   autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
@@ -144,6 +148,15 @@ module Sidekiq::AsyncHttp
     #
     # @return [void]
     def append_middleware
+      prepend_client_middleware
+      append_server_middleware
+    end
+
+    # Prepend client middleware for serializing responses to hashes so that they
+    # can be passed as arguments to Sidekiq jobs.
+    #
+    # @return [void]
+    def prepend_client_middleware
       Sidekiq.configure_client do |config|
         config.client_middleware do |chain|
           chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
@@ -154,7 +167,15 @@ module Sidekiq::AsyncHttp
         config.client_middleware do |chain|
           chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
         end
+      end
+    end
 
+    # Append server middleware required for exposing the current job context
+    # and deserializing raw responses from Hashes back into Response objects.
+    #
+    # @return [void]
+    def append_server_middleware
+      Sidekiq.configure_server do |config|
         config.server_middleware do |chain|
           chain.add Sidekiq::AsyncHttp::Context::Middleware
           chain.add Sidekiq::AsyncHttp::ContinuationMiddleware
@@ -318,12 +339,6 @@ module Sidekiq::AsyncHttp
     # @return [Processor, nil]
     # @api private
     attr_accessor :processor
-
-    # Returns the metrics from the processor
-    # @return [Metrics, nil]
-    def metrics
-      processor&.metrics
-    end
   end
 end
 

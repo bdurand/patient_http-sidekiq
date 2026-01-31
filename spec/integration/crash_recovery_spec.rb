@@ -49,11 +49,10 @@ RSpec.describe "Crash Recovery", :integration do
     # Register with old timestamp to simulate orphaned request
     registry.register(task)
     old_timestamp_ms = ((Time.now.to_f - 10) * 1000).round
-    Sidekiq.redis do |redis|
-      redis.zadd(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-    end
+    set_task_timestamp(registry, task, old_timestamp_ms)
 
     # Verify it's registered
+    expect(registry.registered?(task)).to be true
     expect(registry.inflight_count).to eq(1)
 
     # Mock Sidekiq::Client to capture re-enqueued job
@@ -70,7 +69,8 @@ RSpec.describe "Crash Recovery", :integration do
     expect(reenqueued_jobs.size).to eq(1)
     expect(reenqueued_jobs.first["jid"]).to eq("crash-test-jid")
 
-    # Verify it's removed from Redis
+    # Verify it's removed from registry
+    expect(registry.registered?(task)).to be false
     expect(registry.inflight_count).to eq(0)
 
     registry.release_gc_lock
@@ -95,15 +95,14 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Register task (simulating it being in flight)
     registry.register(task)
+    full_task_id = registry.task_id_for(task)
 
     # Set an old timestamp
     old_timestamp_ms = ((Time.now.to_f - 2) * 1000).round
-    Sidekiq.redis do |redis|
-      redis.zadd(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-    end
+    set_task_timestamp(registry, task, old_timestamp_ms)
 
     # Update heartbeat (simulating monitor thread)
-    registry.update_heartbeat(task.id)
+    registry.update_heartbeats([full_task_id])
 
     # Try to clean up with 3-second threshold
     expect(Sidekiq::Client).not_to receive(:push)
@@ -111,6 +110,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Should not be cleaned up because heartbeat was updated
     expect(count).to eq(0)
+    expect(registry.registered?(task)).to be true
     expect(registry.inflight_count).to eq(1)
   end
 
@@ -159,29 +159,26 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Register in Redis
     registry.register(task)
+    full_task_id = registry.task_id_for(task)
 
     # Manually add to processor's inflight tracking
-    processor.instance_variable_get(:@inflight_requests)[task.id] = task
+    processor.instance_variable_get(:@inflight_requests)[full_task_id] = task
 
     # Get initial timestamp
-    initial_score = Sidekiq.redis do |redis|
-      redis.zscore(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, task.id)
-    end
+    initial_timestamp = registry.heartbeat_timestamp_for(task)
 
     # Wait for monitor to update (heartbeat_interval is 1 second)
     sleep(1.2)
 
     # Get new timestamp
-    new_score = Sidekiq.redis do |redis|
-      redis.zscore(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, task.id)
-    end
+    new_timestamp = registry.heartbeat_timestamp_for(task)
 
     # Timestamp should have been updated
-    expect(new_score).to be > initial_score
+    expect(new_timestamp).to be > initial_timestamp
 
     # Clean up
-    processor.instance_variable_get(:@inflight_requests).delete(task.id)
-    registry.unregister(task.id)
+    processor.instance_variable_get(:@inflight_requests).delete(full_task_id)
+    registry.unregister(task)
   end
 
   it "performs garbage collection automatically via monitor thread" do
@@ -192,30 +189,22 @@ RSpec.describe "Crash Recovery", :integration do
       orphan_threshold: 2
     )
     fast_processor = Sidekiq::AsyncHttp::Processor.new(fast_config)
-    fast_registry = fast_processor.inflight_registry
     fast_processor.run do
-      # Create an orphaned request
+      # Create an orphaned request that appears to be from a different (crashed) process
       job_payload = {
         "class" => "TestWorker",
         "jid" => "gc-test-jid",
         "args" => []
       }
 
-      request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
-
-      task = Sidekiq::AsyncHttp::RequestTask.new(
-        request: request,
-        sidekiq_job: job_payload,
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
-      )
-
-      # Register with old timestamp
-      fast_registry.register(task)
+      # Simulate an orphaned task from a crashed process
       old_timestamp_ms = ((Time.now.to_f - 10) * 1000).round
-      Sidekiq.redis do |redis|
-        redis.zadd(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, old_timestamp_ms, task.id)
-      end
+      add_fake_orphaned_request(
+        process_id: "crashed-host:12345:abcdef12",
+        request_id: "fake-request-id",
+        job_payload: job_payload,
+        timestamp_ms: old_timestamp_ms
+      )
 
       # Mock job re-enqueue
       reenqueued = false

@@ -145,36 +145,15 @@ module Sidekiq
       # @param timeout [Numeric] maximum time to wait in seconds
       # @return [Boolean] true if running, false if timeout reached
       def wait_for_running(timeout: 5)
-        deadline = monotonic_time + timeout
-        while monotonic_time <= deadline
-          return true if running?
-
-          sleep(POLL_INTERVAL)
-        end
-        false
+        wait_for_condition(timeout: timeout) { running? }
       end
 
-      # Wait for idle state.
+      # Wait for a condition to be met.
       #
       # @param timeout [Numeric] maximum time to wait in seconds
-      # @yield Block that returns true if idle
-      # @return [Boolean] true if idle, false if timeout reached
-      def wait_for_idle(timeout: 1)
-        deadline = monotonic_time + timeout
-        while monotonic_time <= deadline
-          return true if yield
-
-          sleep(POLL_INTERVAL)
-        end
-        false
-      end
-
-      # Wait for processing to start.
-      #
-      # @param timeout [Numeric] maximum time to wait in seconds
-      # @yield Block that returns true if processing
-      # @return [Boolean] true if processing, false if timeout reached
-      def wait_for_processing(timeout: 1)
+      # @yield Block that checks the condition.
+      # @return [Boolean] true if the condition is met, false if timeout reached
+      def wait_for_condition(timeout: 1)
         deadline = monotonic_time + timeout
         while monotonic_time <= deadline
           return true if yield
