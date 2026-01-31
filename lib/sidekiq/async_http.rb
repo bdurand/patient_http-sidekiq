@@ -148,6 +148,15 @@ module Sidekiq::AsyncHttp
     #
     # @return [void]
     def append_middleware
+      prepend_client_middleware
+      append_server_middleware
+    end
+
+    # Prepend client middleware for serializing responses to hashes so that they
+    # can be passed as arguments to Sidekiq jobs.
+    #
+    # @return [void]
+    def prepend_client_middleware
       Sidekiq.configure_client do |config|
         config.client_middleware do |chain|
           chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
@@ -158,7 +167,15 @@ module Sidekiq::AsyncHttp
         config.client_middleware do |chain|
           chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
         end
+      end
+    end
 
+    # Append server middleware required for exposing the current job context
+    # and deserializing raw responses from Hashes back into Response objects.
+    #
+    # @return [void]
+    def append_server_middleware
+      Sidekiq.configure_server do |config|
         config.server_middleware do |chain|
           chain.add Sidekiq::AsyncHttp::Context::Middleware
           chain.add Sidekiq::AsyncHttp::ContinuationMiddleware
