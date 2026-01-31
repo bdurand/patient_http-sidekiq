@@ -160,7 +160,7 @@ RSpec.describe Sidekiq::AsyncHttp::CallbackArgs do
     it "raises ArgumentError for non-existent key" do
       expect do
         args[:missing]
-      end.to raise_error(ArgumentError, /No callback argument 'missing' found/)
+      end.to raise_error(ArgumentError, /Argument 'missing' not found/)
     end
 
     it "includes available keys in error message" do

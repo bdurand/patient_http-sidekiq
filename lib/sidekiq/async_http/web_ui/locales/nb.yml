@@ -4,7 +4,7 @@ nb:
   async_http.total_requests: "Totalt antall forespørsler"
   async_http.average_duration: "Gjennomsnittlig varighet (sekunder)"
   async_http.total_errors: "Totalt antall feil"
-  async_http.requests_refused: "Avviste forespørsler"
+  async_http.max_capacity_exceeded: "Maks. kapasitet overskredet"
   async_http.connection_capacity: "Tilkoblingskapasitet"
   async_http.max_capacity: "Maksimal kapasitet"
   async_http.connections: "tilkoblinger"

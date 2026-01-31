@@ -53,13 +53,13 @@ module Sidekiq
         handle_error(e)
       end
 
-      # Record a refused request (max capacity reached)
+      # Record a that a request was refused because the max capacity of the Processor was reached.
       #
       # @return [void]
-      def record_refused
+      def record_capacity_exceeded
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            transaction.hincrby(TOTALS_KEY, "refused", 1)
+            transaction.hincrby(TOTALS_KEY, "max_capacity_exceeded", 1)
             transaction.expire(TOTALS_KEY, TOTALS_TTL)
           end
         end
@@ -69,7 +69,7 @@ module Sidekiq
 
       # Get running totals
       #
-      # @return [Hash] hash with requests, duration, errors, refused, http_status_counts
+      # @return [Hash] hash with requests, duration, errors, max_capacity_exceeded, http_status_counts
       def get_totals
         Sidekiq.redis do |redis|
           stats = redis.hgetall(TOTALS_KEY)
@@ -91,7 +91,7 @@ module Sidekiq
             "requests" => (stats["requests"] || 0).to_i,
             "duration" => (stats["duration"] || 0).to_f.round(6),
             "errors" => (stats["errors"] || 0).to_i,
-            "refused" => (stats["refused"] || 0).to_i,
+            "max_capacity_exceeded" => (stats["max_capacity_exceeded"] || 0).to_i,
             "http_status_counts" => http_status_counts.sort.to_h,
             "error_type_counts" => error_type_counts.sort.to_h
           }

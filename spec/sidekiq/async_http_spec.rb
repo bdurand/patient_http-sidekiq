@@ -528,4 +528,28 @@ RSpec.describe Sidekiq::AsyncHttp do
       end
     end
   end
+
+  describe ".request" do
+    it "enqueues an async HTTP request"
+  end
+
+  describe ".get" do
+    it "enqueues an async GET request"
+  end
+
+  describe ".post" do
+    it "enqueues an async POST request"
+  end
+
+  describe ".put" do
+    it "enqueues an async PUT request"
+  end
+
+  describe ".patch" do
+    it "enqueues an async PATCH request"
+  end
+
+  describe ".delete" do
+    it "enqueues an async DELETE request"
+  end
 end

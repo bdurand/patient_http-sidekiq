@@ -4,7 +4,7 @@ fa:
   async_http.total_requests: "مجموع درخواستها"
   async_http.average_duration: "مدت زمان میانگین (ثانیه)"
   async_http.total_errors: "مجموع خطاها"
-  async_http.requests_refused: "درخواستهای رد شده"
+  async_http.max_capacity_exceeded: "ظرفیت حداکثر تجاوز شد"
   async_http.connection_capacity: "ظرفیت اتصال"
   async_http.max_capacity: "ظرفیت حداکثر"
   async_http.connections: "اتصالات"

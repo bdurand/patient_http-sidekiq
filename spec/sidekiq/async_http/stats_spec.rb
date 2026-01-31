@@ -75,13 +75,13 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
     end
   end
 
-  describe "#record_refused" do
+  describe "#record_capacity_exceeded" do
     it "increments refused count" do
-      stats.record_refused
-      stats.record_refused
+      stats.record_capacity_exceeded
+      stats.record_capacity_exceeded
 
       totals = stats.get_totals
-      expect(totals["refused"]).to eq(2)
+      expect(totals["max_capacity_exceeded"]).to eq(2)
     end
   end
 
@@ -90,13 +90,13 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       stats.record_request(200, 0.5)
       stats.record_request(404, 1.5)
       stats.record_error(:timeout)
-      stats.record_refused
+      stats.record_capacity_exceeded
 
       totals = stats.get_totals
       expect(totals["requests"]).to eq(2)
       expect(totals["duration"]).to eq(2.0)
       expect(totals["errors"]).to eq(1)
-      expect(totals["refused"]).to eq(1)
+      expect(totals["max_capacity_exceeded"]).to eq(1)
       expect(totals["http_status_counts"]).to eq(200 => 1, 404 => 1)
     end
 
@@ -105,7 +105,7 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
       expect(totals["requests"]).to eq(0)
       expect(totals["duration"]).to eq(0.0)
       expect(totals["errors"]).to eq(0)
-      expect(totals["refused"]).to eq(0)
+      expect(totals["max_capacity_exceeded"]).to eq(0)
       expect(totals["http_status_counts"]).to eq({})
     end
   end
@@ -114,14 +114,14 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
     it "clears all stats" do
       stats.record_request(200, 0.5)
       stats.record_error(:timeout)
-      stats.record_refused
+      stats.record_capacity_exceeded
 
       stats.reset!
 
       totals = stats.get_totals
       expect(totals["requests"]).to eq(0)
       expect(totals["errors"]).to eq(0)
-      expect(totals["refused"]).to eq(0)
+      expect(totals["max_capacity_exceeded"]).to eq(0)
     end
   end
 
@@ -129,12 +129,12 @@ RSpec.describe Sidekiq::AsyncHttp::Stats do
     it "stores and retrieves data from Redis" do
       stats.record_request(200, 0.5)
       stats.record_error(:timeout)
-      stats.record_refused
+      stats.record_capacity_exceeded
 
       totals = stats.get_totals
       expect(totals["requests"]).to eq(1)
       expect(totals["errors"]).to eq(1)
-      expect(totals["refused"]).to eq(1)
+      expect(totals["max_capacity_exceeded"]).to eq(1)
     end
   end
 end

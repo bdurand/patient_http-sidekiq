@@ -156,7 +156,7 @@ module Sidekiq
 
         # Check capacity - raise error if at max connections
         if inflight_count >= @config.max_connections
-          @stats.record_refused
+          @stats.record_capacity_exceeded
           raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
 
@@ -339,7 +339,7 @@ module Sidekiq
       # @param task [RequestTask] the request task to process
       # @return [void]
       def process_request(task)
-        full_task_id = @inflight_registry.task_id_for(task)
+        full_task_id = @inflight_registry.task_id(task)
 
         # Move from pending to in-flight tracking
         @tasks_lock.synchronize do
@@ -463,7 +463,7 @@ module Sidekiq
         end
 
         # Create redirect task and enqueue it
-        redirect_task = task.for_redirect(location: location, status: status)
+        redirect_task = task.redirect_task(location: location, status: status)
         redirect_task.enqueued!
         @queue.push(redirect_task)
 

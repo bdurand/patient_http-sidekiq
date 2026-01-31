@@ -4,7 +4,7 @@ cs:
   async_http.total_requests: "Celkem požadavků"
   async_http.average_duration: "Průměrná doba trvání (sekundy)"
   async_http.total_errors: "Celkem chyb"
-  async_http.requests_refused: "Odmítnuté požadavky"
+  async_http.max_capacity_exceeded: "Překročená maximální kapacita"
   async_http.connection_capacity: "Kapacita připojení"
   async_http.max_capacity: "Max. kapacita"
   async_http.connections: "připojení"

@@ -4,7 +4,7 @@ hi:
   async_http.total_requests: "कुल अनुरोध"
   async_http.average_duration: "औसत अवधि (सेकंड)"
   async_http.total_errors: "कुल त्रुटियां"
-  async_http.requests_refused: "अस्वीकृत अनुरोध"
+  async_http.max_capacity_exceeded: "अधिकतम क्षमता पार हो गई"
   async_http.connection_capacity: "कनेक्शन क्षमता"
   async_http.max_capacity: "अधिकतम क्षमता"
   async_http.connections: "कनेक्शन"

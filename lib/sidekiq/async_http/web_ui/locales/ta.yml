@@ -4,7 +4,7 @@ ta:
   async_http.total_requests: "மொத்தக் கோரிக்கைகள்"
   async_http.average_duration: "சராசரி கால அளவு (விநாடிகள்)"
   async_http.total_errors: "மொத்தப் பிழைகள்"
-  async_http.requests_refused: "நிராகரிக்கப்பட்ட கோரிக்கைகள்"
+  async_http.max_capacity_exceeded: "அதிகபட்ச திறன் மீறப்பட்டது"
   async_http.connection_capacity: "இணைப்புக் கொள்ளளவு"
   async_http.max_capacity: "அதிகபட்சக் கொள்ளளவு"
   async_http.connections: "இணைப்புகள்"

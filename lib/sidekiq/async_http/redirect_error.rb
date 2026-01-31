@@ -65,7 +65,7 @@ module Sidekiq
         :redirect
       end
 
-      # @return [Class] the class of the exception that caused the error
+      # @return [Class] the class of the exception. This is for compatibility with RequestError.
       def error_class
         self.class
       end

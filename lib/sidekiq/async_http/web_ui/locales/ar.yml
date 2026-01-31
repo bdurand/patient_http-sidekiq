@@ -4,7 +4,7 @@ ar:
   async_http.total_requests: "مجموع الطلبات"
   async_http.average_duration: "متوسط المدة (ثواني)"
   async_http.total_errors: "مجموع الأخطاء"
-  async_http.requests_refused: "الطلبات المرفوضة"
+  async_http.max_capacity_exceeded: "تم تجاوز السعة القصوى"
   async_http.connection_capacity: "سعة الاتصال"
   async_http.max_capacity: "السعة القصوى"
   async_http.connections: "اتصالات"

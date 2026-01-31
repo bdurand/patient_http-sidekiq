@@ -22,8 +22,8 @@
           <div class="stat-value error"><%= number_with_delimiter(totals['errors'] || 0) %></div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><%= t('async_http.requests_refused') %></div>
-          <div class="stat-value"><%= number_with_delimiter(totals['refused'] || 0) %></div>
+          <div class="stat-label"><%= t('async_http.max_capacity_exceeded') %></div>
+          <div class="stat-value"><%= number_with_delimiter(totals['max_capacity_exceeded'] || 0) %></div>
         </div>
         <div class="stat-card">
           <div class="stat-label"><%= t('async_http.average_duration') %></div>

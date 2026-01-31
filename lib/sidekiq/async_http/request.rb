@@ -44,7 +44,15 @@ module Sidekiq::AsyncHttp
     # @param timeout [Float, nil] Overall timeout in seconds.
     # @param connect_timeout [Float, nil] Connect timeout in seconds.
     # @param max_redirects [Integer, nil] Maximum redirects to follow (nil uses config, 0 disables).
-    def initialize(http_method, url, headers: {}, body: nil, timeout: nil, connect_timeout: nil, max_redirects: nil)
+    def initialize(
+      http_method,
+      url,
+      headers: {},
+      body: nil,
+      timeout: nil,
+      connect_timeout: nil,
+      max_redirects: nil
+    )
       @http_method = http_method.is_a?(String) ? http_method.downcase.to_sym : http_method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
@@ -58,7 +66,10 @@ module Sidekiq::AsyncHttp
       validate!
     end
 
-    # Prepare the request for execution with callback workers.
+    # Execute the request. The request will be processed asynchronously. If the
+    # request gets a response from the server, the completion_worker will be called.
+    # If an error occurs (network error, timeout, or non-2xx response if raise_error_responses
+    # is true), the error_worker will be called.
     #
     # @param sidekiq_job [Hash, nil] Sidekiq job hash with "class" and "args" keys.
     #   If not provided, uses Sidekiq::AsyncHttp::Context.current_job.
@@ -77,30 +88,16 @@ module Sidekiq::AsyncHttp
     #   and calls the error_worker instead of completion_worker. Defaults to false.
     #
     # @return [String] the request ID
-    def execute(completion_worker:, error_worker:, sidekiq_job: nil, synchronous: false, callback_args: nil, raise_error_responses: false)
-      # Get current job if not provided
-      sidekiq_job ||= (defined?(Sidekiq::AsyncHttp::Context) ? Sidekiq::AsyncHttp::Context.current_job : nil)
-
-      # Validate sidekiq_job
-      if sidekiq_job.nil?
-        raise ArgumentError.new("sidekiq_job is required (provide hash or ensure Sidekiq::AsyncHttp::Context.current_job is set)")
-      end
-
-      raise ArgumentError.new("sidekiq_job must be a Hash, got: #{sidekiq_job.class}") unless sidekiq_job.is_a?(Hash)
-
-      raise ArgumentError.new("sidekiq_job must have 'class' key") unless sidekiq_job.key?("class")
-
-      raise ArgumentError.new("sidekiq_job must have 'args' array") unless sidekiq_job["args"].is_a?(Array)
-
-      unless completion_worker.is_a?(Class) && completion_worker.include?(Sidekiq::Job)
-        raise ArgumentError.new("completion_worker must be a class that includes Sidekiq::Job")
-      end
-
-      unless error_worker.is_a?(Class) && error_worker.include?(Sidekiq::Job)
-        raise ArgumentError.new("error_worker must be a class that includes Sidekiq::Job")
-      end
-
-      # Validate and convert callback_args to a hash with string keys
+    def execute(
+      completion_worker:,
+      error_worker:,
+      sidekiq_job: nil,
+      synchronous: false,
+      callback_args: nil,
+      raise_error_responses: false
+    )
+      sidekiq_job = validate_sidekiq_job(sidekiq_job)
+      validate_callback_workers!(completion_worker, error_worker)
       validated_callback_args = validate_callback_args(callback_args)
 
       task = RequestTask.new(
@@ -130,6 +127,32 @@ module Sidekiq::AsyncHttp
     end
 
     private
+
+    def validate_sidekiq_job(sidekiq_job)
+      sidekiq_job ||= Sidekiq::AsyncHttp::Context.current_job
+
+      if sidekiq_job.nil?
+        raise ArgumentError.new("sidekiq_job is required (provide hash or ensure Sidekiq::AsyncHttp::Context.current_job is set)")
+      end
+
+      raise ArgumentError.new("sidekiq_job must be a Hash, got: #{sidekiq_job.class}") unless sidekiq_job.is_a?(Hash)
+
+      raise ArgumentError.new("sidekiq_job must have 'class' key") unless sidekiq_job.key?("class")
+
+      raise ArgumentError.new("sidekiq_job must have 'args' array") unless sidekiq_job["args"].is_a?(Array)
+
+      sidekiq_job
+    end
+
+    def validate_callback_workers!(completion_worker, error_worker)
+      unless completion_worker.is_a?(Class) && completion_worker.include?(Sidekiq::Job)
+        raise ArgumentError.new("completion_worker must be a class that includes Sidekiq::Job")
+      end
+
+      unless error_worker.is_a?(Class) && error_worker.include?(Sidekiq::Job)
+        raise ArgumentError.new("error_worker must be a class that includes Sidekiq::Job")
+      end
+    end
 
     # Validate callback_args and convert to a hash with string keys.
     #

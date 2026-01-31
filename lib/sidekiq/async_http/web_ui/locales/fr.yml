@@ -4,7 +4,7 @@ fr:
   async_http.total_requests: "Total des requêtes"
   async_http.average_duration: "Durée moyenne (secondes)"
   async_http.total_errors: "Total des erreurs"
-  async_http.requests_refused: "Requêtes refusées"
+  async_http.max_capacity_exceeded: "Capacité max. dépassée"
   async_http.connection_capacity: "Capacité de connexion"
   async_http.max_capacity: "Capacité max."
   async_http.connections: "connexions"

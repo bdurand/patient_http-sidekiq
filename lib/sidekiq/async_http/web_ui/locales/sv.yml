@@ -4,7 +4,7 @@ sv:
   async_http.total_requests: "Totalt antal förfrågningar"
   async_http.average_duration: "Genomsnittlig varaktighet (sekunder)"
   async_http.total_errors: "Totalt antal fel"
-  async_http.requests_refused: "Avvisade förfrågningar"
+  async_http.max_capacity_exceeded: "Max kapacitet överskreds"
   async_http.connection_capacity: "Anslutningskapacitet"
   async_http.max_capacity: "Maximal kapacitet"
   async_http.connections: "anslutningar"

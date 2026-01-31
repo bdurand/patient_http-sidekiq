@@ -137,6 +137,7 @@ module Sidekiq
         #
         # @raise [RuntimeError] if called outside of test environment
         # @return [void]
+        # @api private
         def clear_all!
           unless Sidekiq::AsyncHttp.testing?
             raise "clear_all! is only allowed in test environment"
@@ -159,66 +160,12 @@ module Sidekiq
         end
       end
 
-      # Initialize the registry.
-      #
       # @param config [Configuration] the configuration object
-      #
-      # @return [void]
       def initialize(config)
         @config = config
         hostname = ::Socket.gethostname.force_encoding("UTF-8").tr(":/", "-")
         pid = ::Process.pid
         @lock_identifier = "#{hostname}:#{pid}:#{SecureRandom.hex(8)}".freeze
-      end
-
-      # Get the count of inflight requests in Redis.
-      #
-      # @return [Integer] number of inflight requests
-      def inflight_count
-        self.class.inflight_count
-      end
-
-      # Get the full task ID for a given task.
-      #
-      # This includes the process identifier prefix.
-      #
-      # @param task [RequestTask] the request task
-      #
-      # @return [String] the full task ID
-      def task_id_for(task)
-        task_id(task)
-      end
-
-      # Check if a task is registered in the inflight registry.
-      #
-      # @param task [RequestTask] the request task
-      #
-      # @return [Boolean] true if registered, false otherwise
-      def registered?(task)
-        Sidekiq.redis do |redis|
-          !redis.zscore(INFLIGHT_INDEX_KEY, task_id(task)).nil?
-        end
-      end
-
-      # Get the heartbeat timestamp for a task.
-      #
-      # @param task [RequestTask] the request task
-      #
-      # @return [Integer, nil] timestamp in milliseconds, or nil if not registered
-      def heartbeat_timestamp_for(task)
-        score = Sidekiq.redis do |redis|
-          redis.zscore(INFLIGHT_INDEX_KEY, task_id(task))
-        end
-        score&.to_i
-      end
-
-      # Get all registered task IDs for this registry's process.
-      #
-      # @return [Array<String>] list of full task IDs
-      def registered_task_ids
-        Sidekiq.redis do |redis|
-          redis.zrange(INFLIGHT_INDEX_KEY, 0, -1)
-        end.select { |id| id.start_with?("#{@lock_identifier}/") }
       end
 
       # Register a request as inflight in Redis.
@@ -277,10 +224,53 @@ module Sidekiq
         Sidekiq.redis do |redis|
           redis.pipelined do |pipeline|
             request_ids.each do |request_id|
-              pipeline.zadd(INFLIGHT_INDEX_KEY, timestamp_ms, request_id)
+              pipeline.call("ZADD", INFLIGHT_INDEX_KEY, "XX", timestamp_ms, request_id)
             end
           end
         end
+      end
+
+      # Check if a task is registered in the inflight registry.
+      #
+      # @param task [RequestTask] the request task
+      #
+      # @return [Boolean] true if registered, false otherwise
+      # @api private
+      def registered?(task)
+        Sidekiq.redis do |redis|
+          !redis.zscore(INFLIGHT_INDEX_KEY, task_id(task)).nil?
+        end
+      end
+
+      # Get the heartbeat timestamp for a task.
+      #
+      # @param task [RequestTask] the request task
+      #
+      # @return [Integer, nil] timestamp in milliseconds, or nil if not registered
+      # @api private
+      def heartbeat_timestamp_for(task)
+        score = Sidekiq.redis do |redis|
+          redis.zscore(INFLIGHT_INDEX_KEY, task_id(task))
+        end
+        score&.to_i
+      end
+
+      # Get all registered task IDs for this registry's process.
+      #
+      # @return [Array<String>] list of full task IDs
+      # @api private
+      def registered_task_ids
+        Sidekiq.redis do |redis|
+          redis.zrange(INFLIGHT_INDEX_KEY, 0, -1)
+        end.select { |id| id.start_with?("#{@lock_identifier}/") }
+      end
+
+      # Build unique task ID for a request task that includes process identifier.
+      #
+      # @param task [RequestTask] the request task
+      # @return [String] the unique task ID
+      def task_id(task)
+        "#{@lock_identifier}/#{task.id}"
       end
 
       # Record the current process's max connections in Redis.
@@ -503,10 +493,6 @@ module Sidekiq
       def process_ttl
         # Set to 2x the heartbeat interval so the key survives between heartbeats
         config.heartbeat_interval * 2
-      end
-
-      def task_id(task)
-        "#{@lock_identifier}/#{task.id}"
       end
 
       def max_connections_key

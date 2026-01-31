@@ -53,7 +53,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Verify it's registered
     expect(registry.registered?(task)).to be true
-    expect(registry.inflight_count).to eq(1)
+    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(1)
 
     # Mock Sidekiq::Client to capture re-enqueued job
     reenqueued_jobs = []
@@ -71,7 +71,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Verify it's removed from registry
     expect(registry.registered?(task)).to be false
-    expect(registry.inflight_count).to eq(0)
+    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(0)
 
     registry.release_gc_lock
   end
@@ -95,7 +95,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Register task (simulating it being in flight)
     registry.register(task)
-    full_task_id = registry.task_id_for(task)
+    full_task_id = registry.task_id(task)
 
     # Set an old timestamp
     old_timestamp_ms = ((Time.now.to_f - 2) * 1000).round
@@ -111,7 +111,7 @@ RSpec.describe "Crash Recovery", :integration do
     # Should not be cleaned up because heartbeat was updated
     expect(count).to eq(0)
     expect(registry.registered?(task)).to be true
-    expect(registry.inflight_count).to eq(1)
+    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(1)
   end
 
   it "handles distributed locking correctly" do
@@ -159,7 +159,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Register in Redis
     registry.register(task)
-    full_task_id = registry.task_id_for(task)
+    full_task_id = registry.task_id(task)
 
     # Manually add to processor's inflight tracking
     processor.instance_variable_get(:@inflight_requests)[full_task_id] = task

@@ -4,7 +4,7 @@ ja:
   async_http.total_requests: "総リクエスト数"
   async_http.average_duration: "平均所要時間（秒）"
   async_http.total_errors: "総エラー数"
-  async_http.requests_refused: "拒否されたリクエスト"
+  async_http.max_capacity_exceeded: "最大容量超過"
   async_http.connection_capacity: "接続容量"
   async_http.max_capacity: "最大容量"
   async_http.connections: "接続"

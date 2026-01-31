@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
-  # Build an HTTP request for asynchronous execution.
+  # The Client is used to build HTTP request for asynchronous execution.
   #
   # Usage:
   #   client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")

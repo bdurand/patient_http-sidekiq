@@ -29,7 +29,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       registry.register(task)
 
       expect(registry.registered?(task)).to be true
-      expect(registry.inflight_count).to eq(1)
+      expect(described_class.inflight_count).to eq(1)
       expect(registry.heartbeat_timestamp_for(task)).to be > 0
     end
 
@@ -59,7 +59,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       registry.unregister(task)
 
       expect(registry.registered?(task)).to be false
-      expect(registry.inflight_count).to eq(0)
+      expect(described_class.inflight_count).to eq(0)
     end
   end
 
@@ -80,8 +80,8 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
     end
 
     it "updates timestamps for multiple requests" do
-      full_task_id = registry.task_id_for(task)
-      full_task_id2 = registry.task_id_for(task2)
+      full_task_id = registry.task_id(task)
+      full_task_id2 = registry.task_id(task2)
 
       old_timestamps = [
         registry.heartbeat_timestamp_for(task),
@@ -175,7 +175,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       # Request should be removed from registry
       expect(registry.registered?(task)).to be false
-      expect(registry.inflight_count).to eq(0)
+      expect(described_class.inflight_count).to eq(0)
     end
 
     it "does not re-enqueue recent requests" do
@@ -189,13 +189,13 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       # Request should still be in registry
       expect(registry.registered?(task)).to be true
-      expect(registry.inflight_count).to eq(1)
+      expect(described_class.inflight_count).to eq(1)
     end
 
     it "handles race condition atomically with Lua script" do
       # Register a task
       registry.register(task)
-      registry.task_id_for(task)
+      registry.task_id(task)
 
       # Set old timestamp
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
@@ -363,12 +363,12 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
   describe "#inflight_count" do
     it "returns 0 when no requests" do
-      expect(registry.inflight_count).to eq(0)
+      expect(described_class.inflight_count).to eq(0)
     end
 
     it "returns correct count" do
       registry.register(task)
-      expect(registry.inflight_count).to eq(1)
+      expect(described_class.inflight_count).to eq(1)
 
       task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
@@ -378,10 +378,10 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       )
       registry.register(task2)
 
-      expect(registry.inflight_count).to eq(2)
+      expect(described_class.inflight_count).to eq(2)
 
       registry.unregister(task)
-      expect(registry.inflight_count).to eq(1)
+      expect(described_class.inflight_count).to eq(1)
     end
   end
 
@@ -420,7 +420,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       old_timestamp = registry.heartbeat_timestamp_for(task)
 
       sleep(0.01)
-      registry.update_heartbeats([registry.task_id_for(task)])
+      registry.update_heartbeats([registry.task_id(task)])
 
       new_timestamp = registry.heartbeat_timestamp_for(task)
       expect(new_timestamp).to be > old_timestamp
@@ -445,8 +445,8 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       task_ids = registry.registered_task_ids
       expect(task_ids.size).to eq(2)
-      expect(task_ids).to include(registry.task_id_for(task))
-      expect(task_ids).to include(registry.task_id_for(task2))
+      expect(task_ids).to include(registry.task_id(task))
+      expect(task_ids).to include(registry.task_id(task2))
     end
 
     it "does not include tasks from other registries" do
@@ -485,12 +485,12 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       registry.register(task)
       registry.acquire_gc_lock
 
-      expect(registry.inflight_count).to eq(1)
+      expect(described_class.inflight_count).to eq(1)
       expect(described_class.registered_process_ids.size).to eq(1)
 
       described_class.clear_all!
 
-      expect(registry.inflight_count).to eq(0)
+      expect(described_class.inflight_count).to eq(0)
       expect(described_class.registered_process_ids).to eq([])
     end
   end

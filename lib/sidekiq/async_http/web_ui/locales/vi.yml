@@ -4,7 +4,7 @@ vi:
   async_http.total_requests: "Tổng số yêu cầu"
   async_http.average_duration: "Thời lượng trung bình (giây)"
   async_http.total_errors: "Tổng số lỗi"
-  async_http.requests_refused: "Yêu cầu bị từ chối"
+  async_http.max_capacity_exceeded: "Vượt quá dung lượng tối đa"
   async_http.connection_capacity: "Dung lượng kết nối"
   async_http.max_capacity: "Dung lượng tối đa"
   async_http.connections: "kết nối"

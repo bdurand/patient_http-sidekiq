@@ -344,7 +344,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
     end
   end
 
-  describe "#for_redirect" do
+  describe "#redirect_task" do
     let(:post_request) do
       Sidekiq::AsyncHttp::Request.new(:post, "https://api.example.com/submit", body: '{"data":"value"}', timeout: 30)
     end
@@ -357,7 +357,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         error_worker: error_worker
       )
 
-      redirect_task = task.for_redirect(location: "https://api.example.com/new-location", status: 302)
+      redirect_task = task.redirect_task(location: "https://api.example.com/new-location", status: 302)
 
       expect(redirect_task).to be_a(described_class)
       expect(redirect_task.request.url).to eq("https://api.example.com/new-location")
@@ -373,7 +373,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         redirects: ["https://example.com/first"]
       )
 
-      redirect_task = task.for_redirect(location: "https://api.example.com/third", status: 302)
+      redirect_task = task.redirect_task(location: "https://api.example.com/third", status: 302)
 
       expect(redirect_task.redirects).to eq(["https://example.com/first", "https://api.example.com/users"])
     end
@@ -387,7 +387,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         callback_args: {"user_id" => 123}
       )
 
-      redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 301)
+      redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 301)
 
       expect(redirect_task.completion_worker).to eq(completion_worker)
       expect(redirect_task.error_worker).to eq(error_worker)
@@ -403,7 +403,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         error_worker: error_worker
       )
 
-      redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 302)
+      redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 302)
 
       expect(redirect_task.max_redirects).to eq(3)
     end
@@ -417,7 +417,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 301)
+        redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 301)
 
         expect(redirect_task.request.http_method).to eq(:get)
         expect(redirect_task.request.body).to be_nil
@@ -431,7 +431,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 302)
+        redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 302)
 
         expect(redirect_task.request.http_method).to eq(:get)
         expect(redirect_task.request.body).to be_nil
@@ -445,7 +445,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 303)
+        redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 303)
 
         expect(redirect_task.request.http_method).to eq(:get)
         expect(redirect_task.request.body).to be_nil
@@ -461,7 +461,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 307)
+        redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 307)
 
         expect(redirect_task.request.http_method).to eq(:post)
         expect(redirect_task.request.body).to eq('{"data":"value"}')
@@ -475,7 +475,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://api.example.com/new", status: 308)
+        redirect_task = task.redirect_task(location: "https://api.example.com/new", status: 308)
 
         expect(redirect_task.request.http_method).to eq(:post)
         expect(redirect_task.request.body).to eq('{"data":"value"}')
@@ -491,7 +491,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "/new-path", status: 302)
+        redirect_task = task.redirect_task(location: "/new-path", status: 302)
 
         expect(redirect_task.request.url).to eq("https://api.example.com/new-path")
       end
@@ -504,7 +504,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "/search?q=test", status: 302)
+        redirect_task = task.redirect_task(location: "/search?q=test", status: 302)
 
         expect(redirect_task.request.url).to eq("https://api.example.com/search?q=test")
       end
@@ -519,7 +519,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
           error_worker: error_worker
         )
 
-        redirect_task = task.for_redirect(location: "https://other.example.com/path", status: 302)
+        redirect_task = task.redirect_task(location: "https://other.example.com/path", status: 302)
 
         expect(redirect_task.request.url).to eq("https://other.example.com/path")
       end

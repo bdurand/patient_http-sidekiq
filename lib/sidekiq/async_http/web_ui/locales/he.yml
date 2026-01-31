@@ -4,7 +4,7 @@ he:
   async_http.total_requests: "סה״כ בקשות"
   async_http.average_duration: "משך זמן ממוצע (שניות)"
   async_http.total_errors: "סה״כ שגיאות"
-  async_http.requests_refused: "בקשות שנדחו"
+  async_http.max_capacity_exceeded: "עבר את הקיבולת המרבית"
   async_http.connection_capacity: "קיבולת חיבורים"
   async_http.max_capacity: "קיבולת מקסימלית"
   async_http.connections: "חיבורים"

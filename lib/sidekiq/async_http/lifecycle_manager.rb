@@ -28,6 +28,7 @@ module Sidekiq
         @state = Concurrent::AtomicReference.new(:stopped)
         @shutdown_barrier = Concurrent::Event.new
         @reactor_ready = Concurrent::Event.new
+        @lock = Mutex.new
       end
 
       # Get the current state.
@@ -76,9 +77,12 @@ module Sidekiq
       #
       # @return [Boolean] true if transition was successful
       def start!
-        return false if starting? || running? || stopping?
+        @lock.synchronize do
+          return false if starting? || running? || stopping?
 
-        @state.set(:starting)
+          @state.set(:starting)
+        end
+
         @shutdown_barrier.reset
         @reactor_ready.reset
         true
@@ -95,9 +99,12 @@ module Sidekiq
       #
       # @return [Boolean] true if transition was successful
       def drain!
-        return false unless running?
+        @lock.synchronize do
+          return false unless running?
 
-        @state.set(:draining)
+          @state.set(:draining)
+        end
+
         true
       end
 
@@ -105,10 +112,13 @@ module Sidekiq
       #
       # @return [Boolean] true if transition was successful
       def stop!
-        return false if stopped? || stopping? || starting?
+        @lock.synchronize do
+          return false if stopped? || stopping? || starting?
 
-        @state.set(:stopping)
-        @shutdown_barrier.set
+          @state.set(:stopping)
+          @shutdown_barrier.set
+        end
+
         true
       end
 

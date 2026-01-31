@@ -4,7 +4,7 @@ uk:
   async_http.total_requests: "Усього запитів"
   async_http.average_duration: "Середня тривалість (секунди)"
   async_http.total_errors: "Усього помилок"
-  async_http.requests_refused: "Відхилені запити"
+  async_http.max_capacity_exceeded: "Перевищено макс. ємність"
   async_http.connection_capacity: "Ємність з'єднань"
   async_http.max_capacity: "Макс. ємність"
   async_http.connections: "з'єднань"

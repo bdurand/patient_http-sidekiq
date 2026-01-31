@@ -4,7 +4,7 @@ da:
   async_http.total_requests: "Samlede anmodninger"
   async_http.average_duration: "Gennemsnitlig varighed (sekunder)"
   async_http.total_errors: "Samlede fejl"
-  async_http.requests_refused: "Afviste anmodninger"
+  async_http.max_capacity_exceeded: "Maks. kapacitet overskredet"
   async_http.connection_capacity: "Forbindelseskapacitet"
   async_http.max_capacity: "Maks. kapacitet"
   async_http.connections: "forbindelser"

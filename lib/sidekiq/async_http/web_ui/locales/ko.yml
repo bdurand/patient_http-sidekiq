@@ -4,7 +4,7 @@ ko:
   async_http.total_requests: "총 요청 수"
   async_http.average_duration: "평균 소요 시간 (초)"
   async_http.total_errors: "총 오류 수"
-  async_http.requests_refused: "거부된 요청"
+  async_http.max_capacity_exceeded: "최대 용량 초과"
   async_http.connection_capacity: "연결 용량"
   async_http.max_capacity: "최대 용량"
   async_http.connections: "연결"

@@ -12,7 +12,7 @@ module InflightRegistryHelpers
   # @param task [Sidekiq::AsyncHttp::RequestTask] the task to update
   # @param timestamp_ms [Integer] the timestamp in milliseconds
   def set_task_timestamp(registry, task, timestamp_ms)
-    full_task_id = registry.task_id_for(task)
+    full_task_id = registry.task_id(task)
     Sidekiq.redis do |redis|
       redis.zadd(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY,
         timestamp_ms, full_task_id)
@@ -55,7 +55,7 @@ module InflightRegistryHelpers
   # @param task [Sidekiq::AsyncHttp::RequestTask] the task
   # @return [Float, nil] the timestamp as a float, or nil if not found
   def get_raw_task_timestamp(registry, task)
-    full_task_id = registry.task_id_for(task)
+    full_task_id = registry.task_id(task)
     Sidekiq.redis do |redis|
       redis.zscore(Sidekiq::AsyncHttp::InflightRegistry::INFLIGHT_INDEX_KEY, full_task_id)
     end

@@ -4,7 +4,7 @@ lt:
   async_http.total_requests: "Iš viso užklausų"
   async_http.average_duration: "Vidutinė trukmė (sekundės)"
   async_http.total_errors: "Iš viso klaidų"
-  async_http.requests_refused: "Atmestos užklausos"
+  async_http.max_capacity_exceeded: "Viršyta maksimali talpa"
   async_http.connection_capacity: "Ryšio pajėgumas"
   async_http.max_capacity: "Maks. pajėgumas"
   async_http.connections: "ryšiai"

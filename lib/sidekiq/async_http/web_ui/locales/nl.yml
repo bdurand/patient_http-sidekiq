@@ -4,7 +4,7 @@ nl:
   async_http.total_requests: "Totaal aantal verzoeken"
   async_http.average_duration: "Gemiddelde duur (seconden)"
   async_http.total_errors: "Totaal aantal fouten"
-  async_http.requests_refused: "Geweigerde verzoeken"
+  async_http.max_capacity_exceeded: "Max. capaciteit overschreden"
   async_http.connection_capacity: "Verbindingscapaciteit"
   async_http.max_capacity: "Max. capaciteit"
   async_http.connections: "verbindingen"

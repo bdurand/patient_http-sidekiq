@@ -4,7 +4,7 @@ el:
   async_http.total_requests: "Σύνολο αιτημάτων"
   async_http.average_duration: "Μέση διάρκεια (δευτερόλεπτα)"
   async_http.total_errors: "Σύνολο σφαλμάτων"
-  async_http.requests_refused: "Αιτήματα που απορρίφθηκαν"
+  async_http.max_capacity_exceeded: "Υπέρβαση μέγιστης χωρητικότητας"
   async_http.connection_capacity: "Χωρητικότητα σύνδεσης"
   async_http.max_capacity: "Μέγιστη χωρητικότητα"
   async_http.connections: "συνδέσεις"

@@ -214,7 +214,7 @@ module Sidekiq::AsyncHttp
     # @param location [String] The redirect URL from the Location header
     # @param status [Integer] The HTTP status code of the redirect response
     # @return [RequestTask] A new task configured for the redirect
-    def for_redirect(location:, status:)
+    def redirect_task(location:, status:)
       # Determine the HTTP method and body for the redirect
       # 301, 302, 303: Convert to GET (no body) - standard browser behavior
       # 307, 308: Preserve original method and body

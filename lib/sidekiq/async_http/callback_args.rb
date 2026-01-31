@@ -110,7 +110,7 @@ module Sidekiq
       def [](key)
         string_key = key.to_s
         unless @data.include?(string_key)
-          raise ArgumentError.new("No callback argument '#{key}' found. Available keys: #{@data.keys.inspect}")
+          raise ArgumentError.new("Argument '#{key}' not found. Available keys: #{@data.keys.join(", ")}")
         end
 
         @data[string_key]

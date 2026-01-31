@@ -4,7 +4,7 @@ tr:
   async_http.total_requests: "Toplam İstek"
   async_http.average_duration: "Ortalama Süre (saniye)"
   async_http.total_errors: "Toplam Hata"
-  async_http.requests_refused: "Reddedilen İstekler"
+  async_http.max_capacity_exceeded: "Maks. Kapasite Aşıldı"
   async_http.connection_capacity: "Bağlantı Kapasitesi"
   async_http.max_capacity: "Maks. Kapasite"
   async_http.connections: "bağlantı"

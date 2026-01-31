@@ -201,24 +201,40 @@ module Sidekiq::AsyncHttp
       @processor.nil? || @processor.stopped?
     end
 
-    # Main public API: enqueue an async HTTP request
+    # Enqueue an async HTTP request
+    #
     # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete, :head, :options)
     # @param url [String, URI] full URL to request
+    # @param completion_worker [Class] worker class for completed request callback
+    # @param error_worker [Class] worker class for error callback
     # @param headers [Hash, HttpHeaders] request headers
     # @param body [String, nil] request body
     # @param json [Object, nil] JSON object to serialize as body
     # @param timeout [Float] request timeout in seconds
     # @param connect_timeout [Float, nil] connection open timeout in seconds
     # @param sidekiq_job [Sidekiq::Job, nil] the Sidekiq job context for the current worker
-    # @param completion_worker [String] worker class name for success callback
-    # @param error_worker [String] worker class name for error callback
     # @return [String] request ID
-    def request(method:, url:, completion_worker:, headers: {}, body: nil, json: nil,
-      timeout: nil, connect_timeout: nil,
-      sidekiq_job: nil, error_worker: nil)
+    def request(
+      method:,
+      url:,
+      completion_worker:,
+      error_worker:,
+      headers: {},
+      body: nil,
+      json: nil,
+      timeout: nil,
+      connect_timeout: nil,
+      raise_error_responses: nil,
+      sidekiq_job: nil
+    )
       client = Client.new(timeout: timeout, connect_timeout: connect_timeout)
       request = client.async_request(method, url, body: body, json: json, headers: headers)
-      request.execute(sidekiq_job: sidekiq_job, completion_worker_class: completion_worker, error_worker_class: error_worker)
+      request.execute(
+        completion_worker_class: completion_worker,
+        error_worker_class: error_worker,
+        raise_error_responses: raise_error_responses,
+        sidekiq_job: sidekiq_job
+      )
       request.id
     end
 
@@ -325,17 +341,22 @@ module Sidekiq::AsyncHttp
       end
     end
 
+    # Check if running in testing mode.
+    #
     # @api private
     def testing?
       @testing
     end
 
+    # Set testing mode. This should only be set in testing environments.
+    #
     # @api private
     def testing=(value)
       @testing = !!value
     end
 
     # Returns the processor instance (internal accessor)
+    #
     # @return [Processor, nil]
     # @api private
     attr_accessor :processor

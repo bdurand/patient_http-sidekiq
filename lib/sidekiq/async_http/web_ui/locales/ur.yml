@@ -4,7 +4,7 @@ ur:
   async_http.total_requests: "کل درخواستیں"
   async_http.average_duration: "اوسط دورانیہ (سیکنڈ)"
   async_http.total_errors: "کل غلطیاں"
-  async_http.requests_refused: "مسترد شدہ درخواستیں"
+  async_http.max_capacity_exceeded: "زیادہ سے زیادہ گنجائش سے تجاوز"
   async_http.connection_capacity: "کنکشن کی گنجائش"
   async_http.max_capacity: "زیادہ سے زیادہ گنجائش"
   async_http.connections: "کنکشنز"

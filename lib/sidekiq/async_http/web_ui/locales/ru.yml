@@ -4,7 +4,7 @@ ru:
   async_http.total_requests: "Всего запросов"
   async_http.average_duration: "Средняя длительность (секунды)"
   async_http.total_errors: "Всего ошибок"
-  async_http.requests_refused: "Отклонено запросов"
+  async_http.max_capacity_exceeded: "Превышена макс. емкость"
   async_http.connection_capacity: "Емкость подключений"
   async_http.max_capacity: "Макс. емкость"
   async_http.connections: "подключений"

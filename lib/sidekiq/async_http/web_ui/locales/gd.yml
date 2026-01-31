@@ -4,7 +4,7 @@ gd:
   async_http.total_requests: "Iarrtasan gu lèir"
   async_http.average_duration: "Cuibheasachd faid (diogan)"
   async_http.total_errors: "Mearachdan gu lèir"
-  async_http.requests_refused: "Iarrtasan a chaidh a dhiùltadh"
+  async_http.max_capacity_exceeded: "Comas as motha thairis"
   async_http.connection_capacity: "Comas ceangail"
   async_http.max_capacity: "Comas as motha"
   async_http.connections: "ceanglaichean"
