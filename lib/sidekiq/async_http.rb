@@ -62,6 +62,7 @@ module Sidekiq::AsyncHttp
   autoload :TimeHelper, File.join(__dir__, "async_http/time_helper")
 
   # Autoload all components
+  autoload :AsyncHttpClient, File.join(__dir__, "async_http/async_http_client")
   autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
   autoload :Client, File.join(__dir__, "async_http/client")
   autoload :Configuration, File.join(__dir__, "async_http/configuration")

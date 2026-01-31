@@ -62,7 +62,6 @@ class TestWebServer
 
   def run_server
     # Suppress warnings from the Async HTTP server during tests
-    # Set the console logger level to only show errors
     Console.logger.level = Logger::ERROR
 
     # Wrap Rack app for async HTTP server
@@ -77,6 +76,9 @@ class TestWebServer
       server = Async::HTTP::Server.new(app, endpoint)
       server_task = task.async do
         server.run
+      rescue Errno::EPIPE, Errno::ECONNRESET, IOError
+        # Silently ignore broken pipe and connection errors
+        # These occur when clients disconnect early (e.g., during size limit tests)
       end
 
       # Monitor for shutdown
@@ -201,10 +203,13 @@ class TestWebServer
     http = Net::HTTP.new(uri.host, uri.port)
     http.open_timeout = 0.1
     http.read_timeout = 0.1
-    response = http.get(uri.path)
-    response.is_a?(Net::HTTPSuccess)
-  rescue => e
-    warn e.inspect
+    begin
+      response = http.get(uri.path)
+      response.is_a?(Net::HTTPSuccess)
+    ensure
+      http.finish if http.started?
+    end
+  rescue
     false
   end
 end

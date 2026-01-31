@@ -15,6 +15,11 @@ require "bundler/setup"
 require "webmock/rspec"
 require "async/rspec"
 require "sidekiq/testing"
+require "console"
+
+# Suppress Async task warnings (like EPIPE errors from early connection closes)
+# These are expected in tests that intentionally close connections early
+Console.logger.level = Logger::FATAL
 
 require_relative "../lib/sidekiq-async_http"
 

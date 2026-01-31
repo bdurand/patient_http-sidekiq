@@ -51,9 +51,6 @@ module Sidekiq::AsyncHttp
       @http_method = http_method.is_a?(String) ? http_method.downcase.to_sym : http_method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
-      if Sidekiq::AsyncHttp.configuration.user_agent
-        @headers["user-agent"] ||= Sidekiq::AsyncHttp.configuration.user_agent.to_s
-      end
       @body = body
       @timeout = timeout
       @max_redirects = max_redirects

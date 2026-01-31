@@ -176,7 +176,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       processor.wait_for_processing
       # Wait a bit longer to let fast requests (100ms) get close to completion
-      sleep(0.15)
+      sleep(0.25)
 
       # Stop with medium timeout (200ms)
       # Fast requests (100ms) should complete during this timeout

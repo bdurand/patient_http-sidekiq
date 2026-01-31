@@ -28,8 +28,6 @@ module Sidekiq
       # @return [void]
       def initialize(config = nil)
         @config = config || Sidekiq::AsyncHttp.configuration
-        @http_client = Async::HTTP::Internet.new(retries: 1, limit: @config.max_connections)
-        @response_reader = ResponseReader.new(@config)
         @lifecycle = LifecycleManager.new
         @stats = Stats.new(@config)
         @inflight_registry = InflightRegistry.new(@config)
@@ -45,6 +43,7 @@ module Sidekiq
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
         @testing_callback = nil
+        @http_client = AsyncHttpClient.new(self)
       end
 
       # Start the processor.
@@ -352,31 +351,18 @@ module Sidekiq
 
         # Mark task as started
         task.started!
+        response_handled = false
 
         begin
-          req = task.request
-          headers = req.headers.to_h.merge("x-request-id" => task.id)
-          body = Protocol::HTTP::Body::Buffered.wrap([req.body.to_s]) if req.body
+          response_data = @http_client.make_request(task.request, task.id)
 
-          # Execute with timeout
-          response_data = Async::Task.current.with_timeout(task.request.timeout || @config.request_timeout) do
-            async_response = @http_client.call(req.http_method, req.url, headers, body)
-            headers_hash = async_response.headers.to_h.transform_values(&:to_s)
-            body = @response_reader.read_body(async_response, headers_hash) unless stopping? || stopped?
-
-            # Build response object
-            {
-              status: async_response.status,
-              headers: headers_hash,
-              body: body
-            }
-          end
-
+          # Return early because the body many not have been fully read.
           return if stopping? || stopped?
 
           # Check for redirect handling
           if should_follow_redirect?(task, response_data)
             handle_redirect(task, response_data)
+            response_handled = true
             return
           end
 
@@ -388,21 +374,32 @@ module Sidekiq
           else
             handle_completion(task, response)
           end
+
+          response_handled = true
         rescue => e
           error_type = RequestError.error_type(e)
           @stats.record_error(error_type)
           handle_error(task, e)
+          response_handled = true
         ensure
-          # Remove from in-flight tracking
-          @tasks_lock.synchronize do
-            @inflight_requests.delete(full_task_id)
-            @inflight_task_ids.delete(task.id)
-          end
-          @inflight_registry.unregister(task)
-          @stats.record_request(task.response&.status, task.duration)
-
+          cleanup_after_task(task, response_handled)
           @testing_callback&.call(task) if AsyncHttp.testing?
         end
+      end
+
+      # Cleanup after request processing.
+      #
+      # @param task [RequestTask] the request task
+      # @return [void]
+      def cleanup_after_task(task, response_handled)
+        return if (stopping? || stopped?) && !response_handled
+
+        @tasks_lock.synchronize do
+          full_task_id = @inflight_task_ids.delete(task.id)
+          @inflight_requests.delete(full_task_id)
+        end
+        @inflight_registry.unregister(task)
+        @stats.record_request(task.response&.status, task.duration)
       end
 
       # Handle successful response.

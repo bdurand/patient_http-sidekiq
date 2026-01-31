@@ -7,14 +7,11 @@ module Sidekiq
     # Encapsulates the logic for reading async HTTP responses with size validation
     # and building Response objects from the raw response data.
     class ResponseReader
-      # @return [Configuration] the configuration object
-      attr_reader :config
-
       # Initialize the reader.
       #
-      # @param config [Configuration] the configuration object
-      def initialize(config)
-        @config = config
+      # @param processor [Processor] the processor object
+      def initialize(processor)
+        @processor = processor
       end
 
       # Read the response body with size validation.
@@ -38,15 +35,31 @@ module Sidekiq
 
       private
 
+      def max_response_size
+        if @processor.respond_to?(:config)
+          @processor.config.max_response_size
+        else
+          @processor.max_response_size
+        end
+      end
+
+      def logger
+        if @processor.respond_to?(:config)
+          @processor.config.logger
+        else
+          @processor.logger
+        end
+      end
+
       # Validate content-length header doesn't exceed max size.
       #
       # @param headers_hash [Hash] the response headers
       # @raise [ResponseTooLargeError] if content-length exceeds max_response_size
       def validate_content_length(headers_hash)
         content_length = headers_hash["content-length"]&.to_i
-        if content_length && content_length > @config.max_response_size
+        if content_length && content_length > max_response_size
           raise ResponseTooLargeError.new(
-            "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{@config.max_response_size} bytes)"
+            "Response body size (#{content_length} bytes) exceeds maximum allowed size (#{max_response_size} bytes)"
           )
         end
       end
@@ -54,26 +67,40 @@ module Sidekiq
       # Read body chunks while checking size.
       #
       # @param async_response [Async::HTTP::Protocol::Response] the async HTTP response
-      # @return [String] the response body in ASCII-8BIT encoding
+      # @return [String, nil] the response body in ASCII-8BIT encoding, or nil if interrupted
       # @raise [ResponseTooLargeError] if body size exceeds max_response_size during read
       def read_body_chunks(async_response)
         chunks = []
         total_size = 0
+        finished = false
 
-        async_response.body.each do |chunk|
-          total_size += chunk.bytesize
+        begin
+          async_response.body.each do |chunk|
+            # Check if processor is stopping/stopped (early exit during shutdown)
+            if @processor.stopping? || @processor.stopped?
+              return nil
+            end
 
-          if total_size > @config.max_response_size
-            raise ResponseTooLargeError.new(
-              "Response body size exceeded maximum allowed size (#{@config.max_response_size} bytes)"
-            )
+            total_size += chunk.bytesize
+
+            if total_size > max_response_size
+              raise ResponseTooLargeError.new(
+                "Response body size exceeded maximum allowed size (#{max_response_size} bytes)"
+              )
+            end
+
+            chunks << chunk
           end
 
-          chunks << chunk
-        end
+          finished = true
 
-        # Join chunks and force to binary encoding to preserve raw bytes
-        chunks.join.force_encoding(Encoding::ASCII_8BIT)
+          # Join chunks and force to binary encoding to preserve raw bytes
+          chunks.join.force_encoding(Encoding::ASCII_8BIT)
+        ensure
+          # Always close the body if we were interrupted or if an error occurred
+          # This ensures the connection is properly released back to the pool
+          async_response.body.close unless finished
+        end
       end
 
       # Extract charset from Content-Type header.
@@ -116,7 +143,7 @@ module Sidekiq
           body.force_encoding(encoding)
         rescue ArgumentError
           # Invalid or unknown charset, leave as binary
-          @config.logger&.warn("[Sidekiq::AsyncHttp] Unknown charset '#{charset}' in Content-Type header")
+          logger&.warn("[Sidekiq::AsyncHttp] Unknown charset '#{charset}' in Content-Type header")
           body
         end
       end

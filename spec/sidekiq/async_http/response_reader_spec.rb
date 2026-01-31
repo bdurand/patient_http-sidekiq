@@ -4,7 +4,8 @@ require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::ResponseReader do
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
-  let(:response_reader) { described_class.new(config) }
+  let(:processor) { instance_double(Sidekiq::AsyncHttp::Processor, config: config, stopping?: false, stopped?: false) }
+  let(:response_reader) { described_class.new(processor) }
 
   describe "#read_body" do
     let(:body_double) { instance_double(Protocol::HTTP::Body::Buffered) }
@@ -62,12 +63,20 @@ RSpec.describe Sidekiq::AsyncHttp::ResponseReader do
       before do
         config.max_response_size = 10
         allow(body_double).to receive(:each).and_yield("Hello, ").and_yield("World!")
+        allow(body_double).to receive(:close)
       end
 
       it "raises ResponseTooLargeError" do
         expect {
           response_reader.read_body(async_response, headers_hash)
         }.to raise_error(Sidekiq::AsyncHttp::ResponseTooLargeError, /exceeded maximum allowed size/)
+      end
+
+      it "closes the body on error" do
+        expect(body_double).to receive(:close)
+        expect {
+          response_reader.read_body(async_response, headers_hash)
+        }.to raise_error(Sidekiq::AsyncHttp::ResponseTooLargeError)
       end
     end
 
@@ -154,6 +163,30 @@ RSpec.describe Sidekiq::AsyncHttp::ResponseReader do
         result = response_reader.read_body(async_response, headers_hash)
 
         expect(result.encoding).to eq(Encoding::UTF_8)
+      end
+    end
+
+    context "when processor is stopping" do
+      let(:processor) { instance_double(Sidekiq::AsyncHttp::Processor) }
+      let(:config) { Sidekiq::AsyncHttp::Configuration.new }
+      let(:response_reader) { described_class.new(processor) }
+
+      before do
+        allow(processor).to receive(:config).and_return(config)
+        allow(processor).to receive(:stopping?).and_return(true)
+        allow(processor).to receive(:stopped?).and_return(false)
+        allow(body_double).to receive(:each).and_yield("Hello, ").and_yield("World!")
+        allow(body_double).to receive(:close)
+      end
+
+      it "returns nil" do
+        result = response_reader.read_body(async_response, headers_hash)
+        expect(result).to be_nil
+      end
+
+      it "closes the body" do
+        expect(body_double).to receive(:close)
+        response_reader.read_body(async_response, headers_hash)
       end
     end
   end
