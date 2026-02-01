@@ -28,32 +28,23 @@ module Sidekiq::AsyncHttp
 
     # Perform the callback invocation.
     #
-    # @param result_data [Hash] Serialized Response or Error data
+    # @param result [Hash] Serialized Response or Error data
     # @param result_type [String] "response" or "error" indicating the type of result
     # @param callback_service_name [String] Fully qualified callback service class name
-    def perform(result_data, result_type, callback_service_name)
-      # Deserialize based on explicit type
-      result = if result_type == "response"
-        Response.load(result_data)
-      else
-        Error.load(result_data)
-      end
-
-      # Invoke global callbacks first
-      if result.is_a?(Response)
-        Sidekiq::AsyncHttp.invoke_completion_callbacks(result)
-      else
-        Sidekiq::AsyncHttp.invoke_error_callbacks(result)
-      end
-
-      # Instantiate and invoke callback service
+    def perform(result, result_type, callback_service_name)
       callback_service_class = ClassHelper.resolve_class_name(callback_service_name)
       callback_service = callback_service_class.new
 
-      if result.is_a?(Response)
-        callback_service.on_complete(result)
+      if result_type == "response"
+        response = Response.load(result)
+        Sidekiq::AsyncHttp.invoke_completion_callbacks(response)
+        callback_service.on_complete(response)
+      elsif result_type == "error"
+        error = Error.load(result)
+        Sidekiq::AsyncHttp.invoke_error_callbacks(error)
+        callback_service.on_error(error)
       else
-        callback_service.on_error(result)
+        raise ArgumentError, "Unknown result_type: #{result_type}"
       end
     end
   end
