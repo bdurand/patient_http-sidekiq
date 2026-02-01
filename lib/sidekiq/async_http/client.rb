@@ -1,15 +1,33 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
-  # The Client is used to build HTTP request for asynchronous execution.
+  # The Client is used to build HTTP requests with shared configuration for asynchronous execution.
   #
-  # Usage:
-  #   client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-  #   request = client.async_get("/users")
-  #   request.execute(callback: MyCallbackService)
+  # Use Client when you need to make multiple requests to the same API with shared
+  # configuration (base URL, headers, timeout).
+  #
+  # @example Basic usage
+  #   client = Sidekiq::AsyncHttp::Client.new(
+  #     base_url: "https://api.example.com",
+  #     headers: {"Authorization" => "Bearer token"},
+  #     timeout: 60
+  #   )
+  #   request = client.async_get("/users/123")
+  #   request.async_execute(callback: MyCallback, callback_args: {user_id: 123})
+  #
+  # @example The callback service
+  #   class MyCallback
+  #     def on_complete(response)
+  #       User.find(response.callback_args[:user_id]).update!(data: response.json)
+  #     end
+  #
+  #     def on_error(error)
+  #       Rails.logger.error("Request failed: #{error.message}")
+  #     end
+  #   end
   #
   # The Client handles building HTTP requests with proper URL joining, header merging,
-  # and parameter encoding. Call execute() on the returned Request to execute it asynchronously.
+  # and parameter encoding. Call +async_execute+ on the returned Request to enqueue it.
   class Client
     # @return [String, URI::HTTP, nil] Base URL for relative URIs
     attr_accessor :base_url
@@ -31,8 +49,9 @@ module Sidekiq::AsyncHttp
       @timeout = timeout
     end
 
-    # Build an async HTTP request. Returns a Request. The Request object that must have
-    # `execute` called on it to enqueue it for processing.
+    # Build an async HTTP request. Returns a Request object.
+    #
+    # Call +async_execute+ on the returned Request to enqueue it for processing.
     # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
     # @param uri [String, URI::HTTP] URI path to request (joined with base_url if relative)
     # @param body [String, nil] request body

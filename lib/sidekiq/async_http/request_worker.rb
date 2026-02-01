@@ -1,11 +1,17 @@
 # frozen_string_literal: true
 
 module Sidekiq::AsyncHttp
-  # Sidekiq worker for making HTTP requests.
+  # Sidekiq worker for executing HTTP requests asynchronously.
   #
-  # This worker is used when calling Sidekiq::AsyncHttp.request() outside of a Sidekiq job.
-  # It allows async HTTP requests to be enqueued and processed through the standard
-  # Sidekiq job lifecycle.
+  # This worker is enqueued when calling +Sidekiq::AsyncHttp.get+, +Sidekiq::AsyncHttp.post+,
+  # etc., or when calling +Request#async_execute+. It allows HTTP requests to be made from
+  # anywhere in your code (not just Sidekiq jobs) while still processing them through the
+  # async HTTP processor.
+  #
+  # When the request completes, the specified callback service's +on_complete+ or +on_error+
+  # method is invoked via CallbackWorker.
+  #
+  # @api private
   class RequestWorker
     include Sidekiq::Job
 

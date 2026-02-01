@@ -6,10 +6,31 @@ module Sidekiq::AsyncHttp
   # Represents an async HTTP request that will be processed by the async processor.
   #
   # Created by Client#async_request and its convenience methods (async_get, async_post, etc.).
-  # Must call execute() with a callback service to enqueue the request for execution.
   #
-  # The request validates that it has a method and URL. The execute call validates
-  # the Sidekiq job hash and callback service are provided.
+  # There are two ways to execute a request:
+  #
+  # - +async_execute+ - Enqueues a Sidekiq job to make the request. Can be called from
+  #   anywhere (controllers, scripts, other jobs, etc.). This is the recommended method
+  #   for most use cases.
+  #
+  # - +execute+ - Directly enqueues the request to the async processor. Must be called
+  #   from within a Sidekiq job context. Used internally by RequestWorker.
+  #
+  # @example Using async_execute (recommended)
+  #   client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
+  #   request = client.async_get("/users/123")
+  #   request.async_execute(callback: MyCallback, callback_args: {user_id: 123})
+  #
+  # @example The callback service
+  #   class MyCallback
+  #     def on_complete(response)
+  #       User.find(response.callback_args[:user_id]).update!(data: response.json)
+  #     end
+  #
+  #     def on_error(error)
+  #       Rails.logger.error("Request failed: #{error.message}")
+  #     end
+  #   end
   class Request
     # Valid HTTP methods
     VALID_METHODS = %i[get post put patch delete].freeze
@@ -74,28 +95,36 @@ module Sidekiq::AsyncHttp
       validate!
     end
 
-    # Execute the request. The request will be processed asynchronously. If the
-    # request gets a response from the server, the callback's on_complete method will be called.
-    # If an error occurs (network error, timeout, or non-2xx response if raise_error_responses
-    # is true), the callback's on_error method will be called.
+    # Execute the request directly on the async processor.
     #
-    # @param callback [Class, String] Callback service class with on_complete and on_error
+    # This method enqueues the request directly to the async processor. It must be
+    # called from within a Sidekiq job context (the sidekiq_job parameter is required).
+    # Used internally by RequestWorker.
+    #
+    # For most use cases, prefer {#async_execute} which can be called from anywhere.
+    #
+    # When the request completes, the callback's +on_complete+ method is called with
+    # a Response object. If an error occurs (network error, timeout, or non-2xx response
+    # if raise_error_responses is true), the +on_error+ method is called with an Error object.
+    #
+    # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
     #   instance methods, or its fully qualified class name.
     # @param sidekiq_job [Hash, nil] Sidekiq job hash with "class" and "args" keys.
     #   If not provided, uses Sidekiq::AsyncHttp::Context.current_job.
     #   This requires the Sidekiq::AsyncHttp::Context::Middleware to be added
-    #   to the Sidekiq server middleware chain. This is done by default if you require
-    #   the "sidekiq/async_http/sidekiq" file.
+    #   to the Sidekiq server middleware chain.
     # @param synchronous [Boolean] If true, runs the request inline (for testing).
     # @param callback_args [#to_h, nil] Arguments to pass to callback via the
-    #   Response/Error object. Must respond to to_h and contain only JSON-native types
-    #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys (including
-    #   nested hashes and hashes in arrays) will be deeply converted to strings for serialization.
-    #   Access via response.callback_args or error.callback_args using symbol or string keys.
-    # @param raise_error_responses [Boolean] If true, raises an HttpError for non-2xx responses
-    #   and calls on_error instead of on_complete. Defaults to false.
-    # @param request_id [String, nil] @private Unique request ID for tracking. If nil, a new UUID will be generated.
+    #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
+    #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
+    #   converted to strings for serialization. Access via +response.callback_args+ or
+    #   +error.callback_args+ using symbol or string keys.
+    # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
+    #   and calls +on_error+ instead of +on_complete+. Defaults to false.
+    # @param request_id [String, nil] Unique request ID for tracking. If nil, a new UUID
+    #   will be generated.
     # @return [String] the request ID
+    # @api private
     def execute(
       callback:,
       sidekiq_job: nil,
@@ -134,6 +163,26 @@ module Sidekiq::AsyncHttp
       task.id
     end
 
+    # Enqueue the request for asynchronous execution via a Sidekiq job.
+    #
+    # This method enqueues a RequestWorker job that will execute the HTTP request
+    # asynchronously. Can be called from anywhere (controllers, scripts, other jobs, etc.).
+    #
+    # When the request completes, the callback's +on_complete+ method is called with
+    # a Response object. If an error occurs, the +on_error+ method is called with
+    # an Error object.
+    #
+    # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
+    #   instance methods, or its fully qualified class name.
+    # @param synchronous [Boolean] If true, runs the request inline (for testing).
+    # @param callback_args [#to_h, nil] Arguments to pass to callback via the
+    #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
+    #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
+    #   converted to strings for serialization. Access via +response.callback_args+ or
+    #   +error.callback_args+ using symbol or string keys.
+    # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
+    #   and calls +on_error+ instead of +on_complete+. Defaults to false.
+    # @return [String] the request ID
     def async_execute(
       callback:,
       synchronous: false,

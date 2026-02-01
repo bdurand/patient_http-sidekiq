@@ -4,7 +4,25 @@ module Sidekiq::AsyncHttp
   # Sidekiq worker that invokes callback services for HTTP request results.
   #
   # This worker receives serialized Response or Error data and invokes the
-  # appropriate callback service method (on_complete or on_error).
+  # appropriate callback service method (+on_complete+ or +on_error+).
+  #
+  # Callback services are plain Ruby classes that define +on_complete+ and +on_error+
+  # instance methods:
+  #
+  # @example Callback service
+  #   class MyCallback
+  #     def on_complete(response)
+  #       # Handle successful response
+  #       User.find(response.callback_args[:user_id]).update!(data: response.json)
+  #     end
+  #
+  #     def on_error(error)
+  #       # Handle request error
+  #       Rails.logger.error("Request failed: #{error.message}")
+  #     end
+  #   end
+  #
+  # @api private
   class CallbackWorker
     include Sidekiq::Job
 

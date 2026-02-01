@@ -16,7 +16,31 @@ require "socket"
 # to a dedicated async I/O processor running in the same process, freeing worker threads
 # immediately while HTTP requests are in flight.
 #
-# Key features:
+# == Usage
+#
+# Make HTTP requests from anywhere in your code:
+#
+#   Sidekiq::AsyncHttp.get(
+#     "https://api.example.com/users/123",
+#     callback: MyCallback,
+#     callback_args: {user_id: 123}
+#   )
+#
+# Define a callback service class with +on_complete+ and +on_error+ methods:
+#
+#   class MyCallback
+#     def on_complete(response)
+#       user_id = response.callback_args[:user_id]
+#       User.find(user_id).update!(data: response.json)
+#     end
+#
+#     def on_error(error)
+#       Rails.logger.error("Request failed: #{error.message}")
+#     end
+#   end
+#
+# == Key Features
+#
 # - Asynchronous HTTP processing using Ruby's Fiber scheduler
 # - Non-blocking worker threads
 # - Automatic connection pooling and HTTP/2 support
