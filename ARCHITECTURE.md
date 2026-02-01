@@ -8,7 +8,7 @@ Sidekiq::AsyncHttp provides a mechanism to offload long-running HTTP requests fr
 
 1. **Non-blocking Workers**: Worker threads enqueue HTTP requests and immediately return, freeing them to process other jobs
 2. **Singleton Processor**: One async I/O processor per Sidekiq process handles all HTTP requests using Fiber-based concurrency
-3. **Callback Pattern**: HTTP responses are processed via callback workers that run as Sidekiq jobs
+3. **Callback Service Pattern**: HTTP responses are processed by callback service classes with `on_complete` and `on_error` methods
 4. **Lifecycle Integration**: Processor lifecycle is tightly coupled with Sidekiq's startup and shutdown
 
 ## Core Components
@@ -16,11 +16,14 @@ Sidekiq::AsyncHttp provides a mechanism to offload long-running HTTP requests fr
 ### Processor
 The heart of the system - a singleton that runs in a dedicated thread with its own Fiber reactor. Manages the async HTTP request queue and handles concurrent request execution using the `async` gem.
 
-### Job Mixin
-A module that workers include to gain async HTTP capabilities. Provides `async_get`, `async_post`, etc. methods and callback definitions (`on_completion`, `on_error`).
+### RequestWorker
+A Sidekiq worker that accepts HTTP requests and enqueues them to the async processor. This allows HTTP requests to be made from anywhere in your code (not just Sidekiq jobs).
+
+### CallbackWorker
+A Sidekiq worker that invokes callback service methods (`on_complete` or `on_error`) when HTTP requests complete.
 
 ### Client
-Request builder that constructs HTTP requests with proper URL joining, header merging, and parameter encoding.
+Request builder that constructs HTTP requests with proper URL joining, header merging, and parameter encoding. Provides shared configuration (base URL, headers, timeout) for multiple requests.
 
 ### Request/Response
 Immutable value objects representing HTTP requests and responses. Responses are serializable so they can be passed to callback workers.
@@ -31,68 +34,74 @@ Tracks all in-flight HTTP requests for monitoring, crash recovery, and graceful 
 ### Metrics
 Collects runtime statistics about request throughput, latency, errors, and processor state.
 
-## Callback Pattern
+## Callback Service Pattern
 
-When HTTP requests complete, the processor enqueues callback workers to handle the response or error. Callbacks receive a single argument containing all the context they need:
+When HTTP requests complete, the processor enqueues CallbackWorker jobs to invoke the appropriate callback service method:
 
-- **Success callbacks** receive a `Response` object with status, headers, body, and optional callback arguments
-- **Error callbacks** receive an `Error` object with error details and optional callback arguments
-- **Callback arguments** must be explicitly provided via the `callback_args:` option as a hash
-- Callback workers access these arguments via `response.callback_args[:key]` or `error.callback_args[:key]`
+- **Success callbacks**: The `on_complete` method receives a `Response` object with status, headers, body, and callback arguments
+- **Error callbacks**: The `on_error` method receives an `Error` object with error details and callback arguments
+- **Callback arguments** are passed via the `callback_args:` option and accessed via `response.callback_args[:key]` or `error.callback_args[:key]`
 
 Example:
 ```ruby
-class MyWorker
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
+# Define a callback service class
+class FetchDataCallback
+  def on_complete(response)
     user_id = response.callback_args[:user_id]
     User.find(user_id).update!(data: response.json)
   end
 
-  def perform(user_id, endpoint)
-    async_get(
-      "https://api.example.com/#{endpoint}",
-      callback_args: {user_id: user_id}
-    )
+  def on_error(error)
+    user_id = error.callback_args[:user_id]
+    Rails.logger.error("Failed to fetch data for user #{user_id}: #{error.message}")
   end
 end
+
+# Make a request from anywhere in your code
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/users/123",
+  callback: FetchDataCallback,
+  callback_args: {user_id: 123}
+)
 ```
 
 ## Request Lifecycle
 
 ```mermaid
 sequenceDiagram
-    participant Worker as Worker Thread
-    participant Job as Job Mixin
-    participant Client as HTTP Client
+    participant App as Application Code
+    participant Module as Sidekiq::AsyncHttp
+    participant ReqWorker as RequestWorker
     participant Processor as Async Processor
     participant Sidekiq as Sidekiq Queue
-    participant Callback as Callback Worker
+    participant CbWorker as CallbackWorker
+    participant Callback as Callback Service
 
-    Worker->>Job: perform(args)
-    Job->>Client: async_get(url)
-    Client->>Client: Build Request
-    Client->>Processor: enqueue(request)
+    App->>Module: get(url, callback: MyCallback)
+    Module->>Sidekiq: Enqueue RequestWorker
+    Sidekiq->>ReqWorker: Execute job
+    ReqWorker->>Processor: enqueue(request)
     activate Processor
     Note over Processor: Request stored<br/>in queue
-    Processor-->>Job: Returns immediately
-    Job-->>Worker: Job completes
+    Processor-->>ReqWorker: Returns immediately
+    ReqWorker-->>Sidekiq: Job completes
     deactivate Processor
 
-    Note over Worker: Worker thread free<br/>to process other jobs
+    Note over Sidekiq: Worker thread free<br/>to process other jobs
 
     activate Processor
     Processor->>Processor: Fiber reactor<br/>dequeues request
     Processor->>Processor: Execute HTTP request<br/>(non-blocking)
 
     alt HTTP Request Completes
-        Processor->>Sidekiq: Enqueue success callback
-        Sidekiq->>Callback: Execute on_completion
+        Processor->>Sidekiq: Enqueue CallbackWorker
+        Sidekiq->>CbWorker: Execute job
+        CbWorker->>Callback: on_complete(response)
         Callback->>Callback: Process response
     else Error Raised
-        Processor->>Sidekiq: Enqueue error callback
-        Sidekiq->>Callback: Execute on_error
+        Processor->>Sidekiq: Enqueue CallbackWorker
+        Sidekiq->>CbWorker: Execute job
+        CbWorker->>Callback: on_error(error)
         Callback->>Callback: Handle error
     end
     deactivate Processor
@@ -107,16 +116,17 @@ erDiagram
     PROCESSOR ||--|| METRICS : "maintains"
     PROCESSOR ||--|| CONFIGURATION : "configured by"
 
-    JOB-MIXIN ||--|| CLIENT : "uses"
-    JOB-MIXIN ||--o{ CALLBACK-WORKER : "defines"
+    MODULE ||--|| CLIENT : "uses"
+    MODULE ||--|| REQUEST-WORKER : "enqueues"
 
     CLIENT ||--|| REQUEST : "builds"
     REQUEST ||--|| RESPONSE : "yields"
 
+    REQUEST-WORKER ||--|| PROCESSOR : "enqueues to"
+    CALLBACK-WORKER ||--|| CALLBACK-SERVICE : "invokes"
+
     INFLIGHT-REGISTRY ||--o{ REQUEST : "tracks"
     CALLBACK-WORKER }o--|| RESPONSE : "receives"
-
-    SIDEKIQ-WORKER ||--|| JOB-MIXIN : "includes"
 
     PROCESSOR {
         string state
@@ -138,12 +148,12 @@ erDiagram
         string body
         string http_method
         string url
+        hash callback_args
     }
 
-    JOB-MIXIN {
-        class completion_worker
-        class error_worker
-        hash callback_args
+    CALLBACK-SERVICE {
+        method on_complete
+        method on_error
     }
 
     INFLIGHT-REGISTRY {
@@ -225,7 +235,9 @@ All behavior is controlled through a central `Configuration` object:
 
 - Queue capacity limits
 - Request timeouts
+- Connection pool settings
 - Retry policies
+- Proxy configuration
 - Logging
 - Metrics collection
 

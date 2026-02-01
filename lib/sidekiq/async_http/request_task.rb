@@ -16,11 +16,8 @@ module Sidekiq::AsyncHttp
     # @return [Hash] The Sidekiq job hash containing class, jid, args, etc.
     attr_reader :sidekiq_job
 
-    # @return [String] Class name for the success callback worker
-    attr_reader :completion_worker
-
-    # @return [String] Class name for the error callback worker
-    attr_reader :error_worker
+    # @return [String] Class name for the callback service
+    attr_reader :callback
 
     # @return [Hash] Callback arguments to include in Response/Error objects (never nil, defaults to empty hash)
     attr_reader :callback_args
@@ -38,30 +35,30 @@ module Sidekiq::AsyncHttp
     #
     # @param request [Request] The HTTP request to wrap.
     # @param sidekiq_job [Hash] The Sidekiq job hash.
-    # @param completion_worker [String] Class name for success callback.
-    # @param error_worker [String, nil] Class name for error callback, optional.
+    # @param callback [String, Class] Class name or class for the callback service.
     # @param callback_args [Hash] Callback arguments (with string keys) to include
     #   in Response/Error objects. These will be accessible via response.callback_args
     #   or error.callback_args.
     # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses.
     # @param redirects [Array<String>] URLs visited during redirect chain.
+    # @param id [String, nil] Unique UUID for tracking the task. If nil, a new UUID will be generated.
     def initialize(
       request:,
       sidekiq_job:,
-      completion_worker:,
-      error_worker:,
+      callback:,
       callback_args: {},
       raise_error_responses: false,
-      redirects: []
+      redirects: [],
+      id: nil
     )
-      @id = SecureRandom.uuid
+      @id = id || SecureRandom.uuid
       @request = request
       @sidekiq_job = sidekiq_job
-      @completion_worker = completion_worker
-      @error_worker = error_worker
+      @callback = callback.is_a?(Class) ? callback.name : callback.to_s
       @callback_args = callback_args || {}
       @raise_error_responses = raise_error_responses
       @redirects = redirects || []
+
       @enqueued_at = nil
       @started_at = nil
       @completed_at = nil
@@ -70,8 +67,7 @@ module Sidekiq::AsyncHttp
 
       raise ArgumentError, "request is required" unless @request
       raise ArgumentError, "sidekiq_job is required" unless @sidekiq_job
-      raise ArgumentError, "completion_worker is required" unless @completion_worker
-      raise ArgumentError, "error_worker is required" unless @error_worker
+      raise ArgumentError, "callback is required" if @callback.nil? || @callback.empty?
     end
 
     # Mark task as enqueued
@@ -145,8 +141,8 @@ module Sidekiq::AsyncHttp
     # the response may represent an HTTP error (4xx or 5xx status).
     #
     # If raise_error_responses is enabled and the response has a non-2xx status,
-    # this will create an HttpError and call the error_worker instead of the
-    # completion_worker.
+    # this will create an HttpError and call the error callback instead of the
+    # completion callback.
     #
     # @param response [Sidekiq::AsyncHttp::Response] the HTTP response
     # @return [void]
@@ -154,10 +150,7 @@ module Sidekiq::AsyncHttp
       @completed_at = monotonic_time
       @response = response
 
-      completion_worker_class = ClassHelper.resolve_class_name(@completion_worker)
-      return unless completion_worker_class
-
-      completion_worker_class.set(async_http_continuation: "completion").perform_async(response)
+      CallbackWorker.perform_async(response.as_json, "response", @callback)
     end
 
     # Called with the HTTP error on a failed request.
@@ -180,10 +173,7 @@ module Sidekiq::AsyncHttp
         )
       end
 
-      worker_class = ClassHelper.resolve_class_name(@error_worker)
-      raise "Error worker class #{@error_worker} not found" unless worker_class
-
-      worker_class.set(async_http_continuation: "error").perform_async(wrapped_error)
+      CallbackWorker.perform_async(wrapped_error.as_json, "error", @callback)
     end
 
     # Return true if the task successfully received a response from the server.
@@ -239,15 +229,17 @@ module Sidekiq::AsyncHttp
         max_redirects: request.max_redirects
       )
 
+      redirect_task_id = "#{id.split("/").first}/#{@redirects.size + 2}"
+
       # Create the new task with updated redirects chain
       self.class.new(
         request: redirect_request,
         sidekiq_job: @sidekiq_job,
-        completion_worker: @completion_worker,
-        error_worker: @error_worker,
+        callback: @callback,
         callback_args: @callback_args,
         raise_error_responses: @raise_error_responses,
-        redirects: @redirects + [request.url]
+        redirects: @redirects + [request.url],
+        id: redirect_task_id
       )
     end
 
@@ -259,12 +251,14 @@ module Sidekiq::AsyncHttp
     # @return [Response] the response object
     # @api private
     def build_response(status:, headers:, body:)
+      original_id = id.split("/").first
+
       Response.new(
         status: status,
         headers: headers,
         body: body,
         duration: duration,
-        request_id: id,
+        request_id: original_id,
         url: request.url,
         http_method: request.http_method,
         callback_args: @callback_args,

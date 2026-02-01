@@ -19,8 +19,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
     Sidekiq::AsyncHttp::RequestTask.new(
       request: request,
       sidekiq_job: sidekiq_job,
-      completion_worker: "TestWorker::CompletionCallback",
-      error_worker: "TestWorker::ErrorCallback"
+      callback: TestCallback
     )
   end
 
@@ -68,8 +67,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
     end
 
@@ -216,15 +214,13 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
 
       task3 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-789"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
 
       registry.register(task)
@@ -247,8 +243,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
 
       registry.register(task)
@@ -373,8 +368,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
       registry.register(task2)
 
@@ -438,8 +432,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "test-jid-456"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
       registry.register(task2)
 
@@ -456,8 +449,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       other_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job.merge("jid" => "other-jid"),
-        completion_worker: "TestWorker::CompletionCallback",
-        error_worker: "TestWorker::ErrorCallback"
+        callback: TestCallback
       )
       other_registry.register(other_task)
 

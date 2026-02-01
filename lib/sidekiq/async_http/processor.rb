@@ -417,7 +417,7 @@ module Sidekiq
 
         @config.logger&.debug(
           "[Sidekiq::AsyncHttp] Request #{task.id} succeeded with status #{response.status}, " \
-          "enqueued #{task.completion_worker}"
+          "enqueued callback #{task.callback}"
         )
       end
 
@@ -532,7 +532,7 @@ module Sidekiq
 
         @config.logger&.warn(
           "[Sidekiq::AsyncHttp] Request #{task.id} failed with #{exception.class.name}: #{exception.message}, " \
-          "enqueued #{task.error_worker || task.sidekiq_job["class"]}\n#{exception.backtrace&.join("\n")}"
+          "enqueued callback #{task.callback}\n#{exception.backtrace&.join("\n")}"
         )
       rescue => e
         # Log error but don't crash the processor

@@ -15,6 +15,10 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         expect(config.logger).to eq(Sidekiq.logger)
         expect(config.raise_error_responses).to eq(false)
         expect(config.max_redirects).to eq(5)
+        expect(config.connection_pool_size).to eq(100)
+        expect(config.connection_timeout).to be_nil
+        expect(config.proxy_url).to be_nil
+        expect(config.retries).to eq(3)
       end
     end
 
@@ -172,6 +176,127 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         end.not_to raise_error
       end
     end
+
+    context "with invalid connection_pool_size" do
+      it "raises ArgumentError for zero" do
+        expect { described_class.new(connection_pool_size: 0) }.to raise_error(
+          ArgumentError,
+          "connection_pool_size must be a positive integer, got: 0"
+        )
+      end
+
+      it "raises ArgumentError for negative" do
+        expect { described_class.new(connection_pool_size: -1) }.to raise_error(
+          ArgumentError,
+          "connection_pool_size must be a positive integer, got: -1"
+        )
+      end
+
+      it "raises ArgumentError for non-integer" do
+        expect { described_class.new(connection_pool_size: 100.5) }.to raise_error(
+          ArgumentError,
+          "connection_pool_size must be a positive integer, got: 100.5"
+        )
+      end
+
+      it "allows positive integers" do
+        config = described_class.new(connection_pool_size: 50)
+        expect(config.connection_pool_size).to eq(50)
+      end
+    end
+
+    context "with invalid connection_timeout" do
+      it "raises ArgumentError for zero" do
+        expect { described_class.new(connection_timeout: 0) }.to raise_error(
+          ArgumentError,
+          "connection_timeout must be a positive number, got: 0"
+        )
+      end
+
+      it "raises ArgumentError for negative" do
+        expect { described_class.new(connection_timeout: -1) }.to raise_error(
+          ArgumentError,
+          "connection_timeout must be a positive number, got: -1"
+        )
+      end
+
+      it "allows nil" do
+        config = described_class.new(connection_timeout: nil)
+        expect(config.connection_timeout).to be_nil
+      end
+
+      it "allows positive numbers" do
+        config = described_class.new(connection_timeout: 30)
+        expect(config.connection_timeout).to eq(30)
+      end
+
+      it "allows positive floats" do
+        config = described_class.new(connection_timeout: 5.5)
+        expect(config.connection_timeout).to eq(5.5)
+      end
+    end
+
+    context "with invalid proxy_url" do
+      it "raises ArgumentError for invalid URL" do
+        expect { described_class.new(proxy_url: "not-a-url") }.to raise_error(
+          ArgumentError,
+          /proxy_url must be an HTTP or HTTPS URL/
+        )
+      end
+
+      it "raises ArgumentError for FTP URL" do
+        expect { described_class.new(proxy_url: "ftp://proxy.example.com") }.to raise_error(
+          ArgumentError,
+          /proxy_url must be an HTTP or HTTPS URL/
+        )
+      end
+
+      it "allows nil" do
+        config = described_class.new(proxy_url: nil)
+        expect(config.proxy_url).to be_nil
+      end
+
+      it "allows HTTP URL" do
+        config = described_class.new(proxy_url: "http://proxy.example.com:8080")
+        expect(config.proxy_url).to eq("http://proxy.example.com:8080")
+      end
+
+      it "allows HTTPS URL" do
+        config = described_class.new(proxy_url: "https://proxy.example.com:8080")
+        expect(config.proxy_url).to eq("https://proxy.example.com:8080")
+      end
+
+      it "allows URL with authentication" do
+        config = described_class.new(proxy_url: "http://user:pass@proxy.example.com:8080")
+        expect(config.proxy_url).to eq("http://user:pass@proxy.example.com:8080")
+      end
+    end
+
+    context "with invalid retries" do
+      it "raises ArgumentError for negative" do
+        expect { described_class.new(retries: -1) }.to raise_error(
+          ArgumentError,
+          "retries must be a non-negative integer, got: -1"
+        )
+      end
+
+      it "raises ArgumentError for non-integer" do
+        expect { described_class.new(retries: 3.5) }.to raise_error(
+          ArgumentError,
+          "retries must be a non-negative integer, got: 3.5"
+        )
+      end
+
+      it "allows zero" do
+        config = described_class.new(retries: 0)
+        expect(config.retries).to eq(0)
+      end
+
+      it "allows positive integers" do
+        config = described_class.new(retries: 5)
+        expect(config.retries).to eq(5)
+      end
+    end
   end
 
   describe "#logger" do
@@ -202,7 +327,11 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
         idle_connection_timeout: 120,
         request_timeout: 60,
         shutdown_timeout: 30,
-        logger: custom_logger
+        logger: custom_logger,
+        connection_pool_size: 50,
+        connection_timeout: 10,
+        proxy_url: "http://proxy.example.com:8080",
+        retries: 5
       )
 
       hash = config.to_h
@@ -215,6 +344,10 @@ RSpec.describe Sidekiq::AsyncHttp::Configuration do
       expect(hash["logger"]).to eq(custom_logger)
       expect(hash["raise_error_responses"]).to eq(false)
       expect(hash["max_redirects"]).to eq(5)
+      expect(hash["connection_pool_size"]).to eq(50)
+      expect(hash["connection_timeout"]).to eq(10)
+      expect(hash["proxy_url"]).to eq("http://proxy.example.com:8080")
+      expect(hash["retries"]).to eq(5)
     end
   end
 end

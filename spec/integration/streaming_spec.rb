@@ -13,7 +13,7 @@ RSpec.describe "Streaming Response Integration", :integration do
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
   around do |example|
-    TestWorkers::CompletionWorker.reset_calls!
+    TestCallback.reset_calls!
 
     # Disable WebMock for integration tests
     WebMock.reset!
@@ -45,12 +45,11 @@ RSpec.describe "Streaming Response Integration", :integration do
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: {
-          "class" => "TestWorkers::Worker",
+          "class" => "TestWorker",
           "jid" => "jid-#{i}",
           "args" => [i]
         },
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       processor.enqueue(task)
@@ -65,10 +64,10 @@ RSpec.describe "Streaming Response Integration", :integration do
     Sidekiq::Worker.drain_all
 
     # Verify all 3 requests completed
-    expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
+    expect(TestCallback.completion_calls.size).to eq(3)
 
     # Verify all completed successfully
-    TestWorkers::CompletionWorker.calls.each do |response, arg|
+    TestCallback.completion_calls.each do |response|
       expect(response.status).to eq(200)
       expect(response.duration).to be >= 0.5 # Each takes at least 500ms
     end

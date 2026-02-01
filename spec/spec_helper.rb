@@ -88,7 +88,7 @@ RSpec.configure do |config|
   # Flush Redis database after each test
   config.before do |_example|
     Sidekiq.redis(&:flushdb)
-    Sidekiq::Worker.clear_all
+    Sidekiq::Job.clear_all
   end
 
   config.after do

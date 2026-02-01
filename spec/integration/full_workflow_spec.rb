@@ -15,9 +15,7 @@ RSpec.describe "Full Workflow Integration", :integration do
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
   around do |example|
-    TestWorkers::Worker.reset_calls!
-    TestWorkers::CompletionWorker.reset_calls!
-    TestWorkers::ErrorWorker.reset_calls!
+    TestCallback.reset_calls!
 
     # Disable WebMock completely for integration tests
     WebMock.reset!
@@ -46,9 +44,9 @@ RSpec.describe "Full Workflow Integration", :integration do
         }
       )
 
-      # Create request task with test workers
+      # Create request task with test callback
       sidekiq_job = {
-        "class" => "TestWorkers::Worker",
+        "class" => "TestWorker",
         "jid" => "test-jid-123",
         "args" => []
       }
@@ -56,8 +54,7 @@ RSpec.describe "Full Workflow Integration", :integration do
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        callback: TestCallback,
         callback_args: {webhook_id: "webhook_id", index: 1}
       )
 
@@ -70,11 +67,11 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Process enqueued Sidekiq jobs
       Sidekiq::Worker.drain_all
 
-      # Verify TestCompletionWorker was called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+      # Verify TestCallback on_complete was called
+      expect(TestCallback.completion_calls.size).to eq(1)
 
       # Verify response details
-      response = TestWorkers::CompletionWorker.calls.first.first
+      response = TestCallback.completion_calls.first
 
       # Verify response hash contains correct status, body
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
@@ -93,8 +90,8 @@ RSpec.describe "Full Workflow Integration", :integration do
       expect(response.callback_args[:webhook_id]).to eq("webhook_id")
       expect(response.callback_args[:index]).to eq(1)
 
-      # Verify no error worker was called
-      expect(TestWorkers::ErrorWorker.calls).to be_empty
+      # Verify no error callback was called
+      expect(TestCallback.error_calls).to be_empty
     end
   end
 
@@ -109,7 +106,7 @@ RSpec.describe "Full Workflow Integration", :integration do
 
       # Create request task
       sidekiq_job = {
-        "class" => "TestWorkers::Worker",
+        "class" => "TestWorker",
         "jid" => "test-jid-456",
         "args" => []
       }
@@ -117,8 +114,7 @@ RSpec.describe "Full Workflow Integration", :integration do
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        callback: TestCallback,
         callback_args: {resource: "user", id: 123, action: "fetch"}
       )
 
@@ -129,10 +125,10 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify success worker called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+      # Verify on_complete was called
+      expect(TestCallback.completion_calls.size).to eq(1)
 
-      response = TestWorkers::CompletionWorker.calls.first.first
+      response = TestCallback.completion_calls.first
       expect(response.status).to eq(200)
 
       # Verify response contains request info
@@ -155,12 +151,11 @@ RSpec.describe "Full Workflow Integration", :integration do
         request_task = Sidekiq::AsyncHttp::RequestTask.new(
           request: request,
           sidekiq_job: {
-            "class" => "TestWorkers::Worker",
+            "class" => "TestWorker",
             "jid" => "jid-#{i}",
             "args" => [i]
           },
-          completion_worker: "TestWorkers::CompletionWorker",
-          error_worker: "TestWorkers::ErrorWorker"
+          callback: TestCallback
         )
         processor.enqueue(request_task)
       end
@@ -171,11 +166,11 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify all 3 success workers called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
+      # Verify all 3 on_complete callbacks called
+      expect(TestCallback.completion_calls.size).to eq(3)
 
       # Verify each got correct response
-      responses = TestWorkers::CompletionWorker.calls.map { |call| call.first }
+      responses = TestCallback.completion_calls
       statuses = responses.map(&:status).sort
 
       expect(statuses).to eq([200, 201, 202])
@@ -196,9 +191,8 @@ RSpec.describe "Full Workflow Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "jid", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        sidekiq_job: {"class" => "TestWorker", "jid" => "jid", "args" => []},
+        callback: TestCallback
       )
 
       processor.enqueue(request_task)
@@ -207,8 +201,8 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      response = TestWorkers::CompletionWorker.calls.first.first
+      expect(TestCallback.completion_calls.size).to eq(1)
+      response = TestCallback.completion_calls.first
       expect(response.status).to eq(200)
 
       # Verify params and headers were sent
@@ -228,9 +222,8 @@ RSpec.describe "Full Workflow Integration", :integration do
       request = client.async_get("/test/200")
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "jid", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        sidekiq_job: {"class" => "TestWorker", "jid" => "jid", "args" => []},
+        callback: TestCallback
       )
 
       processor.enqueue(request_task)
@@ -244,7 +237,7 @@ RSpec.describe "Full Workflow Integration", :integration do
       Sidekiq::Worker.drain_all
 
       # Verify request completed
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
+      expect(TestCallback.completion_calls.size).to eq(1)
     end
   end
 end

@@ -16,7 +16,31 @@ require "socket"
 # to a dedicated async I/O processor running in the same process, freeing worker threads
 # immediately while HTTP requests are in flight.
 #
-# Key features:
+# == Usage
+#
+# Make HTTP requests from anywhere in your code:
+#
+#   Sidekiq::AsyncHttp.get(
+#     "https://api.example.com/users/123",
+#     callback: MyCallback,
+#     callback_args: {user_id: 123}
+#   )
+#
+# Define a callback service class with +on_complete+ and +on_error+ methods:
+#
+#   class MyCallback
+#     def on_complete(response)
+#       user_id = response.callback_args[:user_id]
+#       User.find(user_id).update!(data: response.json)
+#     end
+#
+#     def on_error(error)
+#       Rails.logger.error("Request failed: #{error.message}")
+#     end
+#   end
+#
+# == Key Features
+#
 # - Asynchronous HTTP processing using Ruby's Fiber scheduler
 # - Non-blocking worker threads
 # - Automatic connection pooling and HTTP/2 support
@@ -64,10 +88,11 @@ module Sidekiq::AsyncHttp
   # Autoload all components
   autoload :AsyncHttpClient, File.join(__dir__, "async_http/async_http_client")
   autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
+  autoload :CallbackWorker, File.join(__dir__, "async_http/callback_worker")
   autoload :Client, File.join(__dir__, "async_http/client")
+  autoload :ClientPool, File.join(__dir__, "async_http/client_pool")
   autoload :Configuration, File.join(__dir__, "async_http/configuration")
   autoload :Context, File.join(__dir__, "async_http/context")
-  autoload :ContinuationMiddleware, File.join(__dir__, "async_http/continuation_middleware")
   autoload :Error, File.join(__dir__, "async_http/error")
   autoload :HttpError, File.join(__dir__, "async_http/http_error")
   autoload :ClientError, File.join(__dir__, "async_http/http_error")
@@ -76,10 +101,9 @@ module Sidekiq::AsyncHttp
   autoload :TooManyRedirectsError, File.join(__dir__, "async_http/redirect_error")
   autoload :RecursiveRedirectError, File.join(__dir__, "async_http/redirect_error")
   autoload :RequestError, File.join(__dir__, "async_http/request_error")
+  autoload :RequestWorker, File.join(__dir__, "async_http/request_worker")
   autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
-  autoload :InlineRequest, File.join(__dir__, "async_http/inline_request")
-  autoload :Job, File.join(__dir__, "async_http/job")
   autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
@@ -89,8 +113,8 @@ module Sidekiq::AsyncHttp
   autoload :Response, File.join(__dir__, "async_http/response")
   autoload :ResponseReader, File.join(__dir__, "async_http/response_reader")
   autoload :SidekiqLifecycleHooks, File.join(__dir__, "async_http/sidekiq_lifecycle_hooks")
-  autoload :SerializeResponseMiddleware, File.join(__dir__, "async_http/serialize_response_middleware")
   autoload :Stats, File.join(__dir__, "async_http/stats")
+  autoload :SynchronousExecutor, File.join(__dir__, "async_http/synchronous_executor")
 
   @processor = nil
   @configuration = nil
@@ -139,45 +163,17 @@ module Sidekiq::AsyncHttp
       @after_error_callbacks << block
     end
 
-    # Add Sidekiq middleware for context and continuation handling. The middleware
+    # Add Sidekiq middleware for context handling. The middleware
     # is already added during initialization. You can call this method again to
     # append the middleware if needed to insert it after other middleware. If you need
     # further control, you can manually add the `Sidekiq::AsyncHttp::Context::Middleware`
-    # and `Sidekiq::AsyncHttp::ContinuationMiddleware` middleware yourself.
+    # middleware yourself.
     #
     # @return [void]
     def append_middleware
-      prepend_client_middleware
-      append_server_middleware
-    end
-
-    # Prepend client middleware for serializing responses to hashes so that they
-    # can be passed as arguments to Sidekiq jobs.
-    #
-    # @return [void]
-    def prepend_client_middleware
-      Sidekiq.configure_client do |config|
-        config.client_middleware do |chain|
-          chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
-        end
-      end
-
-      Sidekiq.configure_server do |config|
-        config.client_middleware do |chain|
-          chain.prepend Sidekiq::AsyncHttp::SerializeResponseMiddleware
-        end
-      end
-    end
-
-    # Append server middleware required for exposing the current job context
-    # and deserializing raw responses from Hashes back into Response objects.
-    #
-    # @return [void]
-    def append_server_middleware
       Sidekiq.configure_server do |config|
         config.server_middleware do |chain|
           chain.add Sidekiq::AsyncHttp::Context::Middleware
-          chain.add Sidekiq::AsyncHttp::ContinuationMiddleware
         end
       end
     end
@@ -200,79 +196,81 @@ module Sidekiq::AsyncHttp
       @processor.nil? || @processor.stopped?
     end
 
-    # Enqueue an async HTTP request
+    # Enqueue an async HTTP request.
     #
-    # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete, :head, :options)
+    # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
     # @param url [String, URI] full URL to request
-    # @param completion_worker [Class] worker class for completed request callback
-    # @param error_worker [Class] worker class for error callback
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param headers [Hash, HttpHeaders] request headers
     # @param body [String, nil] request body
     # @param json [Object, nil] JSON object to serialize as body
     # @param timeout [Float] request timeout in seconds
-    # @param sidekiq_job [Sidekiq::Job, nil] the Sidekiq job context for the current worker
+    # @param raise_error_responses [Boolean, nil] treat non-2xx responses as errors
+    # @param callback_args [Hash, nil] arguments to pass to callback via response/error
     # @return [String] request ID
     def request(
-      method:,
-      url:,
-      completion_worker:,
-      error_worker:,
+      method,
+      url,
+      callback:,
       headers: {},
       body: nil,
       json: nil,
       timeout: nil,
       raise_error_responses: nil,
-      sidekiq_job: nil
+      callback_args: nil
     )
       client = Client.new(timeout: timeout)
       request = client.async_request(method, url, body: body, json: json, headers: headers)
-      request.execute(
-        completion_worker_class: completion_worker,
-        error_worker_class: error_worker,
+      request.async_execute(
+        callback: callback,
         raise_error_responses: raise_error_responses,
-        sidekiq_job: sidekiq_job
+        callback_args: callback_args
       )
-      request.id
     end
 
     # Convenience method for GET requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def get(url, **options)
-      request(method: :get, url: url, **options)
+    def get(url, callback:, **options)
+      request(:get, url, callback: callback, **options)
     end
 
     # Convenience method for POST requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def post(url, **options)
-      request(method: :post, url: url, **options)
+    def post(url, callback:, **options)
+      request(:post, url, callback: callback, **options)
     end
 
     # Convenience method for PUT requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def put(url, **options)
-      request(method: :put, url: url, **options)
+    def put(url, callback:, **options)
+      request(:put, url, callback: callback, **options)
     end
 
     # Convenience method for PATCH requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def patch(url, **options)
-      request(method: :patch, url: url, **options)
+    def patch(url, callback:, **options)
+      request(:patch, url, callback: callback, **options)
     end
 
     # Convenience method for DELETE requests
     # @param url [String] full URL to request
+    # @param callback [Class, String] callback service class with on_complete and on_error instance methods
     # @param options [Hash] additional options (see #request)
     # @return [String] request ID
-    def delete(url, **options)
-      request(method: :delete, url: url, **options)
+    def delete(url, callback:, **options)
+      request(:delete, url, callback: callback, **options)
     end
 
     # Start the processor

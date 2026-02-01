@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class TestAction
+class SlowAction
   def call(env)
     request = Rack::Request.new(env)
     delay = request.params["delay"]&.to_f

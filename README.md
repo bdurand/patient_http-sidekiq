@@ -6,7 +6,7 @@
 
 *Built for APIs that like to think.*
 
-This gem provides a mechanism to offload HTTP requests from Sidekiq jobs to a dedicated async I/O processor, freeing worker threads immediately.
+This gem provides a mechanism to offload HTTP requests to a dedicated async I/O processor running in your Sidekiq process, freeing worker threads immediately while HTTP requests are in flight.
 
 ## Motivation
 
@@ -42,55 +42,46 @@ Sidekiq is designed with the assumption that jobs are short-lived and complete q
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-The async processor runs in a dedicated thread within your Sidekiq process, using Ruby's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking. When an HTTP request completes, the response is passed to a callback worker for processing.
+The async processor runs in a dedicated thread within your Sidekiq process, using Ruby's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking. When an HTTP request completes, a callback service is invoked for processing.
 
 ## Quick Start
 
-### 1. Create a Worker with Callbacks
+### 1. Create a Callback Service
 
-The simplest way to use this gem is to include `Sidekiq::AsyncHttp::Job` in your worker and define callbacks:
+Define a callback service class with `on_complete` and `on_error` methods:
 
 ```ruby
-class FetchDataWorker
-  include Sidekiq::AsyncHttp::Job
-
-  # Define callback for completed responses. The callback receives a Response object.
-  # Note that this will be called for all HTTP responses, including 4xx and 5xx status codes.
-  on_completion do |response|
+class FetchDataCallback
+  def on_complete(response)
     user_id = response.callback_args[:user_id]
-    endpoint = response.callback_args[:endpoint]
     data = response.json
     User.find(user_id).update!(external_data: data)
   end
 
-  # Define callback for errors (optional). The callback receives an Error object.
-  # This is only called if an error was raised during the HTTP request
-  # (timeout, connection failure, etc).
-  on_error do |error|
+  def on_error(error)
     user_id = error.callback_args[:user_id]
-    endpoint = error.callback_args[:endpoint]
-    Rails.logger.error("Failed to fetch #{endpoint} for user #{user_id}: #{error.message}")
-  end
-
-  def perform(user_id, endpoint)
-    # This returns immediately after enqueueing the HTTP request. The callback args
-    # will be available in the callbacks.
-    async_get(
-      "https://api.example.com/#{endpoint}",
-      callback_args: {user_id: user_id, endpoint: endpoint}
-    )
+    Rails.logger.error("Failed to fetch data for user #{user_id}: #{error.message}")
   end
 end
 ```
 
-> [!NOTE]
-> The request should be the last thing your worker does.
+### 2. Make HTTP Requests
 
-### 2. That's It!
+Make HTTP requests from anywhere in your code using `Sidekiq::AsyncHttp`:
 
-The processor starts automatically with Sidekiq. When the HTTP request completes, your `on_completion` will be executed as a new Sidekiq job with the [response](Sidekiq::AsyncHttp::Response) object.
+```ruby
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/users/#{user_id}",
+  callback: FetchDataCallback,
+  callback_args: {user_id: user_id}
+)
+```
 
-If an error is raised during the request, the `on_error` callback will be executed instead with the [error](Sidekiq::AsyncHttp::Error) information.
+### 3. That's It!
+
+The processor starts automatically with Sidekiq. When the HTTP request completes, your callback's `on_complete` method is executed as a new Sidekiq job with the [Response](lib/sidekiq/async_http/response.rb) object.
+
+If an error occurs during the request, the `on_error` method is called with an [Error](lib/sidekiq/async_http/error.rb) object.
 
 The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args:` option. You can access them using symbol or string keys:
 
@@ -99,20 +90,21 @@ response.callback_args[:user_id]    # Symbol access
 response.callback_args["user_id"]   # String access
 ```
 
+> [!NOTE]
+> HTTP requests are made asynchronously. Calling `Sidekiq::AsyncHttp.get` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
+
 > [!IMPORTANT]
-> Do not re-raise the error as a mechanism in the error callback as a means to retry the job. That will just result in the error callback job being retried instead. If you want to retry the original job from an `on_error` callback, you can call `perform_in` or `perform_async` from within the `on_error` callback. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
+> Do not re-raise errors in the `on_error` callback as a means to retry. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
 >
-> Also note that the error callback is only called when an exception is raised during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback by default. Instead, they are treated as completed requests and passed to the `on_completion` callback. See the "Handling HTTP Error Responses" section below for how to treat HTTP errors as exceptions.
+> Also note that the error callback is only called when an exception occurs during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback by default. Instead, they are treated as completed requests and passed to the `on_complete` callback. See the "Handling HTTP Error Responses" section below for how to treat HTTP errors as exceptions.
 
 ### Handling HTTP Error Responses
 
-By default, HTTP error status codes (4xx, 5xx) are treated as successful responses and passed to the `on_completion` callback. You can check the status using `response.success?`, `response.client_error?`, or `response.server_error?`:
+By default, HTTP error status codes (4xx, 5xx) are treated as successful responses and passed to the `on_complete` callback. You can check the status using `response.success?`, `response.client_error?`, or `response.server_error?`:
 
 ```ruby
-class ApiWorker
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
+class ApiCallback
+  def on_complete(response)
     if response.success?
       process_data(response.json)
     elsif response.client_error?
@@ -122,24 +114,27 @@ class ApiWorker
     end
   end
 
-  def perform(id)
-    async_get("https://api.example.com/data/#{id}")
+  def on_error(error)
+    Rails.logger.error("Request failed: #{error.message}")
   end
 end
+
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/data/#{id}",
+  callback: ApiCallback
+)
 ```
 
-If you prefer to treat HTTP errors as exceptions, you can use the `raise_error_responses` option or the `!` method variants. When enabled, non-2xx responses will raise an `HttpError` and call the `on_error` callback instead:
+If you prefer to treat HTTP errors as exceptions, you can use the `raise_error_responses` option. When enabled, non-2xx responses will call the `on_error` callback with an `HttpError` instead:
 
 ```ruby
-class ApiWorker
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
+class ApiCallback
+  def on_complete(response)
     # Only called for 2xx responses
     process_data(response.json)
   end
 
-  on_error do |error|
+  def on_error(error)
     # Called for exceptions AND HTTP errors when using raise_error_responses
     if error.is_a?(Sidekiq::AsyncHttp::HttpError)
       # Access the response via error.response
@@ -149,24 +144,19 @@ class ApiWorker
       Rails.logger.error("Request failed: #{error.message}")
     end
   end
-
-  def perform(id)
-    # Option 1: Use the raise_error_responses option
-    async_get(
-      "https://api.example.com/data/#{id}",
-      raise_error_responses: true
-    )
-
-    # Option 2: Use the ! variant (shorthand for raise_error_responses: true)
-    async_get!("https://api.example.com/data/#{id}")
-  end
 end
+
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/data/#{id}",
+  callback: ApiCallback,
+  raise_error_responses: true
+)
 ```
 
 The `HttpError` provides convenient access to the response:
 
 ```ruby
-on_error do |error|
+def on_error(error)
   if error.is_a?(Sidekiq::AsyncHttp::HttpError)
     puts error.status              # HTTP status code
     puts error.url                 # Request URL
@@ -178,165 +168,102 @@ on_error do |error|
 end
 ```
 
-All HTTP methods have `!` variants that automatically enable `raise_error_responses`:
-- `async_get!` - raises HttpError for non-2xx GET responses
-- `async_post!` - raises HttpError for non-2xx POST responses
-- `async_put!` - raises HttpError for non-2xx PUT responses
-- `async_patch!` - raises HttpError for non-2xx PATCH responses
-- `async_delete!` - raises HttpError for non-2xx DELETE responses
-
 ## Usage Patterns
 
-### Using the Job Mixin (Recommended)
+### Making Requests with Sidekiq::AsyncHttp
 
-The `Sidekiq::AsyncHttp::Job` mixin provides a clean DSL for async HTTP requests:
+The main entry point is the `Sidekiq::AsyncHttp` module, which provides convenience methods for all HTTP verbs:
 
 ```ruby
-class ApiWorker
-  include Sidekiq::AsyncHttp::Job
+# GET request
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/users/123",
+  callback: MyCallback,
+  callback_args: {user_id: 123}
+)
 
-  # Configure a shared HTTP client with base URL and default headers
-  async_http_client base_url: "https://api.example.com",
-                    headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
-                    timeout: 60
+# POST request with JSON body
+Sidekiq::AsyncHttp.post(
+  "https://api.example.com/users",
+  callback: MyCallback,
+  json: {name: "John", email: "john@example.com"}
+)
 
-  # Callbacks receive the response/error object with callback_args
-  on_completion do |response|
-    resource_type = response.callback_args[:resource_type]
-    resource_id = response.callback_args[:resource_id]
+# PUT request
+Sidekiq::AsyncHttp.put(
+  "https://api.example.com/users/123",
+  callback: MyCallback,
+  json: {name: "Updated Name"}
+)
 
-    if response.success?
-      process_data(response.json, resource_type, resource_id)
-    else
-      handle_api_error(response.status, resource_type, resource_id)
-    end
-  end
+# PATCH request
+Sidekiq::AsyncHttp.patch(
+  "https://api.example.com/users/123",
+  callback: MyCallback,
+  json: {status: "active"}
+)
 
-  on_error do |error|
-    resource_type = error.callback_args[:resource_type]
-    resource_id = error.callback_args[:resource_id]
-
-    case error.error_type
-    when :timeout
-      # Re-enqueue with exponential backoff
-      ApiWorker.perform_in(5.minutes, resource_type, resource_id)
-    when :connection
-      notify_ops_team("API connection failure", error)
-    end
-  end
-
-  def perform(resource_type, resource_id)
-    # Uses the configured client and passes callback arguments
-    async_get(
-      "/#{resource_type}/#{resource_id}",
-      callback_args: {resource_type: resource_type, resource_id: resource_id}
-    )
-  end
-end
+# DELETE request
+Sidekiq::AsyncHttp.delete(
+  "https://api.example.com/users/123",
+  callback: MyCallback
+)
 ```
 
-The job mixin can also be used with ActiveJob if the queue adapter is set to Sidekiq. If the queue adapter is not Sidekiq, the HTTP request will be executed synchronously, instead.
+Available options:
+
+- `callback:` - (required) Callback service class or class name
+- `callback_args:` - Hash of arguments passed to callback via response/error
+- `headers:` - Request headers
+- `body:` - Request body (for POST/PUT/PATCH)
+- `json:` - Object to serialize as JSON body (cannot use with body)
+- `timeout:` - Request timeout in seconds
+- `raise_error_responses:` - Treat non-2xx responses as errors
+
+### Using the Client for Shared Configuration
+
+For repeated requests to the same API, use `Sidekiq::AsyncHttp::Client` to share configuration:
 
 ```ruby
-class ActiveJobExample < ApplicationJob
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
-    record_id = response.callback_args[:record_id]
-    Record.find(record_id).update!(data: response.json)
-  end
-
-  on_error do |error|
-    record_id = error.callback_args[:record_id]
-    Rails.logger.error("Failed to fetch record #{record_id}: #{error.message}")
-  end
-
-  def perform(record_id)
-    async_get(
-      "https://api.example.com/records/#{record_id}",
-      callback_args: {record_id: record_id}
+class ApiService
+  def initialize
+    @client = Sidekiq::AsyncHttp::Client.new(
+      base_url: "https://api.example.com",
+      headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
+      timeout: 60
     )
   end
-end
-```
 
-### Defining Your Own Callback Workers
-
-For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling.
-
-The `perform` methods of these workers will receive the response or error object as a single argument. You can access callback arguments via `response.callback_args` or `error.callback_args`:
-
-```ruby
-# Define dedicated callback workers
-class FetchCompletionWorker
-  include Sidekiq::Job
-  sidekiq_options queue: "critical", retry: 10
-
-  def perform(response)
-    user_id = response.callback_args[:user_id]
-    User.find(user_id).update!(data: response.json)
+  def fetch_user(user_id)
+    request = @client.async_get("/users/#{user_id}")
+    request.async_execute(
+      callback: FetchUserCallback,
+      callback_args: {user_id: user_id}
+    )
   end
-end
 
-class FetchErrorWorker
-  include Sidekiq::Job
-  sidekiq_options queue: "low"
-
-  def perform(error)
-    user_id = error.callback_args[:user_id]
-    ErrorTracker.record(error, user_id: user_id)
-  end
-end
-
-# Use them in your worker
-class FetchUserDataWorker
-  include Sidekiq::AsyncHttp::Job
-
-  # Point to dedicated callback workers
-  self.completion_callback_worker = FetchCompletionWorker
-  self.error_callback_worker = FetchErrorWorker
-
-  def perform(user_id)
-    async_get(
-      "https://api.example.com/users/#{user_id}",
+  def update_user(user_id, attributes)
+    request = @client.async_patch("/users/#{user_id}", json: attributes)
+    request.async_execute(
+      callback: UpdateUserCallback,
       callback_args: {user_id: user_id}
     )
   end
 end
 ```
 
-### Using the Client Directly
-
-For more control, you can use the `Sidekiq::AsyncHttp::Client` directly:
-
-```ruby
-class FlexibleWorker
-  include Sidekiq::Job
-
-  def perform(url, method, data = nil)
-    client = Sidekiq::AsyncHttp::Client.new(
-      timeout: 120,
-      headers: {"User-Agent" => "MyApp/1.0"}
-    )
-
-    request = client.async_request(method.to_sym, url, json: data)
-    request.execute(
-      completion_worker: DataProcessorWorker,
-      error_worker: ErrorHandlerWorker
-    )
-  end
-end
-```
+The Client handles:
+- Base URL joining for relative paths
+- Default headers merged with per-request headers
+- Query parameter encoding via `params:` option
 
 ### Callback Arguments
 
-Callback workers receive a single Response or Error object as an argument. You can pass custom data to your callbacks using the `callback_args` option. This data will be accessible via `response.callback_args` or `error.callback_args`:
+Pass custom data to your callbacks using the `callback_args` option:
 
 ```ruby
-class FetchUserDataWorker
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
+class FetchDataCallback
+  def on_complete(response)
     # Access callback_args using symbol or string keys
     user_id = response.callback_args[:user_id]
     request_timestamp = response.callback_args[:request_timestamp]
@@ -347,7 +274,7 @@ class FetchUserDataWorker
     )
   end
 
-  on_error do |error|
+  def on_error(error)
     user_id = error.callback_args[:user_id]
     request_timestamp = error.callback_args[:request_timestamp]
 
@@ -355,20 +282,17 @@ class FetchUserDataWorker
       "Failed to fetch data for user #{user_id} at #{request_timestamp}: #{error.message}"
     )
   end
-
-  def perform(user_id, options = {})
-    # Pass data via callback_args option
-    timestamp = Time.now.iso8601
-
-    async_get(
-      "https://api.example.com/users/#{user_id}",
-      callback_args: {
-        user_id: user_id,
-        request_timestamp: timestamp
-      }
-    )
-  end
 end
+
+# Pass data via callback_args option
+Sidekiq::AsyncHttp.get(
+  "https://api.example.com/users/#{user_id}",
+  callback: FetchDataCallback,
+  callback_args: {
+    user_id: user_id,
+    request_timestamp: Time.now.iso8601
+  }
+)
 ```
 
 **Important details about callback_args:**
@@ -378,56 +302,22 @@ end
 - Nested hashes and hashes in arrays also have their keys converted to strings
 - You can access callback_args using either symbol or string keys: `callback_args[:user_id]` or `callback_args["user_id"]`
 
-This is useful when:
-- Your original job arguments contain data not needed by the callback
-- You want to pass computed values from the original job to the callback
-- You need to pass additional context about when/why the request was made
-
-You can also use it when calling `Request#execute` directly:
-
-```ruby
-request.execute(
-  completion_worker: MyCompletionWorker,
-  error_worker: MyErrorWorker,
-  callback_args: {user_id: 123, action: "fetch"}
-)
-```
-
 ### Sensitive Data Handling
 
 Responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if the response contains sensitive data since the data will be stored in plain text.
 
-You can use the with the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
-
-First, setup the encryption configuration in an initializer. You'll also need to append the `Sidekiq::AsyncHttp` middleware so that it comes after the decryption middleware inserted by calling `Sidekiq::EncryptedArgs.configure!`:
+You can use the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
 
 ```ruby
 Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
-Sidekiq::AsyncHttp.append_middleware
-```
-
-Next, specify the `encrypted_args` option in the `on_completion` callback to indicate the response argument should be encrypted:
-
-```ruby
-class SensitiveDataWorker
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion(encrypted_args: :response) do |response, record_id|
-    SensitiveRecord.find(record_id).update!(data: response.body)
-  end
-
-  on_error do |error, record_id|
-    Rails.logger.error("Failed to fetch sensitive data for record #{record_id}: #{error.message}")
-  end
-
-  def perform(record_id)
-    async_get("https://secure-api.example.com/data/#{record_id}")
-  end
+Sidekiq::AsyncHttp.configure do |config|
+  config.sidekiq_options = {
+    encrypted_args: [:result]
+  }
 end
 ```
 
-> [!NOTE]
-> You can only encrypt the response argument by name with the `encrypted_args` option when using `on_completion`. If you need to encrypt other arguments, you can either pass `true` to encrypt all arguments or pass an array of the indexes of the arguments to encrypt. See the [sidekiq-encrypted_args documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details.
+See the [sidekiq-encrypted_args documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details on configuring encryption.
 
 > [!NOTE]
 > The encryption feature in Sidekiq Enterprise will not work for this because it can only be applied to a single hash argument that must be the last argument to the job.
@@ -443,6 +333,19 @@ Sidekiq::AsyncHttp.configure do |config|
 
   # Default timeout for HTTP requests in seconds (default: 60)
   config.request_timeout = 60
+
+  # Maximum number of host clients to pool (default: 100)
+  config.connection_pool_size = 100
+
+  # Connection timeout in seconds (default: nil, uses request_timeout)
+  config.connection_timeout = 10
+
+  # Number of retries for failed requests (default: 3)
+  config.retries = 3
+
+  # HTTP/HTTPS proxy URL (default: nil)
+  # Supports authentication: "http://user:pass@proxy.example.com:8080"
+  config.proxy_url = "http://proxy.example.com:8080"
 
   # Default User-Agent header for all requests (optional)
   config.user_agent = "MyApp/1.0"
@@ -466,17 +369,29 @@ Sidekiq::AsyncHttp.configure do |config|
   # Requests older than this without a heartbeat will be re-enqueued
   config.orphan_threshold = 300
 
+  # Maximum number of redirects to follow (default: 5, 0 disables)
+  config.max_redirects = 5
+
+  # Whether to raise HttpError for non-2xx responses by default (default: false)
+  config.raise_error_responses = false
+
+  # Sidekiq options for RequestWorker and CallbackWorker
+  config.sidekiq_options = {queue: "async_http", retry: 5}
+
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
 end
 ```
 
-See the [Sidekiq::AsyncHttp::Configuration](Sidekiq::AsyncHttp::Configuration) documentation for all available options.
+See the [Configuration](lib/sidekiq/async_http/configuration.rb) class for all available options.
 
 ### Tuning Tips
 
 - `max_connections`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
 - `request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
+- `connection_pool_size`: Controls how many connections to different hosts are kept alive. Increase for applications calling many different API endpoints.
+- `connection_timeout`: Set this if you need to fail fast on connection establishment. Useful for detecting network issues quickly.
+- `retries`: Number of times to retry a failed request before calling the error callback.
 - `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
 
 > [!IMPORTANT]
@@ -523,9 +438,6 @@ end
 ```
 
 You can register multiple callbacks; they will be called in the order registered.
-
-> [!NOTE]
-> These callbacks are not available when using through the ActiveJob interface.
 
 ## Shutdown Behavior
 

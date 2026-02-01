@@ -18,10 +18,8 @@ RSpec.describe "Capacity Limit Integration", :integration do
     # Clear any pending Sidekiq jobs first
     Sidekiq::Queues.clear_all
 
-    # Reset all worker call tracking
-    TestWorkers::Worker.reset_calls!
-    TestWorkers::CompletionWorker.reset_calls!
-    TestWorkers::ErrorWorker.reset_calls!
+    # Reset callback tracking
+    TestCallback.reset_calls!
 
     # Disable WebMock completely for integration tests
     WebMock.reset!
@@ -49,12 +47,11 @@ RSpec.describe "Capacity Limit Integration", :integration do
       request_task1 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request1,
         sidekiq_job: {
-          "class" => "TestWorkers::Worker",
+          "class" => "Worker",
           "jid" => "jid-1",
           "args" => ["arg1"]
         },
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
       processor.enqueue(request_task1)
 
@@ -63,12 +60,11 @@ RSpec.describe "Capacity Limit Integration", :integration do
       request_task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request2,
         sidekiq_job: {
-          "class" => "TestWorkers::Worker",
+          "class" => "Worker",
           "jid" => "jid-2",
           "args" => ["arg2"]
         },
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
       processor.enqueue(request_task2)
 
@@ -80,12 +76,11 @@ RSpec.describe "Capacity Limit Integration", :integration do
       request_task3 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request3,
         sidekiq_job: {
-          "class" => "TestWorkers::Worker",
+          "class" => "Worker",
           "jid" => "jid-3",
           "args" => ["arg3"]
         },
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       # Wait for requests to start processing
@@ -110,8 +105,8 @@ RSpec.describe "Capacity Limit Integration", :integration do
       Sidekiq::Worker.drain_all
 
       # Verify all 3 requests completed successfully
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
+      expect(TestCallback.completion_calls.size).to eq(3)
+      expect(TestCallback.error_calls.size).to eq(0)
 
       # Verify processor is still running
       expect(processor.running?).to be true

@@ -9,7 +9,7 @@ RSpec.describe "Redirect handling" do
   let(:request) { Sidekiq::AsyncHttp::Request.new(:get, "https://example.com/start") }
   let(:sidekiq_job) do
     {
-      "class" => "TestWorkers::Worker",
+      "class" => "TestWorker",
       "jid" => "job-123",
       "args" => [1, 2, 3],
       "queue" => "default"
@@ -23,8 +23,7 @@ RSpec.describe "Redirect handling" do
           task = Sidekiq::AsyncHttp::RequestTask.new(
             request: request,
             sidekiq_job: sidekiq_job,
-            completion_worker: "TestWorkers::CompletionWorker",
-            error_worker: "TestWorkers::ErrorWorker"
+            callback: TestCallback
           )
 
           response_data = {
@@ -44,8 +43,7 @@ RSpec.describe "Redirect handling" do
           task = Sidekiq::AsyncHttp::RequestTask.new(
             request: request,
             sidekiq_job: sidekiq_job,
-            completion_worker: "TestWorkers::CompletionWorker",
-            error_worker: "TestWorkers::ErrorWorker"
+            callback: TestCallback
           )
 
           response_data = {
@@ -65,8 +63,7 @@ RSpec.describe "Redirect handling" do
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       response_data = {
@@ -82,8 +79,7 @@ RSpec.describe "Redirect handling" do
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       response_data = {
@@ -102,8 +98,7 @@ RSpec.describe "Redirect handling" do
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request_no_redirects,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       response_data = {

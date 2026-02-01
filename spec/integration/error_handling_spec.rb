@@ -15,9 +15,7 @@ RSpec.describe "Error Handling Integration", :integration do
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
 
   around do |example|
-    TestWorkers::Worker.reset_calls!
-    TestWorkers::CompletionWorker.reset_calls!
-    TestWorkers::ErrorWorker.reset_calls!
+    TestCallback.reset_calls!
 
     # Disable WebMock completely for integration tests
     WebMock.reset!
@@ -41,9 +39,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "timeout-test", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        sidekiq_job: {"class" => "TestWorker", "jid" => "timeout-test", "args" => []},
+        callback: TestCallback,
         callback_args: {"arg" => "timeout_arg"}
       )
 
@@ -53,11 +50,11 @@ RSpec.describe "Error Handling Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify error worker was called
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
+      # Verify on_error was called
+      expect(TestCallback.error_calls.size).to eq(1)
+      expect(TestCallback.completion_calls.size).to eq(0)
 
-      error = TestWorkers::ErrorWorker.calls.first.first
+      error = TestCallback.error_calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:timeout)
       expect(error.error_class.name).to match(/Timeout/)
@@ -73,9 +70,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "conn-test", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        sidekiq_job: {"class" => "TestWorker", "jid" => "conn-test", "args" => []},
+        callback: TestCallback,
         callback_args: {"arg" => "connection_arg"}
       )
 
@@ -85,11 +81,11 @@ RSpec.describe "Error Handling Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify error worker was called
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
+      # Verify on_error was called
+      expect(TestCallback.error_calls.size).to eq(1)
+      expect(TestCallback.completion_calls.size).to eq(0)
 
-      error = TestWorkers::ErrorWorker.calls.first.first
+      error = TestCallback.error_calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::Error)
       expect(error.error_type).to eq(:connection)
       expect(error.error_class.name).to match(/Errno::E/)
@@ -105,9 +101,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "404-test", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        sidekiq_job: {"class" => "TestWorker", "jid" => "404-test", "args" => []},
+        callback: TestCallback,
         callback_args: {"status" => "missing"}
       )
 
@@ -117,11 +112,11 @@ RSpec.describe "Error Handling Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # 404 is a valid HTTP response, so success worker is called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
+      # 404 is a valid HTTP response, so on_complete is called
+      expect(TestCallback.completion_calls.size).to eq(1)
+      expect(TestCallback.error_calls.size).to eq(0)
 
-      response = TestWorkers::CompletionWorker.calls.first.first
+      response = TestCallback.completion_calls.first
       expect(response.status).to eq(404)
       expect(response.client_error?).to be true
       expect(response.callback_args[:status]).to eq("missing")
@@ -133,9 +128,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "503-test", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        sidekiq_job: {"class" => "TestWorker", "jid" => "503-test", "args" => []},
+        callback: TestCallback,
         callback_args: {"status" => "unavailable"}
       )
 
@@ -145,11 +139,11 @@ RSpec.describe "Error Handling Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # 503 is a valid HTTP response, so success worker is called
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(0)
+      # 503 is a valid HTTP response, so on_complete is called
+      expect(TestCallback.completion_calls.size).to eq(1)
+      expect(TestCallback.error_calls.size).to eq(0)
 
-      response = TestWorkers::CompletionWorker.calls.first.first
+      response = TestCallback.completion_calls.first
       expect(response.status).to eq(503)
       expect(response.server_error?).to be true
       expect(response.callback_args[:status]).to eq("unavailable")
@@ -161,9 +155,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
-        sidekiq_job: {"class" => "TestWorkers::Worker", "jid" => "404-error-test", "args" => []},
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        sidekiq_job: {"class" => "TestWorker", "jid" => "404-error-test", "args" => []},
+        callback: TestCallback,
         callback_args: {"status" => "missing"},
         raise_error_responses: true
       )
@@ -174,11 +167,11 @@ RSpec.describe "Error Handling Integration", :integration do
       # Process enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # With raise_error_responses, 404 should call error worker with HttpError
-      expect(TestWorkers::ErrorWorker.calls.size).to eq(1)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(0)
+      # With raise_error_responses, 404 should call on_error with HttpError
+      expect(TestCallback.error_calls.size).to eq(1)
+      expect(TestCallback.completion_calls.size).to eq(0)
 
-      error = TestWorkers::ErrorWorker.calls.first.first
+      error = TestCallback.error_calls.first
       expect(error).to be_a(Sidekiq::AsyncHttp::HttpError)
       expect(error.status).to eq(404)
       expect(error.url).to include("/test/404")

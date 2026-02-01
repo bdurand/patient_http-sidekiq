@@ -24,10 +24,9 @@ RSpec.describe "Processor Shutdown Integration", :integration do
     # Clear any pending Sidekiq jobs first
     Sidekiq::Queues.clear_all
 
-    # Reset all worker call tracking
-    TestWorkers::Worker.reset_calls!
-    TestWorkers::CompletionWorker.reset_calls!
-    TestWorkers::ErrorWorker.reset_calls!
+    # Reset callback tracking
+    TestCallback.reset_calls!
+    TestWorker.reset_calls!
 
     # Disable WebMock completely for integration tests
     WebMock.reset!
@@ -52,7 +51,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       # Create request task
       sidekiq_job = {
-        "class" => "TestWorkers::Worker",
+        "class" => "TestWorker",
         "jid" => "test-jid-clean",
         "args" => []
       }
@@ -60,8 +59,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker",
+        callback: TestCallback,
         callback_args: {arg1: "arg1", arg2: "arg2"}
       )
 
@@ -74,12 +72,12 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       # Stop with sufficient timeout (2 seconds for a fast request)
       processor.stop
 
-      # Drain all completion/error worker jobs
+      # Drain all callback worker jobs
       Sidekiq::Worker.drain_all
 
-      # Verify success worker was called (request completed)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(1)
-      response = TestWorkers::CompletionWorker.calls.first.first
+      # Verify on_complete was called (request completed)
+      expect(TestCallback.completion_calls.size).to eq(1)
+      response = TestCallback.completion_calls.first
       expect(response).to be_a(Sidekiq::AsyncHttp::Response)
       expect(response.status).to eq(200)
       # Verify response contains request info
@@ -89,7 +87,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       expect(response.callback_args[:arg2]).to eq("arg2")
 
       # Verify original worker was NOT re-enqueued
-      expect(TestWorkers::Worker.calls).to be_empty
+      expect(TestWorker.calls).to be_empty
 
       # Verify processor is stopped
       expect(processor.stopped?).to be true
@@ -104,7 +102,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
 
       # Create request task
       sidekiq_job = {
-        "class" => "TestWorkers::Worker",
+        "class" => "TestWorker",
         "jid" => "test-jid-forced",
         "args" => %w[original_arg1 original_arg2]
       }
@@ -112,8 +110,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: sidekiq_job,
-        completion_worker: "TestWorkers::CompletionWorker",
-        error_worker: "TestWorkers::ErrorWorker"
+        callback: TestCallback
       )
 
       # Enqueue request
@@ -134,13 +131,13 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       Sidekiq::Worker.drain_all
 
       # Verify original worker was re-enqueued and executed
-      expect(TestWorkers::Worker.calls.size).to eq(1)
-      arg1, arg2 = TestWorkers::Worker.calls.first
+      expect(TestWorker.calls.size).to eq(1)
+      arg1, arg2 = TestWorker.calls.first
       expect(arg1).to eq("original_arg1")
       expect(arg2).to eq("original_arg2")
 
-      # Verify success worker was NOT called (request did not complete)
-      expect(TestWorkers::CompletionWorker.calls).to be_empty
+      # Verify on_complete was NOT called (request did not complete)
+      expect(TestCallback.completion_calls).to be_empty
 
       # Verify processor is stopped
       expect(processor.stopped?).to be true
@@ -157,7 +154,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
         request = client.async_get("/delay/#{i.even? ? 100 : 500}")
 
         sidekiq_job = {
-          "class" => "TestWorkers::Worker",
+          "class" => "TestWorker",
           "jid" => "test-jid-#{i + 1}",
           "args" => ["request_#{i + 1}"]
         }
@@ -165,8 +162,7 @@ RSpec.describe "Processor Shutdown Integration", :integration do
         request_task = Sidekiq::AsyncHttp::RequestTask.new(
           request: request,
           sidekiq_job: sidekiq_job,
-          completion_worker: "TestWorkers::CompletionWorker",
-          error_worker: "TestWorkers::ErrorWorker",
+          callback: TestCallback,
           callback_args: {request_name: "request_#{i + 1}"}
         )
 
@@ -189,18 +185,18 @@ RSpec.describe "Processor Shutdown Integration", :integration do
       # Drain any re-enqueued jobs
       Sidekiq::Worker.drain_all
 
-      # Verify success worker was called for fast requests (1, 3, 5)
-      expect(TestWorkers::CompletionWorker.calls.size).to eq(3)
-      success_args = TestWorkers::CompletionWorker.calls.map { |call| call.first.callback_args[:request_name] }
+      # Verify on_complete was called for fast requests (1, 3, 5)
+      expect(TestCallback.completion_calls.size).to eq(3)
+      success_args = TestCallback.completion_calls.map { |call| call.callback_args[:request_name] }
       expect(success_args).to contain_exactly("request_1", "request_3", "request_5")
 
       # Verify original worker was called for slow requests (2, 4)
-      expect(TestWorkers::Worker.calls.size).to eq(2)
-      worker_args = TestWorkers::Worker.calls.map { |call| call[0] }
+      expect(TestWorker.calls.size).to eq(2)
+      worker_args = TestWorker.calls.map { |call| call[0] }
       expect(worker_args).to contain_exactly("request_2", "request_4")
 
       # Verify total callbacks equals 5 (all requests accounted for)
-      total_callbacks = TestWorkers::CompletionWorker.calls.size + TestWorkers::Worker.calls.size
+      total_callbacks = TestCallback.completion_calls.size + TestWorker.calls.size
       expect(total_callbacks).to eq(5)
 
       # Verify processor is stopped
