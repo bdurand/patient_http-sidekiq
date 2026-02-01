@@ -43,7 +43,7 @@ module Sidekiq
       attr_reader :sidekiq_options
 
       # @return [Integer] Maximum number of host clients to pool
-      attr_reader :max_host_clients
+      attr_reader :connection_pool_size
 
       # @return [Numeric, nil] Connection timeout in seconds
       attr_reader :connection_timeout
@@ -68,7 +68,7 @@ module Sidekiq
       # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses by default
       # @param max_redirects [Integer] Maximum number of redirects to follow (0 disables redirects)
       # @param sidekiq_options [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
-      # @param max_host_clients [Integer] Maximum number of host clients to pool
+      # @param connection_pool_size [Integer] Maximum number of host clients to pool
       # @param connection_timeout [Numeric, nil] Connection timeout in seconds
       # @param proxy_url [String, nil] HTTP/HTTPS proxy URL (supports authentication)
       # @param retries [Integer] Number of retries for failed requests
@@ -85,7 +85,7 @@ module Sidekiq
         raise_error_responses: false,
         max_redirects: 5,
         sidekiq_options: nil,
-        max_host_clients: 100,
+        connection_pool_size: 100,
         connection_timeout: nil,
         proxy_url: nil,
         retries: 3
@@ -102,7 +102,7 @@ module Sidekiq
         self.raise_error_responses = raise_error_responses
         self.max_redirects = max_redirects
         self.sidekiq_options = sidekiq_options
-        self.max_host_clients = max_host_clients
+        self.connection_pool_size = connection_pool_size
         self.connection_timeout = connection_timeout
         self.proxy_url = proxy_url
         self.retries = retries
@@ -172,9 +172,9 @@ module Sidekiq
         apply_sidekiq_options(options)
       end
 
-      def max_host_clients=(value)
-        validate_positive_integer(:max_host_clients, value)
-        @max_host_clients = value
+      def connection_pool_size=(value)
+        validate_positive_integer(:connection_pool_size, value)
+        @connection_pool_size = value
       end
 
       def connection_timeout=(value)
@@ -218,7 +218,7 @@ module Sidekiq
           "raise_error_responses" => raise_error_responses,
           "max_redirects" => max_redirects,
           "sidekiq_options" => sidekiq_options,
-          "max_host_clients" => max_host_clients,
+          "connection_pool_size" => connection_pool_size,
           "connection_timeout" => connection_timeout,
           "proxy_url" => proxy_url,
           "retries" => retries

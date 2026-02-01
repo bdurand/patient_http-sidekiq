@@ -5,7 +5,7 @@ module Sidekiq::AsyncHttp
     def initialize(processor)
       @processor = processor
       @client_pool = ClientPool.new(
-        max_size: config.max_host_clients,
+        max_size: config.connection_pool_size,
         connection_timeout: config.connection_timeout,
         proxy_url: config.proxy_url,
         retries: config.retries
