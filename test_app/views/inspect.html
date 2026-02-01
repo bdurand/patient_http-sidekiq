@@ -3,49 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Faraday Adapter Test - Sidekiq AsyncHttp</title>
+  <title>Inspect Responses - Sidekiq AsyncHttp</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div id="toast" class="toast"></div>
 
   <div class="container">
-    <h1>Faraday Adapter Test</h1>
+    <h1>Inspect Responses</h1>
 
-    <form id="faraday-form">
-      <div class="form-group">
-        <label>Execution Context</label>
-        <div class="radio-options">
-          <div class="radio-group">
-            <input
-              type="radio"
-              id="from-sidekiq"
-              name="context"
-              value="sidekiq"
-              checked
-            >
-            <label for="from-sidekiq">From Sidekiq Job</label>
-          </div>
-          <div class="radio-group">
-            <input
-              type="radio"
-              id="outside-sidekiq"
-              name="context"
-              value="direct"
-            >
-            <label for="outside-sidekiq">Outside Sidekiq</label>
-          </div>
-        </div>
-        <div class="help-text">Choose where the Faraday request originates from</div>
-      </div>
-
+    <form id="inspect-form">
       <div class="form-group">
         <label for="url">URL</label>
         <input
           type="text"
           id="url"
           name="url"
-          value="/test"
+          value="/time"
           autocomplete="off"
         >
         <div class="help-text">Request URL path or full URL</div>
@@ -149,7 +123,7 @@
       }
 
       // Form submission
-      const form = document.getElementById('faraday-form');
+      const form = document.getElementById('inspect-form');
       form.addEventListener('submit', function(e) {
         e.preventDefault();
 
@@ -160,7 +134,7 @@
         button.textContent = 'Sending...';
         clearResponse();
 
-        fetch('/run_faraday', {
+        fetch('/run_inspect', {
           method: 'POST',
           body: formData
         })
@@ -197,7 +171,7 @@
       let isPolling = false;
 
       function fetchStatus() {
-        fetch('/faraday_status')
+        fetch('/inspect_status')
           .then(response => response.json())
           .then(data => {
             if (displayResponse(data)) {

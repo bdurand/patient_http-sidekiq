@@ -10,7 +10,6 @@ class RunJobsAction
     delay = request.params["delay"].to_f
     timeout = request.params["timeout"].to_f
     delay_drift = request.params["delay_drift"].to_f.clamp(0.0, 100.0)
-    use_activejob = request.params["use_activejob"] == "1"
 
     # Reset success and error counters only if all activity is zero
     current_stats = CurrentStats.new
@@ -23,14 +22,7 @@ class RunJobsAction
     port = ENV.fetch("PORT", "9292")
     base_url = "http://localhost:#{port}/test"
 
-    # Select the appropriate worker classes
-    async_worker = use_activejob ? AsynchronousActiveJob : AsynchronousWorker
-    sync_worker = use_activejob ? SynchronousActiveJob : SynchronousWorker
-
-    workers = []
-    async_count.times { workers << async_worker }
-    sync_count.times { workers << sync_worker }
-    workers.shuffle.each do |worker|
+    drifted_delay = lambda do
       actual_delay = delay
       if delay > 0 && delay_drift > 0
         drift_fraction = delay_drift / 100.0
@@ -38,16 +30,17 @@ class RunJobsAction
         upper_bound = delay * (1.0 + drift_fraction)
         actual_delay = rand(lower_bound..upper_bound).round(6)
       end
-
-      url = "#{base_url}?delay=#{actual_delay}"
-
-      # Use perform_later for ActiveJob classes, perform_async for Sidekiq workers
-      if worker < ActiveJob::Base
-        worker.perform_later("GET", url, timeout)
-      else
-        worker.perform_async("GET", url, timeout)
-      end
+      actual_delay
     end
+
+    jobs = []
+    async_count.times do
+      jobs << lambda { Sidekiq::AsyncHttp.get("#{base_url}?delay=#{drifted_delay.call}", callback: StatusReport::Callback, timeout: timeout) }
+    end
+    sync_count.times do
+      jobs << lambda { SynchronousWorker.perform_async("GET", "#{base_url}?delay=#{drifted_delay.call}", timeout) }
+    end
+    jobs.shuffle.each(&:call)
 
     [204, {}, []]
   end

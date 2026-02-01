@@ -40,16 +40,16 @@ map "/status" do
   run StatusAction.new
 end
 
-map "/faraday" do
-  run FaradayAction.new
+map "/inspect" do
+  run InspectAction.new
 end
 
-map "/run_faraday" do
-  run RunFaradayAction.new
+map "/run_inspect" do
+  run RunInspectAction.new
 end
 
-map "/faraday_status" do
-  run FaradayStatusAction.new
+map "/inspect_status" do
+  run InspectStatusAction.new
 end
 
 map "/time" do

@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 # Returns the current time as JSON.
-#
-# This endpoint is used by the Faraday adapter test to have a simple
-# target URL that returns a predictable response.
 class TimeAction
   def call(_env)
     [

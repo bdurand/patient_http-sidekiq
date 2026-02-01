@@ -48,7 +48,7 @@ module Sidekiq::AsyncHttp
       end
 
       # Merge headers
-      merged_headers = headers.any? ? @headers.merge(headers) : @headers
+      merged_headers = headers&.any? ? @headers.merge(headers) : @headers
 
       # Handle JSON body
       request_body = body

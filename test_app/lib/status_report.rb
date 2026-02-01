@@ -1,6 +1,16 @@
 # frozen_string_literal: true
 
 class StatusReport
+  class Callback
+    def on_complete(_response)
+      StatusReport.new("Asynchronous").complete!
+    end
+
+    def on_error(_error)
+      StatusReport.new("Asynchronous").error!
+    end
+  end
+
   def initialize(name)
     @name = name
   end

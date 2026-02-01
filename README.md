@@ -235,31 +235,6 @@ class ApiWorker
 end
 ```
 
-The job mixin can also be used with ActiveJob if the queue adapter is set to Sidekiq. If the queue adapter is not Sidekiq, the HTTP request will be executed synchronously, instead.
-
-```ruby
-class ActiveJobExample < ApplicationJob
-  include Sidekiq::AsyncHttp::Job
-
-  on_completion do |response|
-    record_id = response.callback_args[:record_id]
-    Record.find(record_id).update!(data: response.json)
-  end
-
-  on_error do |error|
-    record_id = error.callback_args[:record_id]
-    Rails.logger.error("Failed to fetch record #{record_id}: #{error.message}")
-  end
-
-  def perform(record_id)
-    async_get(
-      "https://api.example.com/records/#{record_id}",
-      callback_args: {record_id: record_id}
-    )
-  end
-end
-```
-
 ### Defining Your Own Callback Workers
 
 For more complex workflows callbacks, you can define dedicated Sidekiq workers for completion and error handling.
@@ -523,9 +498,6 @@ end
 ```
 
 You can register multiple callbacks; they will be called in the order registered.
-
-> [!NOTE]
-> These callbacks are not available when using through the ActiveJob interface.
 
 ## Shutdown Behavior
 
