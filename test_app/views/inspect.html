@@ -65,6 +65,27 @@
         <div class="help-text">Request timeout in seconds</div>
       </div>
 
+      <div class="form-group">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="margin: 0;">Headers</label>
+          <button type="button" id="add-header-btn" style="width: 20px; height: 20px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; border-radius: 50%; background: #10b981 !important; color: white !important; border: none; display: flex; align-items: center; justify-content: center;">+</button>
+        </div>
+        <div id="headers-list" style="margin-top: 10px;"></div>
+        <div class="help-text">Enter headers in the format "Name: Value" (e.g., "Content-Type: application/json")</div>
+      </div>
+
+      <div class="form-group" id="body-group" style="display: none;">
+        <label for="body">Request Body</label>
+        <textarea
+          id="body"
+          name="body"
+          rows="6"
+          autocomplete="off"
+          placeholder="Enter request body..."
+        ></textarea>
+        <div class="help-text">Request body content</div>
+      </div>
+
       <button type="submit">Send Request</button>
     </form>
 
@@ -77,7 +98,7 @@
     </div>
 
     <div class="links">
-      <a href="/">Main Test App</a>
+      <a href="/">Performance Test</a>
       <a href="/sidekiq/async-http" target="_blank">Sidekiq Dashboard</a>
     </div>
   </div>
@@ -96,6 +117,61 @@
         }, 3000);
       }
 
+      // Headers management
+      let headerCount = 0;
+      const headersList = document.getElementById('headers-list');
+      const addHeaderBtn = document.getElementById('add-header-btn');
+
+      function addHeader(value = '') {
+        const headerId = `header-${headerCount++}`;
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'header-item';
+        headerDiv.style.display = 'flex';
+        headerDiv.style.gap = '10px';
+        headerDiv.style.marginBottom = '10px';
+        headerDiv.style.alignItems = 'center';
+        headerDiv.innerHTML = `
+          <input
+            type="text"
+            name="headers[]"
+            placeholder="Content-Type: application/json"
+            value="${value}"
+            autocomplete="off"
+            style="flex: 1;"
+          >
+          <button type="button" class="remove-header-btn" style="width: 20px; height: 20px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; border-radius: 50%; background: #ef4444 !important; color: white !important; border: none; display: flex; align-items: center; justify-content: center;">-</button>
+        `;
+
+        const removeBtn = headerDiv.querySelector('.remove-header-btn');
+        removeBtn.addEventListener('click', () => {
+          headerDiv.remove();
+        });
+
+        headersList.appendChild(headerDiv);
+      }
+
+      addHeaderBtn.addEventListener('click', () => addHeader());
+
+      // Method change handler for body visibility
+      const methodSelect = document.getElementById('method');
+      const bodyGroup = document.getElementById('body-group');
+      const bodyField = document.getElementById('body');
+
+      function updateBodyVisibility() {
+        const method = methodSelect.value;
+        const methodsWithBody = ['POST', 'PUT', 'PATCH', 'DELETE'];
+
+        if (methodsWithBody.includes(method)) {
+          bodyGroup.style.display = 'block';
+        } else {
+          bodyGroup.style.display = 'none';
+          bodyField.value = ''; // Clear body when hiding
+        }
+      }
+
+      methodSelect.addEventListener('change', updateBodyVisibility);
+      updateBodyVisibility(); // Set initial state
+
       // Response display
       const responseContent = document.getElementById('response-content');
       const pollingStatus = document.getElementById('polling-status');
@@ -109,10 +185,12 @@
         if (data.response) {
           const parsed = JSON.parse(data.response);
           responseContent.textContent = JSON.stringify(parsed, null, 2);
-          if (parsed.type === 'error') {
+          if (parsed.error) {
             responseContent.className = 'response-content error';
-          } else {
+          } else if (parsed.response) {
             responseContent.className = 'response-content success';
+          } else {
+            responseContent.className = 'response-content';
           }
           stopPolling();
           pollingStatus.textContent = 'Stopped';

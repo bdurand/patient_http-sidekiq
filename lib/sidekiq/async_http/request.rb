@@ -68,7 +68,7 @@ module Sidekiq::AsyncHttp
       @http_method = http_method.is_a?(String) ? http_method.downcase.to_sym : http_method
       @url = url.is_a?(URI::Generic) ? url.to_s : url
       @headers = headers.is_a?(HttpHeaders) ? headers : HttpHeaders.new(headers)
-      @body = body
+      @body = (body == "") ? nil : body
       @timeout = timeout
       @max_redirects = max_redirects
       validate!

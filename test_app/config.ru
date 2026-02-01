@@ -32,8 +32,8 @@ map "/run_jobs" do
   run RunJobsAction.new
 end
 
-map "/test" do
-  run TestAction.new
+map "/slow" do
+  run SlowAction.new
 end
 
 map "/status" do
@@ -54,6 +54,10 @@ end
 
 map "/time" do
   run TimeAction.new
+end
+
+map "/request" do
+  run RequestAction.new
 end
 
 map "/error" do

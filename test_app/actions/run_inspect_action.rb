@@ -9,7 +9,7 @@ class RunInspectAction
     InspectCallback.clear_response
     timeout = request.params["timeout"]&.to_f || 30.0
     http_method = request.params["method"] || "GET"
-    url_param = request.params["url"] || "/test"
+    url_param = request.params["url"] || "/request"
     raise_error_responses = request.params["raise_error_responses"] == "1"
 
     # Build the full URL
@@ -20,10 +20,10 @@ class RunInspectAction
       "http://localhost:#{port}#{url_param.start_with?("/") ? url_param : "/#{url_param}"}"
     end
 
-    headers = begin
-      JSON.parse(request.params["headers"]) if request.params["headers"]
-    rescue JSON::ParserError, TypeError
-      {}
+    headers = []
+    Array(request.params["headers"]).each do |header_line|
+      name, value = header_line.split(":", 2).map(&:strip)
+      headers << [name, value] if name && value
     end
 
     body = request.params["body"]
@@ -32,7 +32,7 @@ class RunInspectAction
       http_method,
       url,
       callback: "InspectCallback",
-      headers: headers,
+      headers: headers.to_h,
       body: body,
       timeout: timeout,
       raise_error_responses: raise_error_responses

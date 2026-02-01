@@ -20,7 +20,7 @@ class RunJobsAction
 
     # Build the base test URL for this application
     port = ENV.fetch("PORT", "9292")
-    base_url = "http://localhost:#{port}/test"
+    base_url = "http://localhost:#{port}/slow"
 
     drifted_delay = lambda do
       actual_delay = delay
