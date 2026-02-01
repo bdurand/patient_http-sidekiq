@@ -32,6 +32,8 @@ module Sidekiq::AsyncHttp
   #     end
   #   end
   class Request
+    include ExternalStorage
+
     # Valid HTTP methods
     VALID_METHODS = %i[get post put patch delete].freeze
 
@@ -199,7 +201,9 @@ module Sidekiq::AsyncHttp
       request_id
     end
 
-    def as_json
+    private
+
+    def original_as_json
       {
         "http_method" => @http_method.to_s,
         "url" => @url.to_s,
@@ -209,10 +213,6 @@ module Sidekiq::AsyncHttp
         "max_redirects" => @max_redirects
       }
     end
-
-    alias_method :dump, :as_json
-
-    private
 
     def validate_sidekiq_job(sidekiq_job)
       sidekiq_job ||= Sidekiq::AsyncHttp::Context.current_job

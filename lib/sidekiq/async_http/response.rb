@@ -7,6 +7,8 @@ module Sidekiq
     # This class encapsulates the response data including status, headers, body,
     # and metadata about the request that generated it.
     class Response
+      include ExternalStorage
+
       UNDEFINED = Object.new.freeze
       private_constant :UNDEFINED
 
@@ -156,10 +158,9 @@ module Sidekiq
         JSON.parse(body)
       end
 
-      # Convert to hash with string keys for serialization
-      #
-      # @return [Hash] hash representation
-      def as_json
+      private
+
+      def original_as_json
         {
           "status" => status,
           "headers" => headers.to_h,
@@ -172,8 +173,6 @@ module Sidekiq
           "redirects" => @redirects
         }
       end
-
-      alias_method :dump, :as_json
     end
   end
 end

@@ -150,6 +150,9 @@ module Sidekiq::AsyncHttp
       @completed_at = monotonic_time
       @response = response
 
+      # Store response externally if configured and size exceeds threshold
+      response.store
+
       CallbackWorker.perform_async(response.as_json, "response", @callback)
     end
 
@@ -171,6 +174,11 @@ module Sidekiq::AsyncHttp
           http_method: request.http_method,
           callback_args: @callback_args
         )
+      end
+
+      # Store HttpError's response externally if configured and size exceeds threshold
+      if wrapped_error.is_a?(HttpError)
+        wrapped_error.response.store
       end
 
       CallbackWorker.perform_async(wrapped_error.as_json, "error", @callback)

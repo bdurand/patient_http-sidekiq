@@ -9,6 +9,8 @@ module Sidekiq
     # This class holds all configuration options for the Sidekiq Async HTTP gem,
     # including connection limits, timeouts, and other HTTP client settings.
     class Configuration
+      # Default threshold in bytes above which payloads are stored externally
+      DEFAULT_PAYLOAD_STORE_THRESHOLD = 100_000
       # @return [Integer] Maximum number of concurrent connections
       attr_reader :max_connections
 
@@ -53,6 +55,9 @@ module Sidekiq
 
       # @return [Integer] Number of retries for failed requests
       attr_reader :retries
+
+      # @return [Integer] Size threshold in bytes for external payload storage
+      attr_reader :payload_store_threshold
 
       # Initializes a new Configuration with the specified options.
       #
@@ -106,6 +111,12 @@ module Sidekiq
         self.connection_timeout = connection_timeout
         self.proxy_url = proxy_url
         self.retries = retries
+
+        # Initialize payload store configuration
+        @payload_stores = {}
+        @default_payload_store_name = nil
+        @payload_store_threshold = DEFAULT_PAYLOAD_STORE_THRESHOLD
+        @payload_store_mutex = Mutex.new
       end
 
       # Get the logger to use (configured logger or Sidekiq.logger)
@@ -202,6 +213,88 @@ module Sidekiq
         @retries = value
       end
 
+      # Register a payload store for external storage of large payloads.
+      #
+      # Multiple stores can be registered for migration purposes. The last
+      # store registered becomes the default used for new writes. References
+      # to other registered stores remain valid for reading.
+      #
+      # @param name [Symbol, String] Unique name for this store registration
+      # @param adapter [Symbol, String] The adapter type (:file, :redis, :s3, etc.)
+      # @param options [Hash] Options passed to the adapter constructor
+      # @return [void]
+      # @raise [ArgumentError] If the adapter is not registered
+      #
+      # @example Register a file store for development
+      #   config.register_payload_store(:dev, :file, directory: "/tmp/payloads")
+      #
+      # @example Migration: register both old and new stores
+      #   config.register_payload_store(:old_redis, :redis, url: old_url)
+      #   config.register_payload_store(:new_redis, :redis, url: new_url)  # becomes default
+      def register_payload_store(name, adapter, **options)
+        name = name.to_sym
+        adapter = adapter.to_sym
+
+        # Validate adapter exists
+        unless PayloadStore::Base.lookup(adapter)
+          raise ArgumentError, "Unknown payload store adapter: #{adapter.inspect}. " \
+            "Available adapters: #{PayloadStore::Base.registered_adapters.inspect}"
+        end
+
+        store = PayloadStore::Base.create(adapter, **options)
+
+        @payload_store_mutex.synchronize do
+          @payload_stores[name] = store
+          @default_payload_store_name = name
+        end
+      end
+
+      # Get a registered payload store by name.
+      #
+      # @param name [Symbol, String, nil] Store name. If nil, returns the default store.
+      # @return [PayloadStore::Base, nil] The store instance or nil if not found
+      def payload_store(name = nil)
+        @payload_store_mutex.synchronize do
+          if name.nil?
+            return nil unless @default_payload_store_name
+
+            @payload_stores[@default_payload_store_name]
+          else
+            @payload_stores[name.to_sym]
+          end
+        end
+      end
+
+      # Get the name of the default payload store.
+      #
+      # @return [Symbol, nil] The default store name or nil if none registered
+      def default_payload_store_name
+        @payload_store_mutex.synchronize do
+          @default_payload_store_name
+        end
+      end
+
+      # Get all registered payload stores.
+      #
+      # @return [Hash{Symbol => PayloadStore::Base}] Copy of registered stores
+      def payload_stores
+        @payload_store_mutex.synchronize do
+          @payload_stores.dup
+        end
+      end
+
+      # Set the threshold size for external payload storage.
+      #
+      # Payloads larger than this size (in bytes) will be stored externally
+      # when a payload store is configured.
+      #
+      # @param value [Integer] Threshold in bytes
+      # @raise [ArgumentError] If value is not a positive integer
+      def payload_store_threshold=(value)
+        validate_positive_integer(:payload_store_threshold, value)
+        @payload_store_threshold = value
+      end
+
       # Convert to hash for inspection
       # @return [Hash] hash representation with string keys
       def to_h
@@ -221,7 +314,10 @@ module Sidekiq
           "connection_pool_size" => connection_pool_size,
           "connection_timeout" => connection_timeout,
           "proxy_url" => proxy_url,
-          "retries" => retries
+          "retries" => retries,
+          "payload_store_threshold" => payload_store_threshold,
+          "payload_stores" => payload_stores.keys,
+          "default_payload_store" => default_payload_store_name
         }
       end
 

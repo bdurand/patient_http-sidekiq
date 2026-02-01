@@ -26,6 +26,38 @@ module Sidekiq::AsyncHttp
   class CallbackWorker
     include Sidekiq::Job
 
+    # Clean up externally stored payloads when job exhausts all retries.
+    # This prevents orphaned payload files when callbacks fail permanently.
+    sidekiq_retries_exhausted do |job, _exception|
+      result = job["args"][0]
+      result_type = job["args"][1]
+
+      begin
+        unstore_payload(result, result_type)
+      rescue => e
+        Sidekiq::AsyncHttp.configuration.logger&.warn(
+          "[Sidekiq::AsyncHttp] Failed to unstore payload for dead job: #{e.message}"
+        )
+      end
+    end
+
+    class << self
+      # Unstore a payload based on result type.
+      #
+      # @param result [Hash] Serialized Response or Error data
+      # @param result_type [String] "response" or "error"
+      # @return [void]
+      def unstore_payload(result, result_type)
+        if result_type == "response"
+          response = Response.load(result)
+          response.unstore
+        elsif result_type == "error"
+          error = Error.load(result)
+          error.response.unstore if error.is_a?(HttpError)
+        end
+      end
+    end
+
     # Perform the callback invocation.
     #
     # @param result [Hash] Serialized Response or Error data
@@ -37,12 +69,20 @@ module Sidekiq::AsyncHttp
 
       if result_type == "response"
         response = Response.load(result)
-        Sidekiq::AsyncHttp.invoke_completion_callbacks(response)
-        callback_service.on_complete(response)
+        begin
+          Sidekiq::AsyncHttp.invoke_completion_callbacks(response)
+          callback_service.on_complete(response)
+        ensure
+          response.unstore
+        end
       elsif result_type == "error"
         error = Error.load(result)
-        Sidekiq::AsyncHttp.invoke_error_callbacks(error)
-        callback_service.on_error(error)
+        begin
+          Sidekiq::AsyncHttp.invoke_error_callbacks(error)
+          callback_service.on_error(error)
+        ensure
+          error.response.unstore if error.is_a?(HttpError)
+        end
       else
         raise ArgumentError, "Unknown result_type: #{result_type}"
       end

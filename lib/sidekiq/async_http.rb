@@ -94,6 +94,7 @@ module Sidekiq::AsyncHttp
   autoload :Configuration, File.join(__dir__, "async_http/configuration")
   autoload :Context, File.join(__dir__, "async_http/context")
   autoload :Error, File.join(__dir__, "async_http/error")
+  autoload :ExternalStorage, File.join(__dir__, "async_http/external_storage")
   autoload :HttpError, File.join(__dir__, "async_http/http_error")
   autoload :ClientError, File.join(__dir__, "async_http/http_error")
   autoload :ServerError, File.join(__dir__, "async_http/http_error")
@@ -106,6 +107,12 @@ module Sidekiq::AsyncHttp
   autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
   autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
   autoload :Payload, File.join(__dir__, "async_http/payload")
+
+  # PayloadStore module for external storage adapters
+  module PayloadStore
+    autoload :Base, File.join(__dir__, "async_http/payload_store/base")
+    autoload :FileStore, File.join(__dir__, "async_http/payload_store/file_store")
+  end
   autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
   autoload :Processor, File.join(__dir__, "async_http/processor")
   autoload :Request, File.join(__dir__, "async_http/request")
