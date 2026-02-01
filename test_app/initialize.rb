@@ -23,6 +23,7 @@ end
 # Configure Sidekiq::AsyncHttp processor
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = AppConfig.max_connections
+  config.proxy_url = ENV["HTTP_PROXY"]
 end
 
 Sidekiq::AsyncHttp.after_completion do |response|

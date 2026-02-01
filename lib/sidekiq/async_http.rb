@@ -66,6 +66,7 @@ module Sidekiq::AsyncHttp
   autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
   autoload :CallbackWorker, File.join(__dir__, "async_http/callback_worker")
   autoload :Client, File.join(__dir__, "async_http/client")
+  autoload :ClientPool, File.join(__dir__, "async_http/client_pool")
   autoload :Configuration, File.join(__dir__, "async_http/configuration")
   autoload :Context, File.join(__dir__, "async_http/context")
   autoload :Error, File.join(__dir__, "async_http/error")

@@ -66,8 +66,8 @@ module Sidekiq
         @status = status
         @headers = HttpHeaders.new(headers)
 
-        encoding, encoded_body = Payload.encode(body, @headers["content-type"])
-        @payload = Payload.new(encoding, encoded_body) unless body.nil?
+        encoding, encoded_body, charset = Payload.encode(body, @headers["content-type"])
+        @payload = Payload.new(encoding, encoded_body, charset) unless body.nil?
         @body = UNDEFINED
 
         @duration = duration

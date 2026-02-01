@@ -4,7 +4,12 @@ module Sidekiq::AsyncHttp
   class AsyncHttpClient
     def initialize(processor)
       @processor = processor
-      @http_client = Async::HTTP::Internet.new(retries: 3)
+      @client_pool = ClientPool.new(
+        max_size: config.max_host_clients,
+        connection_timeout: config.connection_timeout,
+        proxy_url: config.proxy_url,
+        retries: config.retries
+      )
       @response_reader = ResponseReader.new(@processor)
     end
 
@@ -19,7 +24,7 @@ module Sidekiq::AsyncHttp
       timeout = request.timeout || config.request_timeout
 
       Async::Task.current.with_timeout(timeout) do
-        async_response = @http_client.call(request.http_method, request.url, headers, body)
+        async_response = @client_pool.request(request.http_method, request.url, headers, body)
         headers_hash = async_response.headers.to_h.transform_values(&:to_s)
         body = @response_reader.read_body(async_response, headers_hash)
 
@@ -29,6 +34,13 @@ module Sidekiq::AsyncHttp
           body: body
         }
       end
+    end
+
+    # Close all clients and release resources.
+    #
+    # @return [void]
+    def close
+      @client_pool.close
     end
 
     private

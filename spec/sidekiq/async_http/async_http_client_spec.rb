@@ -357,4 +357,24 @@ RSpec.describe Sidekiq::AsyncHttp::AsyncHttpClient do
       end
     end
   end
+
+  describe "#close" do
+    let(:close_request) do
+      Sidekiq::AsyncHttp::Request.new(
+        :get,
+        "https://api.example.com/users"
+      )
+    end
+
+    it "closes the client pool" do
+      stub_request(:get, "https://api.example.com/users")
+        .to_return(status: 200, body: "OK")
+
+      Async do
+        client.make_request(close_request, request_id)
+      end.wait
+
+      expect { client.close }.not_to raise_error
+    end
+  end
 end

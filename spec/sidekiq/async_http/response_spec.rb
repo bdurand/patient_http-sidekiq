@@ -513,7 +513,7 @@ RSpec.describe Sidekiq::AsyncHttp::Response do
       expect(hash).to eq({
         "status" => 201,
         "headers" => {"content-type" => "application/json", "x-request-id" => "abc"},
-        "body" => {"encoding" => "text", "value" => '{"created":true}'},
+        "body" => {"encoding" => "text", "value" => '{"created":true}', "charset" => Encoding::UTF_8.name},
         "duration" => 0.456,
         "request_id" => "req-123",
         "url" => "https://api.example.com/items",
