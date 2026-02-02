@@ -35,12 +35,12 @@ RSpec.describe "Streaming Response Integration", :integration do
     # Create 3 concurrent requests that each take 500ms
     # If they run concurrently (non-blocking), total time should be ~500ms
     # If they block each other (sequential), total time would be ~1500ms
-    client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+    template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
 
     start_time = Time.now
 
     3.times do |i|
-      request = client.async_get("/delay/500")
+      request = template.get("/delay/500")
 
       task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,

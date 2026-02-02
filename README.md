@@ -222,12 +222,12 @@ Available options:
 
 ### Using the Client for Shared Configuration
 
-For repeated requests to the same API, use `Sidekiq::AsyncHttp::Client` to share configuration:
+For repeated requests to the same API, use `Sidekiq::AsyncHttp::RequestTemplate` to share configuration:
 
 ```ruby
 class ApiService
   def initialize
-    @client = Sidekiq::AsyncHttp::Client.new(
+    @template = Sidekiq::AsyncHttp::RequestTemplate.new(
       base_url: "https://api.example.com",
       headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
       timeout: 60
@@ -235,7 +235,7 @@ class ApiService
   end
 
   def fetch_user(user_id)
-    request = @client.async_get("/users/#{user_id}")
+    request = @template.get("/users/#{user_id}")
     request.async_execute(
       callback: FetchUserCallback,
       callback_args: {user_id: user_id}
@@ -243,7 +243,7 @@ class ApiService
   end
 
   def update_user(user_id, attributes)
-    request = @client.async_patch("/users/#{user_id}", json: attributes)
+    request = @template.patch("/users/#{user_id}", json: attributes)
     request.async_execute(
       callback: UpdateUserCallback,
       callback_args: {user_id: user_id}

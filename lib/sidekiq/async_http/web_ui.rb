@@ -51,19 +51,19 @@ module Sidekiq
       end
     end
   end
-end
 
-# Auto-register the web UI extension if Sidekiq::Web is available
-# This is called after require "sidekiq/web" in the application
-if defined?(Sidekiq::Web)
-  Sidekiq::Web.configure do |config|
-    config.register_extension(
-      Sidekiq::AsyncHttp::WebUI,
-      name: "async-http",
-      tab: "async_http.tab",
-      index: "async-http",
-      root_dir: Sidekiq::AsyncHttp::WebUI::ROOT,
-      asset_paths: ["css", "js"]
-    )
+  # Auto-register the web UI extension if Sidekiq::Web is available
+  # This is called after require "sidekiq/web" in the application
+  if defined?(Sidekiq::Web)
+    Sidekiq::Web.configure do |config|
+      config.register_extension(
+        Sidekiq::AsyncHttp::WebUI,
+        name: "async-http",
+        tab: "async_http.tab",
+        index: "async-http",
+        root_dir: Sidekiq::AsyncHttp::WebUI::ROOT,
+        asset_paths: ["css", "js"]
+      )
+    end
   end
 end

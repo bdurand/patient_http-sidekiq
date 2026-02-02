@@ -1,9 +1,5 @@
 # frozen_string_literal: true
 
-require "json"
-require "socket"
-require "securerandom"
-
 module Sidekiq
   module AsyncHttp
     # Manages inflight request tracking in Redis for crash recovery.

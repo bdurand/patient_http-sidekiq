@@ -46,8 +46,8 @@ RSpec.describe "Processor Shutdown Integration", :integration do
   describe "clean shutdown with completion" do
     it "allows in-flight requests to complete when timeout is sufficient" do
       # Build request
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/test/200")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/test/200")
 
       # Create request task
       sidekiq_job = {
@@ -97,8 +97,8 @@ RSpec.describe "Processor Shutdown Integration", :integration do
   describe "forced shutdown with re-enqueue" do
     it "re-enqueues in-flight requests when timeout is insufficient" do
       # Build request
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/delay/250")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/delay/250")
 
       # Create request task
       sidekiq_job = {
@@ -147,11 +147,11 @@ RSpec.describe "Processor Shutdown Integration", :integration do
   describe "multiple in-flight requests during shutdown" do
     it "completes fast requests and re-enqueues slow requests" do
       # Build and enqueue 5 requests
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
       request_tasks = []
 
       5.times do |i|
-        request = client.async_get("/delay/#{i.even? ? 100 : 500}")
+        request = template.get("/delay/#{i.even? ? 100 : 500}")
 
         sidekiq_job = {
           "class" => "TestWorker",

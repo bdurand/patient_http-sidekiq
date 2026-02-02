@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe Sidekiq::AsyncHttp::ClientPool do
+RSpec.describe Sidekiq::AsyncHttp::AsyncClientPool do
   let(:pool) { described_class.new(max_size: 3, retries: 3) }
 
   after do

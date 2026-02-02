@@ -27,8 +27,8 @@ RSpec.describe Sidekiq::AsyncHttp::RequestWorker do
     end
 
     it "processes the request and invokes the callback" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "http://example.com")
-      request = client.async_get("/test")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "http://example.com")
+      request = template.get("/test")
 
       stub_request(:get, "http://example.com/test")
         .to_return(status: 200, body: "OK", headers: {"Content-Type" => "text/plain"})

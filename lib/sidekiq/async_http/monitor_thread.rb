@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "concurrent"
-
 module Sidekiq
   module AsyncHttp
     # Background thread that maintains heartbeats and performs garbage collection

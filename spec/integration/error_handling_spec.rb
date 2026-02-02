@@ -34,8 +34,8 @@ RSpec.describe "Error Handling Integration", :integration do
   describe "timeout errors" do
     it "calls error worker with timeout error when request exceeds timeout" do
       # Make request with short timeout (use a longer delay to ensure timeout)
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url, timeout: 0.1)
-      request = client.async_get("/delay/5000")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url, timeout: 0.1)
+      request = template.get("/delay/5000")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
@@ -65,8 +65,8 @@ RSpec.describe "Error Handling Integration", :integration do
   describe "connection errors" do
     it "calls error worker with connection error when server is not listening" do
       # Make request to a port that's not listening
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "http://127.0.0.1:1")
-      request = client.async_get("/nowhere")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "http://127.0.0.1:1")
+      request = template.get("/nowhere")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
@@ -96,8 +96,8 @@ RSpec.describe "Error Handling Integration", :integration do
 
   describe "HTTP error responses" do
     it "calls success worker for 4xx responses (they are valid HTTP responses)" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/test/404")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/test/404")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
@@ -123,8 +123,8 @@ RSpec.describe "Error Handling Integration", :integration do
     end
 
     it "calls success worker for 5xx responses (they are valid HTTP responses)" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/test/503")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/test/503")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
@@ -150,8 +150,8 @@ RSpec.describe "Error Handling Integration", :integration do
     end
 
     it "calls error worker with HttpError when raise_error_responses is enabled" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/test/404")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/test/404")
 
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,

@@ -39,8 +39,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       stub_request(:get, "https://api.example.com/users")
         .to_return(status: 200, body: '{"users": []}', headers: {"Content-Type" => "application/json"})
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/users")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      request = template.get("/users")
 
       # Execute request
       request.execute(
@@ -68,8 +68,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
         .with(body: '{"name":"John"}')
         .to_return(status: 201, body: '{"id": 123}', headers: {"Content-Type" => "application/json"})
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_post("/users", json: {name: "John"})
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      request = template.post("/users", json: {name: "John"})
 
       request.execute(
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-456", "args" => []},
@@ -87,8 +87,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
     it "handles 4xx and 5xx responses as successful (they are valid HTTP responses)" do
       stub_request(:get, "https://api.example.com/missing").to_return(status: 404, body: "Not Found")
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/missing")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      request = template.get("/missing")
 
       request.execute(
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-404", "args" => []},
@@ -110,8 +110,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       # Stub connection error
       stub_request(:get, "https://api.example.com/users").to_raise(Errno::ECONNREFUSED)
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/users")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      request = template.get("/users")
 
       request.execute(
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-error", "args" => []},
@@ -137,8 +137,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       stub_request(:get, "https://api.example.com/slow")
         .to_timeout
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/slow")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      request = template.get("/slow")
 
       request.execute(
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-timeout", "args" => []},
@@ -161,8 +161,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
         .with(headers: {"Authorization" => "Bearer token123"})
         .to_return(status: 200, body: "OK")
 
-      client = Sidekiq::AsyncHttp::Client.new(base_url: "https://api.example.com")
-      request = client.async_get("/secure", headers: {"Authorization" => "Bearer token123"})
+      request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/secure", headers: {"Authorization" => "Bearer token123"})
 
       request.execute(
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-headers", "args" => []},

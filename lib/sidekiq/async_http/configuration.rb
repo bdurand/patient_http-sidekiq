@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "uri"
-
 module Sidekiq
   module AsyncHttp
     # Configuration for the async HTTP processor.
