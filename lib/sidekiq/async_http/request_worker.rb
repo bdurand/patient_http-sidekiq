@@ -5,9 +5,8 @@ module Sidekiq
     # Sidekiq worker for executing HTTP requests asynchronously.
     #
     # This worker is enqueued when calling +Sidekiq::AsyncHttp.get+, +Sidekiq::AsyncHttp.post+,
-    # etc., or when calling +Request#async_execute+. It allows HTTP requests to be made from
-    # anywhere in your code (not just Sidekiq jobs) while still processing them through the
-    # async HTTP processor.
+    # etc. It allows HTTP requests to be made from anywhere in your code (not just Sidekiq jobs)
+    # while still processing them through the async HTTP processor.
     #
     # When the request completes, the specified callback service's +on_complete+ or +on_error+
     # method is invoked via CallbackWorker.
@@ -40,7 +39,8 @@ module Sidekiq
         sidekiq_job = Sidekiq::AsyncHttp::Context.current_job
 
         begin
-          request.execute(
+          RequestExecutor.execute(
+            request,
             callback: callback_service_name,
             raise_error_responses: raise_error_responses,
             callback_args: callback_args,

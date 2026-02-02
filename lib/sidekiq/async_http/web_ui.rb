@@ -18,15 +18,15 @@ module Sidekiq
           app.get "/async-http" do
             stats = Sidekiq::AsyncHttp::Stats.new
 
-            # Get process-level inflight and capacity data from InflightRegistry
-            processes = Sidekiq::AsyncHttp::InflightRegistry.inflight_counts_by_process
+            # Get process-level inflight and capacity data from TaskMonitor
+            processes = Sidekiq::AsyncHttp::TaskMonitor.inflight_counts_by_process
 
             # Get totals and calculate derived values
             totals = stats.get_totals
             total_requests = totals["requests"] || 0
             avg_duration = (total_requests > 0) ? ((totals["duration"] || 0).to_f / total_requests).round(3) : 0.0
 
-            # Capacity metrics from InflightRegistry
+            # Capacity metrics from TaskMonitor
             max_capacity = processes.values.sum { |data| data[:max_capacity] }
             current_inflight = processes.values.sum { |data| data[:inflight] }
             utilization = (max_capacity > 0) ? (current_inflight.to_f / max_capacity * 100).round(1) : 0

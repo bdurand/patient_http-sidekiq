@@ -14,7 +14,7 @@ module Sidekiq
     # - pid: process ID
     # - hex: 8-character random hex for uniqueness
     # - request-uuid: unique identifier for the request
-    class InflightRegistry
+    class TaskMonitor
       # Redis key prefixes
       INFLIGHT_INDEX_KEY = "sidekiq:async_http:inflight_index"
       INFLIGHT_JOBS_KEY = "sidekiq:async_http:inflight_jobs"
@@ -172,11 +172,12 @@ module Sidekiq
       def register(task)
         timestamp_ms = (Time.now.to_f * 1000).round
         job_payload = task.sidekiq_job.to_json
+        task_id = full_task_id(task.id)
 
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            transaction.zadd(INFLIGHT_INDEX_KEY, timestamp_ms, task_id(task))
-            transaction.hset(INFLIGHT_JOBS_KEY, task_id(task), job_payload)
+            transaction.zadd(INFLIGHT_INDEX_KEY, timestamp_ms, task_id)
+            transaction.hset(INFLIGHT_JOBS_KEY, task_id, job_payload)
             transaction.expire(INFLIGHT_INDEX_KEY, inflight_ttl)
             transaction.expire(INFLIGHT_JOBS_KEY, inflight_ttl)
           end
@@ -189,10 +190,12 @@ module Sidekiq
       #
       # @return [void]
       def unregister(task)
+        task_id = full_task_id(task.id)
+
         Sidekiq.redis do |redis|
           redis.multi do |transaction|
-            transaction.zrem(INFLIGHT_INDEX_KEY, task_id(task))
-            transaction.hdel(INFLIGHT_JOBS_KEY, task_id(task))
+            transaction.zrem(INFLIGHT_INDEX_KEY, task_id)
+            transaction.hdel(INFLIGHT_JOBS_KEY, task_id)
           end
         end
       end
@@ -212,15 +215,15 @@ module Sidekiq
       # @param request_ids [Array<String>] the request IDs to update
       #
       # @return [void]
-      def update_heartbeats(request_ids)
-        return if request_ids.empty?
+      def update_heartbeats(task_ids)
+        return if task_ids.empty?
 
         timestamp_ms = (Time.now.to_f * 1000).round
 
         Sidekiq.redis do |redis|
           redis.pipelined do |pipeline|
-            request_ids.each do |request_id|
-              pipeline.call("ZADD", INFLIGHT_INDEX_KEY, "XX", timestamp_ms, request_id)
+            task_ids.each do |task_id|
+              pipeline.call("ZADD", INFLIGHT_INDEX_KEY, "XX", timestamp_ms, full_task_id(task_id))
             end
           end
         end
@@ -234,7 +237,7 @@ module Sidekiq
       # @api private
       def registered?(task)
         Sidekiq.redis do |redis|
-          !redis.zscore(INFLIGHT_INDEX_KEY, task_id(task)).nil?
+          !redis.zscore(INFLIGHT_INDEX_KEY, full_task_id(task.id)).nil?
         end
       end
 
@@ -246,7 +249,7 @@ module Sidekiq
       # @api private
       def heartbeat_timestamp_for(task)
         score = Sidekiq.redis do |redis|
-          redis.zscore(INFLIGHT_INDEX_KEY, task_id(task))
+          redis.zscore(INFLIGHT_INDEX_KEY, full_task_id(task.id))
         end
         score&.to_i
       end
@@ -265,8 +268,8 @@ module Sidekiq
       #
       # @param task [RequestTask] the request task
       # @return [String] the unique task ID
-      def task_id(task)
-        "#{@lock_identifier}/#{task.id}"
+      def full_task_id(task_id)
+        "#{@lock_identifier}/#{task_id}"
       end
 
       # Record the current process's max connections in Redis.

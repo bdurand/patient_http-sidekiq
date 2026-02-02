@@ -220,7 +220,7 @@ Available options:
 - `timeout:` - Request timeout in seconds
 - `raise_error_responses:` - Treat non-2xx responses as errors
 
-### Using the Client for Shared Configuration
+### Using Request Templates
 
 For repeated requests to the same API, use `Sidekiq::AsyncHttp::RequestTemplate` to share configuration:
 
@@ -236,7 +236,8 @@ class ApiService
 
   def fetch_user(user_id)
     request = @template.get("/users/#{user_id}")
-    request.async_execute(
+    Sidekiq::AsyncHttp.execute(
+      request,
       callback: FetchUserCallback,
       callback_args: {user_id: user_id}
     )
@@ -244,18 +245,14 @@ class ApiService
 
   def update_user(user_id, attributes)
     request = @template.patch("/users/#{user_id}", json: attributes)
-    request.async_execute(
+    Sidekiq::AsyncHttp.execute(
+      request,
       callback: UpdateUserCallback,
       callback_args: {user_id: user_id}
     )
   end
 end
 ```
-
-The Client handles:
-- Base URL joining for relative paths
-- Default headers merged with per-request headers
-- Query parameter encoding via `params:` option
 
 ### Callback Arguments
 

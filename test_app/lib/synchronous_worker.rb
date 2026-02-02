@@ -6,9 +6,6 @@ require "uri"
 # Example worker that makes HTTP requests using synchronous HTTP calls.
 class SynchronousWorker
   include Sidekiq::Job
-  include Sidekiq::Throttled::Job
-
-  sidekiq_throttle concurrency: {limit: 25}
 
   def perform(method, url, timeout)
     status_report = StatusReport.new("Synchronous")

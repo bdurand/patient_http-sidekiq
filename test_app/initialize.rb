@@ -2,7 +2,6 @@
 
 require "time"
 require "sidekiq"
-require "sidekiq/throttled"
 require "sidekiq/encrypted_args"
 require_relative "../lib/sidekiq-async_http"
 

@@ -56,7 +56,7 @@ module Sidekiq
         @request = request
         @sidekiq_job = sidekiq_job
         @callback = callback.is_a?(Class) ? callback.name : callback.to_s
-        @callback_args = callback_args || {}
+        @callback_args = CallbackValidator.validate_callback_args(callback_args) || {}
         @raise_error_responses = raise_error_responses
         @redirects = redirects || []
 
@@ -69,6 +69,7 @@ module Sidekiq
         raise ArgumentError, "request is required" unless @request
         raise ArgumentError, "sidekiq_job is required" unless @sidekiq_job
         raise ArgumentError, "callback is required" if @callback.nil? || @callback.empty?
+        CallbackValidator.validate!(@callback)
       end
 
       # Mark task as enqueued

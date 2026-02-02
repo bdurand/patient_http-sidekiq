@@ -12,10 +12,12 @@ RSpec.describe "Crash Recovery", :integration do
     )
   end
   let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
-  let(:registry) { processor.inflight_registry }
+  let(:observer) { Sidekiq::AsyncHttp::ProcessorObserver.new(processor) }
+  let(:task_monitor) { observer.task_monitor }
   let(:web_server) { TestWebServer.new }
 
   around do |example|
+    processor.observe(observer)
     processor.run do
       example.run
     end
@@ -27,7 +29,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Force release any lock
     Sidekiq.redis do |redis|
-      redis.del(Sidekiq::AsyncHttp::InflightRegistry::GC_LOCK_KEY)
+      redis.del(Sidekiq::AsyncHttp::TaskMonitor::GC_LOCK_KEY)
     end
 
     # Create an orphaned request by manually registering and setting old timestamp
@@ -46,13 +48,13 @@ RSpec.describe "Crash Recovery", :integration do
     )
 
     # Register with old timestamp to simulate orphaned request
-    registry.register(task)
+    task_monitor.register(task)
     old_timestamp_ms = ((Time.now.to_f - 10) * 1000).round
-    set_task_timestamp(registry, task, old_timestamp_ms)
+    set_task_timestamp(task_monitor, task, old_timestamp_ms)
 
     # Verify it's registered
-    expect(registry.registered?(task)).to be true
-    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(1)
+    expect(task_monitor.registered?(task)).to be true
+    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(1)
 
     # Mock Sidekiq::Client to capture re-enqueued job
     reenqueued_jobs = []
@@ -61,18 +63,18 @@ RSpec.describe "Crash Recovery", :integration do
     end
 
     # Acquire GC lock and run cleanup
-    expect(registry.acquire_gc_lock).to be true
-    count = registry.cleanup_orphaned_requests(3, config.logger)
+    expect(task_monitor.acquire_gc_lock).to be true
+    count = task_monitor.cleanup_orphaned_requests(3, config.logger)
 
     expect(count).to eq(1)
     expect(reenqueued_jobs.size).to eq(1)
     expect(reenqueued_jobs.first["jid"]).to eq("crash-test-jid")
 
-    # Verify it's removed from registry
-    expect(registry.registered?(task)).to be false
-    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(0)
+    # Verify it's removed from task_monitor
+    expect(task_monitor.registered?(task)).to be false
+    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(0)
 
-    registry.release_gc_lock
+    task_monitor.release_gc_lock
   end
 
   it "updates heartbeats and prevents false positives" do
@@ -92,24 +94,24 @@ RSpec.describe "Crash Recovery", :integration do
     )
 
     # Register task (simulating it being in flight)
-    registry.register(task)
-    full_task_id = registry.task_id(task)
+    task_monitor.register(task)
+    full_task_id = task_monitor.full_task_id(task.id)
 
     # Set an old timestamp
     old_timestamp_ms = ((Time.now.to_f - 2) * 1000).round
-    set_task_timestamp(registry, task, old_timestamp_ms)
+    set_task_timestamp(task_monitor, task, old_timestamp_ms)
 
     # Update heartbeat (simulating monitor thread)
-    registry.update_heartbeats([full_task_id])
+    task_monitor.update_heartbeats([full_task_id])
 
     # Try to clean up with 3-second threshold
     expect(Sidekiq::Client).not_to receive(:push)
-    count = registry.cleanup_orphaned_requests(3, config.logger)
+    count = task_monitor.cleanup_orphaned_requests(3, config.logger)
 
     # Should not be cleaned up because heartbeat was updated
     expect(count).to eq(0)
-    expect(registry.registered?(task)).to be true
-    expect(Sidekiq::AsyncHttp::InflightRegistry.inflight_count).to eq(1)
+    expect(task_monitor.registered?(task)).to be true
+    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(1)
   end
 
   it "handles distributed locking correctly" do
@@ -118,24 +120,24 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Force release any lock
     Sidekiq.redis do |redis|
-      redis.del(Sidekiq::AsyncHttp::InflightRegistry::GC_LOCK_KEY)
+      redis.del(Sidekiq::AsyncHttp::TaskMonitor::GC_LOCK_KEY)
     end
 
-    # Create two registry instances simulating two processes
-    registry1 = Sidekiq::AsyncHttp::InflightRegistry.new(config)
-    registry2 = Sidekiq::AsyncHttp::InflightRegistry.new(config)
+    # Create two task_monitor instances simulating two processes
+    task_monitor1 = Sidekiq::AsyncHttp::TaskMonitor.new(config)
+    task_monitor2 = Sidekiq::AsyncHttp::TaskMonitor.new(config)
 
     # First should acquire lock
-    expect(registry1.acquire_gc_lock).to be true
+    expect(task_monitor1.acquire_gc_lock).to be true
 
     # Second should fail to acquire
-    expect(registry2.acquire_gc_lock).to be false
+    expect(task_monitor2.acquire_gc_lock).to be false
 
     # After first releases, second should succeed
-    registry1.release_gc_lock
-    expect(registry2.acquire_gc_lock).to be true
+    task_monitor1.release_gc_lock
+    expect(task_monitor2.acquire_gc_lock).to be true
 
-    registry2.release_gc_lock
+    task_monitor2.release_gc_lock
   end
 
   it "monitor thread updates heartbeats periodically" do
@@ -155,27 +157,26 @@ RSpec.describe "Crash Recovery", :integration do
     )
 
     # Register in Redis
-    registry.register(task)
-    full_task_id = registry.task_id(task)
+    task_monitor.register(task)
 
     # Manually add to processor's inflight tracking
-    processor.instance_variable_get(:@inflight_requests)[full_task_id] = task
+    processor.instance_variable_get(:@inflight_requests)[task.id] = task
 
     # Get initial timestamp
-    initial_timestamp = registry.heartbeat_timestamp_for(task)
+    initial_timestamp = task_monitor.heartbeat_timestamp_for(task)
 
     # Wait for monitor to update (heartbeat_interval is 1 second)
     sleep(1.2)
 
     # Get new timestamp
-    new_timestamp = registry.heartbeat_timestamp_for(task)
+    new_timestamp = task_monitor.heartbeat_timestamp_for(task)
 
     # Timestamp should have been updated
     expect(new_timestamp).to be > initial_timestamp
 
     # Clean up
-    processor.instance_variable_get(:@inflight_requests).delete(full_task_id)
-    registry.unregister(task)
+    processor.instance_variable_get(:@inflight_requests).delete(task.id)
+    task_monitor.unregister(task)
   end
 
   it "performs garbage collection automatically via monitor thread" do

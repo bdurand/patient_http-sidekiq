@@ -2,7 +2,7 @@
 
 require "spec_helper"
 
-RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
+RSpec.describe Sidekiq::AsyncHttp::TaskMonitor do
   let(:config) { Sidekiq::AsyncHttp::Configuration.new }
   let(:registry) { described_class.new(config) }
   let(:request) do
@@ -78,15 +78,12 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
     end
 
     it "updates timestamps for multiple requests" do
-      full_task_id = registry.task_id(task)
-      full_task_id2 = registry.task_id(task2)
-
       old_timestamps = [
         registry.heartbeat_timestamp_for(task),
         registry.heartbeat_timestamp_for(task2)
       ]
 
-      registry.update_heartbeats([full_task_id, full_task_id2])
+      registry.update_heartbeats([task.id, task2.id])
 
       new_timestamps = [
         registry.heartbeat_timestamp_for(task),
@@ -193,7 +190,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
     it "handles race condition atomically with Lua script" do
       # Register a task
       registry.register(task)
-      registry.task_id(task)
+      registry.full_task_id(task.id)
 
       # Set old timestamp
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
@@ -414,7 +411,7 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
       old_timestamp = registry.heartbeat_timestamp_for(task)
 
       sleep(0.01)
-      registry.update_heartbeats([registry.task_id(task)])
+      registry.update_heartbeats([task.id])
 
       new_timestamp = registry.heartbeat_timestamp_for(task)
       expect(new_timestamp).to be > old_timestamp
@@ -438,8 +435,8 @@ RSpec.describe Sidekiq::AsyncHttp::InflightRegistry do
 
       task_ids = registry.registered_task_ids
       expect(task_ids.size).to eq(2)
-      expect(task_ids).to include(registry.task_id(task))
-      expect(task_ids).to include(registry.task_id(task2))
+      expect(task_ids).to include(registry.full_task_id(task.id))
+      expect(task_ids).to include(registry.full_task_id(task2.id))
     end
 
     it "does not include tasks from other registries" do

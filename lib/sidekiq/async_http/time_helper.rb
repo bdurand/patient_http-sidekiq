@@ -15,7 +15,7 @@ module Sidekiq
       #
       # @return [Float] current monotonic time in seconds since an unspecified starting point
       def monotonic_time
-        Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
       end
 
       # Convert a monotonic timestamp to wall clock time.

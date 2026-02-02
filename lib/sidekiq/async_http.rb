@@ -88,42 +88,41 @@ module Sidekiq
     autoload :TimeHelper, File.join(__dir__, "async_http/time_helper")
 
     # Autoload all components
-    autoload :AsyncHttpClient, File.join(__dir__, "async_http/async_http_client")
     autoload :AsyncClientPool, File.join(__dir__, "async_http/async_client_pool")
+    autoload :AsyncHttpClient, File.join(__dir__, "async_http/async_http_client")
     autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
+    autoload :CallbackArgs, File.join(__dir__, "async_http/callback_args")
+    autoload :CallbackValidator, File.join(__dir__, "async_http/callback_validator")
     autoload :CallbackWorker, File.join(__dir__, "async_http/callback_worker")
+    autoload :ClientError, File.join(__dir__, "async_http/http_error")
     autoload :Configuration, File.join(__dir__, "async_http/configuration")
     autoload :Context, File.join(__dir__, "async_http/context")
     autoload :Error, File.join(__dir__, "async_http/error")
     autoload :ExternalStorage, File.join(__dir__, "async_http/external_storage")
     autoload :HttpError, File.join(__dir__, "async_http/http_error")
-    autoload :ClientError, File.join(__dir__, "async_http/http_error")
-    autoload :ServerError, File.join(__dir__, "async_http/http_error")
-    autoload :RedirectError, File.join(__dir__, "async_http/redirect_error")
-    autoload :TooManyRedirectsError, File.join(__dir__, "async_http/redirect_error")
-    autoload :RecursiveRedirectError, File.join(__dir__, "async_http/redirect_error")
-    autoload :RequestError, File.join(__dir__, "async_http/request_error")
-    autoload :RequestWorker, File.join(__dir__, "async_http/request_worker")
     autoload :HttpHeaders, File.join(__dir__, "async_http/http_headers")
-    autoload :InflightRegistry, File.join(__dir__, "async_http/inflight_registry")
-    autoload :MonitorThread, File.join(__dir__, "async_http/monitor_thread")
-    autoload :Payload, File.join(__dir__, "async_http/payload")
-
-    # PayloadStore module for external storage adapters
-    module PayloadStore
-      autoload :Base, File.join(__dir__, "async_http/payload_store/base")
-      autoload :FileStore, File.join(__dir__, "async_http/payload_store/file_store")
-    end
     autoload :LifecycleManager, File.join(__dir__, "async_http/lifecycle_manager")
+    autoload :Payload, File.join(__dir__, "async_http/payload")
+    autoload :PayloadStore, File.join(__dir__, "async_http/payload_store")
     autoload :Processor, File.join(__dir__, "async_http/processor")
+    autoload :ProcessorObserver, File.join(__dir__, "async_http/processor_observer")
+    autoload :RecursiveRedirectError, File.join(__dir__, "async_http/redirect_error")
+    autoload :RedirectError, File.join(__dir__, "async_http/redirect_error")
+    autoload :RequestError, File.join(__dir__, "async_http/request_error")
     autoload :Request, File.join(__dir__, "async_http/request")
-    autoload :RequestTemplate, File.join(__dir__, "async_http/request_template")
+    autoload :RequestExecutor, File.join(__dir__, "async_http/request_executor")
     autoload :RequestTask, File.join(__dir__, "async_http/request_task")
+    autoload :RequestTemplate, File.join(__dir__, "async_http/request_template")
+    autoload :RequestWorker, File.join(__dir__, "async_http/request_worker")
+    autoload :ServerError, File.join(__dir__, "async_http/http_error")
     autoload :Response, File.join(__dir__, "async_http/response")
     autoload :ResponseReader, File.join(__dir__, "async_http/response_reader")
     autoload :SidekiqLifecycleHooks, File.join(__dir__, "async_http/sidekiq_lifecycle_hooks")
     autoload :Stats, File.join(__dir__, "async_http/stats")
     autoload :SynchronousExecutor, File.join(__dir__, "async_http/synchronous_executor")
+    autoload :TaskMonitor, File.join(__dir__, "async_http/task_monitor")
+    autoload :TaskMonitorThread, File.join(__dir__, "async_http/task_monitor_thread")
+    autoload :TooManyRedirectsError, File.join(__dir__, "async_http/redirect_error")
 
     @processor = nil
     @configuration = nil
@@ -205,6 +204,36 @@ module Sidekiq
         @processor.nil? || @processor.stopped?
       end
 
+      # Execute an async HTTP request.
+      #
+      # @param request [Request] the HTTP request to execute
+      # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
+      #   instance methods, or its fully qualified class name.
+      # @param sidekiq_job [Hash, nil] Sidekiq job hash with "class" and "args" keys.
+      #   If not provided, uses Sidekiq::AsyncHttp::Context.current_job.
+      #   This requires the Sidekiq::AsyncHttp::Context::Middleware to be added
+      #   to the Sidekiq server middleware chain.
+      # @param synchronous [Boolean] If true, runs the request inline (for testing).
+      # @param callback_args [#to_h, nil] Arguments to pass to callback via the
+      #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
+      #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
+      #   converted to strings for serialization. Access via +response.callback_args+ or
+      #   +error.callback_args+ using symbol or string keys.
+      # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
+      #   and calls +on_error+ instead of +on_complete+. Defaults to false.
+      # @return [String] the request ID
+      def execute(request, callback:, callback_args: nil, raise_error_responses: false)
+        CallbackValidator.validate!(callback)
+        callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
+        callback_args = CallbackValidator.validate_callback_args(callback_args)
+        request_id = SecureRandom.uuid
+
+        data = ExternalStorage.store(request.as_json)
+        RequestWorker.perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+
+        request_id
+      end
+
       # Enqueue an async HTTP request.
       #
       # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
@@ -229,11 +258,7 @@ module Sidekiq
         callback_args: nil
       )
         request = Request.new(method, url, body: body, json: json, headers: headers, timeout: timeout)
-        request.async_execute(
-          callback: callback,
-          raise_error_responses: raise_error_responses,
-          callback_args: callback_args
-        )
+        execute(request, callback: callback, raise_error_responses: raise_error_responses, callback_args: callback_args)
       end
 
       # Convenience method for GET requests
@@ -288,6 +313,7 @@ module Sidekiq
         return if running?
 
         @processor = Processor.new(configuration)
+        @processor.observe(ProcessorObserver.new(@processor))
         @processor.start
       end
 

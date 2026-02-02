@@ -44,7 +44,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestTask do
         callback_args: {user_id: 123, action: "fetch"}
       )
 
-      expect(task.callback_args).to eq({user_id: 123, action: "fetch"})
+      expect(task.callback_args).to eq({"user_id" => 123, "action" => "fetch"})
     end
 
     it "defaults callback_args to an empty hash when not provided" do

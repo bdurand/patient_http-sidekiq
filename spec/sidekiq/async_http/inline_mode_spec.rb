@@ -43,7 +43,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       request = template.get("/users")
 
       # Execute request
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-123", "args" => []},
         callback: TestCallback,
         callback_args: {arg1: "arg1", arg2: "arg2"}
@@ -71,7 +72,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.post("/users", json: {name: "John"})
 
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-456", "args" => []},
         callback: TestCallback,
         callback_args: {action: "create"}
@@ -90,7 +92,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/missing")
 
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-404", "args" => []},
         callback: TestCallback
       )
@@ -113,7 +116,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/users")
 
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-error", "args" => []},
         callback: TestCallback,
         callback_args: {arg1: "arg1"}
@@ -140,7 +144,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/slow")
 
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-timeout", "args" => []},
         callback: TestCallback,
         callback_args: {action: "slow"}
@@ -163,7 +168,8 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
 
       request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/secure", headers: {"Authorization" => "Bearer token123"})
 
-      request.execute(
+      Sidekiq::AsyncHttp::RequestExecutor.execute(
+        request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "test-headers", "args" => []},
         callback: TestCallback
       )
