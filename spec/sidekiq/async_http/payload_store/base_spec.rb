@@ -2,7 +2,6 @@
 
 require "spec_helper"
 require "tmpdir"
-
 RSpec.describe Sidekiq::AsyncHttp::PayloadStore::Base do
   describe ".register and .lookup" do
     let(:test_class) { Class.new(described_class) }

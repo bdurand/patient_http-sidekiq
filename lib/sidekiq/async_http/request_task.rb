@@ -1,288 +1,291 @@
 # frozen_string_literal: true
 
-module Sidekiq::AsyncHttp
-  # A wrapper around {Request} that includes callback and job context for the Processor.
-  # This class allows HTTP requests to be enqueued and processed asynchronously,
-  # tracking their lifecycle and providing methods to handle success and error callbacks.
-  class RequestTask
-    include TimeHelper
+module Sidekiq
+  module AsyncHttp
+    # A wrapper around {Request} that includes callback and job context for the Processor.
+    # This class allows HTTP requests to be enqueued and processed asynchronously,
+    # tracking their lifecycle and providing methods to handle success and error callbacks.
+    class RequestTask
+      include TimeHelper
 
-    # @return [String] Unique UUID for tracking the task
-    attr_reader :id
+      # @return [String] Unique UUID for tracking the task
+      attr_reader :id
 
-    # @return [Request] The HTTP request details
-    attr_reader :request
+      # @return [Request] The HTTP request details
+      attr_reader :request
 
-    # @return [Hash] The Sidekiq job hash containing class, jid, args, etc.
-    attr_reader :sidekiq_job
+      # @return [Hash] The Sidekiq job hash containing class, jid, args, etc.
+      attr_reader :sidekiq_job
 
-    # @return [String] Class name for the callback service
-    attr_reader :callback
+      # @return [String] Class name for the callback service
+      attr_reader :callback
 
-    # @return [Hash] Callback arguments to include in Response/Error objects (never nil, defaults to empty hash)
-    attr_reader :callback_args
+      # @return [Hash] Callback arguments to include in Response/Error objects (never nil, defaults to empty hash)
+      attr_reader :callback_args
 
-    # @return [Boolean] Whether to raise HttpError for non-2xx responses
-    attr_reader :raise_error_responses
+      # @return [Boolean] Whether to raise HttpError for non-2xx responses
+      attr_reader :raise_error_responses
 
-    # @return [Array<String>] URLs visited during redirect chain
-    attr_reader :redirects
+      # @return [Array<String>] URLs visited during redirect chain
+      attr_reader :redirects
 
-    # @return [Response, nil] The HTTP response, set on success
-    attr_reader :response, :error
+      # @return [Response, nil] The HTTP response, set on success
+      attr_reader :response, :error
 
-    # Initializes a new RequestTask.
-    #
-    # @param request [Request] The HTTP request to wrap.
-    # @param sidekiq_job [Hash] The Sidekiq job hash.
-    # @param callback [String, Class] Class name or class for the callback service.
-    # @param callback_args [Hash] Callback arguments (with string keys) to include
-    #   in Response/Error objects. These will be accessible via response.callback_args
-    #   or error.callback_args.
-    # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses.
-    # @param redirects [Array<String>] URLs visited during redirect chain.
-    # @param id [String, nil] Unique UUID for tracking the task. If nil, a new UUID will be generated.
-    def initialize(
-      request:,
-      sidekiq_job:,
-      callback:,
-      callback_args: {},
-      raise_error_responses: false,
-      redirects: [],
-      id: nil
-    )
-      @id = id || SecureRandom.uuid
-      @request = request
-      @sidekiq_job = sidekiq_job
-      @callback = callback.is_a?(Class) ? callback.name : callback.to_s
-      @callback_args = callback_args || {}
-      @raise_error_responses = raise_error_responses
-      @redirects = redirects || []
+      # Initializes a new RequestTask.
+      #
+      # @param request [Request] The HTTP request to wrap.
+      # @param sidekiq_job [Hash] The Sidekiq job hash.
+      # @param callback [String, Class] Class name or class for the callback service.
+      # @param callback_args [Hash] Callback arguments (with string keys) to include
+      #   in Response/Error objects. These will be accessible via response.callback_args
+      #   or error.callback_args.
+      # @param raise_error_responses [Boolean] Whether to raise HttpError for non-2xx responses.
+      # @param redirects [Array<String>] URLs visited during redirect chain.
+      # @param id [String, nil] Unique UUID for tracking the task. If nil, a new UUID will be generated.
+      def initialize(
+        request:,
+        sidekiq_job:,
+        callback:,
+        callback_args: {},
+        raise_error_responses: false,
+        redirects: [],
+        id: nil
+      )
+        @id = id || SecureRandom.uuid
+        @request = request
+        @sidekiq_job = sidekiq_job
+        @callback = callback.is_a?(Class) ? callback.name : callback.to_s
+        @callback_args = CallbackValidator.validate_callback_args(callback_args) || {}
+        @raise_error_responses = raise_error_responses
+        @redirects = redirects || []
 
-      @enqueued_at = nil
-      @started_at = nil
-      @completed_at = nil
-      @response = nil
-      @error = nil
+        @enqueued_at = nil
+        @started_at = nil
+        @completed_at = nil
+        @response = nil
+        @error = nil
 
-      raise ArgumentError, "request is required" unless @request
-      raise ArgumentError, "sidekiq_job is required" unless @sidekiq_job
-      raise ArgumentError, "callback is required" if @callback.nil? || @callback.empty?
-    end
+        raise ArgumentError, "request is required" unless @request
+        raise ArgumentError, "sidekiq_job is required" unless @sidekiq_job
+        raise ArgumentError, "callback is required" if @callback.nil? || @callback.empty?
+        CallbackValidator.validate!(@callback)
+      end
 
-    # Mark task as enqueued
-    # @return [void]
-    def enqueued!
-      @enqueued_at = monotonic_time
-    end
+      # Mark task as enqueued
+      # @return [void]
+      def enqueued!
+        @enqueued_at = monotonic_time
+      end
 
-    # Mark task as started
-    # @return [void]
-    def started!
-      @started_at = monotonic_time
-    end
+      # Mark task as started
+      # @return [void]
+      def started!
+        @started_at = monotonic_time
+      end
 
-    # Returns the wall clock time when the task was enqueued.
-    #
-    # @return [Time, nil] The enqueued time or nil if not enqueued.
-    def enqueued_at
-      wall_clock_time(@enqueued_at) if @enqueued_at
-    end
+      # Returns the wall clock time when the task was enqueued.
+      #
+      # @return [Time, nil] The enqueued time or nil if not enqueued.
+      def enqueued_at
+        wall_clock_time(@enqueued_at) if @enqueued_at
+      end
 
-    # Returns the wall clock time when the task was started.
-    #
-    # @return [Time, nil] The started time or nil if not started.
-    def started_at
-      wall_clock_time(@started_at) if @started_at
-    end
+      # Returns the wall clock time when the task was started.
+      #
+      # @return [Time, nil] The started time or nil if not started.
+      def started_at
+        wall_clock_time(@started_at) if @started_at
+      end
 
-    # Returns the wall clock time when the task was completed.
-    #
-    # @return [Time, nil] The completed time or nil if not completed.
-    def completed_at
-      wall_clock_time(@completed_at) if @completed_at
-    end
+      # Returns the wall clock time when the task was completed.
+      #
+      # @return [Time, nil] The completed time or nil if not completed.
+      def completed_at
+        wall_clock_time(@completed_at) if @completed_at
+      end
 
-    # Enqueued duration in seconds.
-    # @return [Float, nil] duration or nil if not enqueued yet.
-    def enqueued_duration
-      return nil unless @enqueued_at
+      # Enqueued duration in seconds.
+      # @return [Float, nil] duration or nil if not enqueued yet.
+      def enqueued_duration
+        return nil unless @enqueued_at
 
-      (@started_at || monotonic_time) - @enqueued_at
-    end
+        (@started_at || monotonic_time) - @enqueued_at
+      end
 
-    # Execution duration in seconds.
-    # @return [Float, nil] duration or nil if not started yet.
-    def duration
-      return nil unless @started_at
+      # Execution duration in seconds.
+      # @return [Float, nil] duration or nil if not started yet.
+      def duration
+        return nil unless @started_at
 
-      ((@completed_at || monotonic_time) - @started_at).round(9)
-    end
+        ((@completed_at || monotonic_time) - @started_at).round(9)
+      end
 
-    # Get the worker class name from the Sidekiq job
-    # @return [String] worker class name
-    def job_worker_class
-      ClassHelper.resolve_class_name(@sidekiq_job["class"])
-    end
+      # Get the worker class name from the Sidekiq job
+      # @return [String] worker class name
+      def job_worker_class
+        ClassHelper.resolve_class_name(@sidekiq_job["class"])
+      end
 
-    # Get the job ID from the Sidekiq job.
-    # @return [String] job ID
-    def jid
-      @sidekiq_job["jid"]
-    end
+      # Get the job ID from the Sidekiq job.
+      # @return [String] job ID
+      def jid
+        @sidekiq_job["jid"]
+      end
 
-    # Re-enqueue the original Sidekiq job
-    # @return [String] job ID
-    def reenqueue_job
-      Sidekiq::Client.push(@sidekiq_job)
-    end
+      # Re-enqueue the original Sidekiq job
+      # @return [String] job ID
+      def reenqueue_job
+        Sidekiq::Client.push(@sidekiq_job)
+      end
 
-    # Called with the HTTP response on a completed request. Note that
-    # the response may represent an HTTP error (4xx or 5xx status).
-    #
-    # If raise_error_responses is enabled and the response has a non-2xx status,
-    # this will create an HttpError and call the error callback instead of the
-    # completion callback.
-    #
-    # @param response [Sidekiq::AsyncHttp::Response] the HTTP response
-    # @return [void]
-    def completed!(response)
-      @completed_at = monotonic_time
-      @response = response
+      # Called with the HTTP response on a completed request. Note that
+      # the response may represent an HTTP error (4xx or 5xx status).
+      #
+      # If raise_error_responses is enabled and the response has a non-2xx status,
+      # this will create an HttpError and call the error callback instead of the
+      # completion callback.
+      #
+      # @param response [Sidekiq::AsyncHttp::Response] the HTTP response
+      # @return [void]
+      def completed!(response)
+        @completed_at = monotonic_time
+        @response = response
 
-      data = ExternalStorage.store(response.as_json)
-      CallbackWorker.perform_async(data, "response", @callback)
-    end
+        data = ExternalStorage.store(response.as_json)
+        CallbackWorker.perform_async(data, "response", @callback)
+      end
 
-    # Called with the HTTP error on a failed request.
-    #
-    # @param exception [Exception] the error that occurred
-    # @return [void]
-    def error!(exception)
-      @completed_at = monotonic_time
-      @error = exception
+      # Called with the HTTP error on a failed request.
+      #
+      # @param exception [Exception] the error that occurred
+      # @return [void]
+      def error!(exception)
+        @completed_at = monotonic_time
+        @error = exception
 
-      wrapped_error = exception
-      unless wrapped_error.is_a?(Error)
-        wrapped_error = RequestError.from_exception(
-          exception,
-          request_id: @id,
-          duration: duration,
-          url: request.url,
-          http_method: request.http_method,
-          callback_args: @callback_args
+        wrapped_error = exception
+        unless wrapped_error.is_a?(Error)
+          wrapped_error = RequestError.from_exception(
+            exception,
+            request_id: @id,
+            duration: duration,
+            url: request.url,
+            http_method: request.http_method,
+            callback_args: @callback_args
+          )
+        end
+
+        data = ExternalStorage.store(wrapped_error.as_json)
+        CallbackWorker.perform_async(data, "error", @callback)
+      end
+
+      # Return true if the task successfully received a response from the server.
+      # Note that the response may represent an HTTP error (4xx or 5xx status).
+      #
+      # @return [Boolean]
+      def success?
+        !@response.nil?
+      end
+
+      # Return true if an error was raised during the request.
+      #
+      # @return [Boolean]
+      def error?
+        !@error.nil?
+      end
+
+      # Returns the maximum number of redirects to follow.
+      # Uses the request's max_redirects if set, otherwise falls back to config.
+      #
+      # @return [Integer] maximum number of redirects
+      def max_redirects
+        request.max_redirects || Sidekiq::AsyncHttp.configuration.max_redirects
+      end
+
+      # Create a new RequestTask for following a redirect.
+      #
+      # @param location [String] The redirect URL from the Location header
+      # @param status [Integer] The HTTP status code of the redirect response
+      # @return [RequestTask] A new task configured for the redirect
+      def redirect_task(location:, status:)
+        # Determine the HTTP method and body for the redirect
+        # 301, 302, 303: Convert to GET (no body) - standard browser behavior
+        # 307, 308: Preserve original method and body
+        if [301, 302, 303].include?(status)
+          redirect_method = :get
+          redirect_body = nil
+        else
+          redirect_method = request.http_method
+          redirect_body = request.body
+        end
+
+        # Resolve the redirect URL (handle relative URLs)
+        redirect_url = resolve_redirect_url(location)
+
+        # Create a new request for the redirect
+        redirect_request = Request.new(
+          redirect_method,
+          redirect_url,
+          headers: request.headers,
+          body: redirect_body,
+          timeout: request.timeout,
+          max_redirects: request.max_redirects
+        )
+
+        redirect_task_id = "#{id.split("/").first}/#{@redirects.size + 2}"
+
+        # Create the new task with updated redirects chain
+        self.class.new(
+          request: redirect_request,
+          sidekiq_job: @sidekiq_job,
+          callback: @callback,
+          callback_args: @callback_args,
+          raise_error_responses: @raise_error_responses,
+          redirects: @redirects + [request.url],
+          id: redirect_task_id
         )
       end
 
-      data = ExternalStorage.store(wrapped_error.as_json)
-      CallbackWorker.perform_async(data, "error", @callback)
-    end
+      # Build a Response object from async response data.
+      #
+      # @param status [Integer] HTTP status code
+      # @param headers [Hash] HTTP response headers
+      # @param body [String, nil] HTTP response body
+      # @return [Response] the response object
+      # @api private
+      def build_response(status:, headers:, body:)
+        original_id = id.split("/").first
 
-    # Return true if the task successfully received a response from the server.
-    # Note that the response may represent an HTTP error (4xx or 5xx status).
-    #
-    # @return [Boolean]
-    def success?
-      !@response.nil?
-    end
-
-    # Return true if an error was raised during the request.
-    #
-    # @return [Boolean]
-    def error?
-      !@error.nil?
-    end
-
-    # Returns the maximum number of redirects to follow.
-    # Uses the request's max_redirects if set, otherwise falls back to config.
-    #
-    # @return [Integer] maximum number of redirects
-    def max_redirects
-      request.max_redirects || Sidekiq::AsyncHttp.configuration.max_redirects
-    end
-
-    # Create a new RequestTask for following a redirect.
-    #
-    # @param location [String] The redirect URL from the Location header
-    # @param status [Integer] The HTTP status code of the redirect response
-    # @return [RequestTask] A new task configured for the redirect
-    def redirect_task(location:, status:)
-      # Determine the HTTP method and body for the redirect
-      # 301, 302, 303: Convert to GET (no body) - standard browser behavior
-      # 307, 308: Preserve original method and body
-      if [301, 302, 303].include?(status)
-        redirect_method = :get
-        redirect_body = nil
-      else
-        redirect_method = request.http_method
-        redirect_body = request.body
+        Response.new(
+          status: status,
+          headers: headers,
+          body: body,
+          duration: duration,
+          request_id: original_id,
+          url: request.url,
+          http_method: request.http_method,
+          callback_args: @callback_args,
+          redirects: @redirects
+        )
       end
 
-      # Resolve the redirect URL (handle relative URLs)
-      redirect_url = resolve_redirect_url(location)
+      private
 
-      # Create a new request for the redirect
-      redirect_request = Request.new(
-        redirect_method,
-        redirect_url,
-        headers: request.headers,
-        body: redirect_body,
-        timeout: request.timeout,
-        max_redirects: request.max_redirects
-      )
+      # Resolve a redirect URL, handling relative URLs.
+      #
+      # @param location [String] The Location header value
+      # @return [String] The resolved absolute URL
+      def resolve_redirect_url(location)
+        base_uri = URI.parse(request.url)
+        redirect_uri = URI.parse(location)
 
-      redirect_task_id = "#{id.split("/").first}/#{@redirects.size + 2}"
+        # If the redirect URL is absolute, use it directly
+        return location if redirect_uri.absolute?
 
-      # Create the new task with updated redirects chain
-      self.class.new(
-        request: redirect_request,
-        sidekiq_job: @sidekiq_job,
-        callback: @callback,
-        callback_args: @callback_args,
-        raise_error_responses: @raise_error_responses,
-        redirects: @redirects + [request.url],
-        id: redirect_task_id
-      )
-    end
-
-    # Build a Response object from async response data.
-    #
-    # @param status [Integer] HTTP status code
-    # @param headers [Hash] HTTP response headers
-    # @param body [String, nil] HTTP response body
-    # @return [Response] the response object
-    # @api private
-    def build_response(status:, headers:, body:)
-      original_id = id.split("/").first
-
-      Response.new(
-        status: status,
-        headers: headers,
-        body: body,
-        duration: duration,
-        request_id: original_id,
-        url: request.url,
-        http_method: request.http_method,
-        callback_args: @callback_args,
-        redirects: @redirects
-      )
-    end
-
-    private
-
-    # Resolve a redirect URL, handling relative URLs.
-    #
-    # @param location [String] The Location header value
-    # @return [String] The resolved absolute URL
-    def resolve_redirect_url(location)
-      base_uri = URI.parse(request.url)
-      redirect_uri = URI.parse(location)
-
-      # If the redirect URL is absolute, use it directly
-      return location if redirect_uri.absolute?
-
-      # Otherwise, resolve it relative to the original URL
-      base_uri.merge(redirect_uri).to_s
+        # Otherwise, resolve it relative to the original URL
+        base_uri.merge(redirect_uri).to_s
+      end
     end
   end
 end

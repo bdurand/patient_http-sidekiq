@@ -220,14 +220,14 @@ Available options:
 - `timeout:` - Request timeout in seconds
 - `raise_error_responses:` - Treat non-2xx responses as errors
 
-### Using the Client for Shared Configuration
+### Using Request Templates
 
-For repeated requests to the same API, use `Sidekiq::AsyncHttp::Client` to share configuration:
+For repeated requests to the same API, use `Sidekiq::AsyncHttp::RequestTemplate` to share configuration:
 
 ```ruby
 class ApiService
   def initialize
-    @client = Sidekiq::AsyncHttp::Client.new(
+    @template = Sidekiq::AsyncHttp::RequestTemplate.new(
       base_url: "https://api.example.com",
       headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
       timeout: 60
@@ -235,27 +235,24 @@ class ApiService
   end
 
   def fetch_user(user_id)
-    request = @client.async_get("/users/#{user_id}")
-    request.async_execute(
+    request = @template.get("/users/#{user_id}")
+    Sidekiq::AsyncHttp.execute(
+      request,
       callback: FetchUserCallback,
       callback_args: {user_id: user_id}
     )
   end
 
   def update_user(user_id, attributes)
-    request = @client.async_patch("/users/#{user_id}", json: attributes)
-    request.async_execute(
+    request = @template.patch("/users/#{user_id}", json: attributes)
+    Sidekiq::AsyncHttp.execute(
+      request,
       callback: UpdateUserCallback,
       callback_args: {user_id: user_id}
     )
   end
 end
 ```
-
-The Client handles:
-- Base URL joining for relative paths
-- Default headers merged with per-request headers
-- Query parameter encoding via `params:` option
 
 ### Callback Arguments
 

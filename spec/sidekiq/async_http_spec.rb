@@ -530,6 +530,50 @@ RSpec.describe Sidekiq::AsyncHttp do
   end
 
   describe "HTTP request helpers" do
+    describe "#execute" do
+      it "enqueues the request using RequestWorker" do
+        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+
+        request_id = described_class.execute(
+          request,
+          callback: TestCallback,
+          raise_error_responses: true,
+          callback_args: {info: "data"}
+        )
+
+        job_args = Sidekiq::AsyncHttp::RequestWorker.jobs.first["args"]
+        request_data, callback_name, raise_error_responses, callback_args, req_id = job_args
+        async_request = Sidekiq::AsyncHttp::Request.load(request_data)
+
+        expect(async_request.http_method).to eq(:get)
+        expect(async_request.url).to eq("https://example.com")
+        expect(callback_name).to eq("TestCallback")
+        expect(raise_error_responses).to eq(true)
+        expect(callback_args).to eq({"info" => "data"})
+        expect(req_id).to eq(request_id)
+      end
+
+      it "validates the callback class" do
+        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+
+        expect do
+          described_class.execute(request, callback: String)
+        end.to raise_error(ArgumentError, "callback class must define #on_complete instance method")
+      end
+
+      it "validates callback_args is a hash-like object" do
+        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+
+        expect do
+          described_class.execute(
+            request,
+            callback: TestCallback,
+            callback_args: "not a hash"
+          )
+        end.to raise_error(ArgumentError, /callback_args must respond to to_h/)
+      end
+    end
+
     describe ".request" do
       it "enqueues an async HTTP request in a worker" do
         request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/data")

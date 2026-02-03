@@ -34,8 +34,8 @@ RSpec.describe "Full Workflow Integration", :integration do
   describe "successful POST request workflow" do
     it "makes async POST request and calls success worker with response containing callback_args" do
       # Build request
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_post(
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.post(
         "/test/200",
         body: '{"event":"user.created","user_id":123}',
         headers: {
@@ -98,8 +98,8 @@ RSpec.describe "Full Workflow Integration", :integration do
   describe "successful GET request workflow" do
     it "makes async GET request and calls success worker" do
       # Build request
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get(
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get(
         "/test/200",
         headers: {"Authorization" => "Bearer token123"}
       )
@@ -143,11 +143,11 @@ RSpec.describe "Full Workflow Integration", :integration do
 
   describe "multiple concurrent requests" do
     it "handles multiple requests with different responses" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
 
       # Enqueue 3 requests with different status codes
       [200, 201, 202].each_with_index do |status, i|
-        request = client.async_get("/test/#{status}")
+        request = template.get("/test/#{status}")
         request_task = Sidekiq::AsyncHttp::RequestTask.new(
           request: request,
           sidekiq_job: {
@@ -179,8 +179,8 @@ RSpec.describe "Full Workflow Integration", :integration do
 
   describe "request with params and headers" do
     it "properly encodes params and sends headers" do
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get(
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get(
         "/test/200",
         params: {"q" => "ruby", "page" => "2", "limit" => "50"},
         headers: {
@@ -218,8 +218,8 @@ RSpec.describe "Full Workflow Integration", :integration do
   describe "processor lifecycle" do
     it "can be started and stopped cleanly" do
       # Make a request
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
-      request = client.async_get("/test/200")
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      request = template.get("/test/200")
       request_task = Sidekiq::AsyncHttp::RequestTask.new(
         request: request,
         sidekiq_job: {"class" => "TestWorker", "jid" => "jid", "args" => []},

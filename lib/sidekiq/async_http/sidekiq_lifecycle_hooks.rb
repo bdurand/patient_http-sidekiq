@@ -9,30 +9,32 @@
 # - Start the processor when Sidekiq server starts (:startup event)
 # - Drain the processor when Sidekiq receives TSTP signal (:quiet event)
 # - Stop the processor when Sidekiq shuts down (:shutdown event)
-module Sidekiq::AsyncHttp
-  class SidekiqLifecycleHooks
-    @registered = false
+module Sidekiq
+  module AsyncHttp
+    class SidekiqLifecycleHooks
+      @registered = false
 
-    class << self
-      def register
-        return if @registered
+      class << self
+        def register
+          return if @registered
 
-        Sidekiq::AsyncHttp.append_middleware
+          Sidekiq::AsyncHttp.append_middleware
 
-        Sidekiq.configure_server do |config|
-          config.on(:startup) do
-            Sidekiq::AsyncHttp.start
+          Sidekiq.configure_server do |config|
+            config.on(:startup) do
+              Sidekiq::AsyncHttp.start
+            end
+
+            config.on(:quiet) do
+              Sidekiq::AsyncHttp.quiet
+            end
+
+            config.on(:shutdown) do
+              Sidekiq::AsyncHttp.stop
+            end
+
+            @registered = true
           end
-
-          config.on(:quiet) do
-            Sidekiq::AsyncHttp.quiet
-          end
-
-          config.on(:shutdown) do
-            Sidekiq::AsyncHttp.stop
-          end
-
-          @registered = true
         end
       end
     end

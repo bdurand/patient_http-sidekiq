@@ -40,10 +40,10 @@ RSpec.describe "Capacity Limit Integration", :integration do
   describe "enforcing max_connections limit" do
     it "raises error when attempting to exceed capacity and allows enqueue after request completes" do
       # Build client
-      client = Sidekiq::AsyncHttp::Client.new(base_url: test_web_server.base_url)
+      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
 
       # Enqueue first long-running request
-      request1 = client.async_get("/delay/250")
+      request1 = template.get("/delay/250")
       request_task1 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request1,
         sidekiq_job: {
@@ -56,7 +56,7 @@ RSpec.describe "Capacity Limit Integration", :integration do
       processor.enqueue(request_task1)
 
       # Enqueue second long-running request
-      request2 = client.async_get("/delay/250")
+      request2 = template.get("/delay/250")
       request_task2 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request2,
         sidekiq_job: {
@@ -72,7 +72,7 @@ RSpec.describe "Capacity Limit Integration", :integration do
       processor.wait_for_processing
 
       # Attempt to enqueue third request - should raise error
-      request3 = client.async_get("/delay/100")
+      request3 = template.get("/delay/100")
       request_task3 = Sidekiq::AsyncHttp::RequestTask.new(
         request: request3,
         sidekiq_job: {

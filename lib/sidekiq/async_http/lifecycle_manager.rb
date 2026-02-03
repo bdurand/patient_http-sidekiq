@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "concurrent"
-
 module Sidekiq
   module AsyncHttp
     # Manages the lifecycle state of the Processor.

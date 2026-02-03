@@ -15,9 +15,6 @@ module Sidekiq
       # @return [Configuration] the configuration object for the processor
       attr_reader :config
 
-      # @return [InflightRegistry] the inflight request registry
-      attr_reader :inflight_registry
-
       # Callback to invoke after each request. Only available in testing mode.
       # @api private
       attr_accessor :testing_callback
@@ -29,21 +26,14 @@ module Sidekiq
       def initialize(config = nil)
         @config = config || Sidekiq::AsyncHttp.configuration
         @lifecycle = LifecycleManager.new
-        @stats = Stats.new(@config)
-        @inflight_registry = InflightRegistry.new(@config)
         @queue = Thread::Queue.new
         @reactor_thread = nil
-        @monitor_thread = MonitorThread.new(
-          @config,
-          @inflight_registry,
-          -> { @tasks_lock.synchronize { @inflight_requests.keys } }
-        )
         @inflight_requests = Concurrent::Hash.new
-        @inflight_task_ids = Concurrent::Hash.new  # Maps task.id -> registry task_id
         @pending_tasks = Concurrent::Hash.new
         @tasks_lock = Mutex.new
         @testing_callback = nil
         @http_client = AsyncHttpClient.new(self)
+        @observers = []
       end
 
       # Start the processor.
@@ -66,8 +56,10 @@ module Sidekiq
           @tasks_lock.synchronize { @lifecycle.stopped! } if @reactor_thread == Thread.current
         end
 
-        @monitor_thread.start
-        @tasks_lock.synchronize { @lifecycle.running! }
+        @tasks_lock.synchronize do
+          @lifecycle.running!
+          notify_observers { |observer| observer.start }
+        end
 
         # Block until the reactor is ready
         @lifecycle.wait_for_reactor
@@ -100,7 +92,6 @@ module Sidekiq
           @lifecycle.stopped!
           tasks_to_reenqueue = @inflight_requests.values + @pending_tasks.values
           @inflight_requests.clear
-          @inflight_task_ids.clear
           @pending_tasks.clear
         end
 
@@ -108,7 +99,7 @@ module Sidekiq
         tasks_to_reenqueue.each do |task|
           # Re-enqueue the original job
           task.reenqueue_job
-          @inflight_registry.unregister(task)
+          notify_observers { |observer| observer.request_end(task) }
 
           # Log re-enqueue
           @config.logger&.info(
@@ -122,14 +113,11 @@ module Sidekiq
           raise if AsyncHttp.testing?
         end
 
-        @inflight_registry.remove_process
-
         @reactor_thread.join(1) if @reactor_thread&.alive?
         @reactor_thread.kill if @reactor_thread&.alive?
         @reactor_thread = nil
 
-        # Stop the monitor thread
-        @monitor_thread.stop
+        notify_observers { |observer| observer.stop }
       end
 
       # Drain the processor (stop accepting new requests).
@@ -154,7 +142,7 @@ module Sidekiq
 
         # Check capacity - raise error if at max connections
         if inflight_count >= @config.max_connections
-          @stats.record_capacity_exceeded
+          notify_observers { |observer| observer.capacity_exceeded }
           raise MaxCapacityError.new("Cannot enqueue request: already at max capacity (#{@config.max_connections} connections)")
         end
 
@@ -228,6 +216,28 @@ module Sidekiq
       # @return [Integer]
       def inflight_count
         @inflight_requests.size
+      end
+
+      # Get the IDs of in-flight requests.
+      #
+      # @return [Array<String>]
+      def inflight_request_ids
+        @tasks_lock.synchronize do
+          @inflight_requests.keys
+        end
+      end
+
+      # Add an observer for processor events.
+      #
+      # @param observer [ProcessObserver] the observer to add
+      # @return [void]
+      def observe(observer)
+        @tasks_lock.synchronize do
+          raise ArgumentError.new("Observer already added") if @observers.include?(observer)
+
+          @observers << observer
+          observer.start if starting? || running?
+        end
       end
 
       # Wait for the processor to start.
@@ -337,17 +347,13 @@ module Sidekiq
       # @param task [RequestTask] the request task to process
       # @return [void]
       def process_request(task)
-        full_task_id = @inflight_registry.task_id(task)
-
         # Move from pending to in-flight tracking
         @tasks_lock.synchronize do
           @pending_tasks.delete(task.id)
-          @inflight_requests[full_task_id] = task
-          @inflight_task_ids[task.id] = full_task_id
+          @inflight_requests[task.id] = task
         end
 
-        # Register in Redis for crash recovery
-        @inflight_registry.register(task)
+        notify_observers { |observer| observer.request_start(task) }
 
         # Mark task as started
         task.started!
@@ -369,7 +375,7 @@ module Sidekiq
           response = task.build_response(**response_data)
           if task.raise_error_responses && !response.success?
             http_error = HttpError.new(response)
-            @stats.record_error(http_error.error_type)
+            notify_observers { |observer| observer.request_error(http_error) }
             handle_error(task, http_error)
           else
             handle_completion(task, response)
@@ -377,8 +383,7 @@ module Sidekiq
 
           response_handled = true
         rescue => e
-          error_type = RequestError.error_type(e)
-          @stats.record_error(error_type)
+          notify_observers { |observer| observer.request_error(e) }
           handle_error(task, e)
           response_handled = true
         ensure
@@ -395,11 +400,9 @@ module Sidekiq
         return if (stopping? || stopped?) && !response_handled
 
         @tasks_lock.synchronize do
-          full_task_id = @inflight_task_ids.delete(task.id)
-          @inflight_requests.delete(full_task_id)
+          @inflight_requests.delete(task.id)
         end
-        @inflight_registry.unregister(task)
-        @stats.record_request(task.response&.status, task.duration)
+        notify_observers { |observer| observer.request_end(task) }
       end
 
       # Handle successful response.
@@ -453,7 +456,7 @@ module Sidekiq
         # Check for redirect errors
         error = check_too_many_redirects(task, location) || check_recursive_redirect(task, redirect_url)
         if error
-          @stats.record_error(:redirect)
+          notify_observers { |observer| observer.request_error(error) }
           handle_error(task, error)
           return
         end
@@ -540,6 +543,17 @@ module Sidekiq
           "[Sidekiq::AsyncHttp] Failed to enqueue error worker for request #{task.id}: #{e.class} - #{e.message}"
         )
         raise if AsyncHttp.testing?
+      end
+
+      def notify_observers(&block)
+        @observers.each do |observer|
+          yield(observer)
+        rescue => e
+          @config.logger&.error(
+            "[Sidekiq::AsyncHttp] Observer #{observer.class.name} error: #{e.class} - #{e.message}"
+          )
+          raise e if AsyncHttp.testing?
+        end
       end
     end
   end
