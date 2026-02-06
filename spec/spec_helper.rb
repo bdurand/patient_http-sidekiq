@@ -43,6 +43,13 @@ Dir.glob(File.join(__dir__, "support", "**", "*.rb")).sort.each do |file|
   require file
 end
 
+# Check if S3/Minio is available for tests
+S3_AVAILABLE = begin
+  S3Helper.available?
+rescue NameError
+  false
+end
+
 # Set up Sidekiq middlewares for tests
 Sidekiq::AsyncHttp.append_middleware
 
@@ -83,6 +90,14 @@ RSpec.configure do |config|
       sleep(0.5)
       retry
     end
+
+    # Ensure S3 test bucket exists if Minio is available
+    S3Helper.ensure_bucket_exists if S3_AVAILABLE
+  end
+
+  # Clear S3 bucket before each S3 test
+  config.before(:each, :s3) do
+    S3Helper.clear_bucket if S3_AVAILABLE
   end
 
   # Flush Redis database after each test

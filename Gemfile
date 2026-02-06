@@ -13,3 +13,7 @@ gem "appraisal"
 gem "standard", "~>1.0"
 gem "simplecov", "~> 0.22"
 gem "yard"
+gem "aws-sdk-s3"
+
+gem "activerecord"
+gem "sqlite3"

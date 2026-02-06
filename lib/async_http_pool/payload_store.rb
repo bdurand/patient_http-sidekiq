@@ -4,5 +4,7 @@ module AsyncHttpPool
   module PayloadStore
     autoload :Base, File.join(__dir__, "payload_store/base")
     autoload :FileStore, File.join(__dir__, "payload_store/file_store")
+    autoload :RedisStore, File.join(__dir__, "payload_store/redis_store")
+    autoload :S3Store, File.join(__dir__, "payload_store/s3_store")
   end
 end
