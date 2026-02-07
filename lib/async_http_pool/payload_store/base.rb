@@ -47,9 +47,11 @@ module AsyncHttpPool
         # @param klass [Class] The adapter class
         # @return [void]
         def register(name, klass)
+          puts "registering payload store adapter: #{name} => #{klass}"
           registry_mutex.synchronize do
             registry[name.to_sym] = klass
           end
+          puts registry.inspect
         end
 
         # Look up a registered adapter by name.
