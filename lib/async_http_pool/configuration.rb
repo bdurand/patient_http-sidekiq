@@ -151,6 +151,9 @@ module AsyncHttpPool
 
     # Register a payload store for external storage of large payloads.
     #
+    # The name is included in the serialized references to the stored data.
+    # Changing it will cause any existing reference to become invalid.
+    #
     # Multiple stores can be registered for migration purposes. The last
     # store registered becomes the default used for new writes. References
     # to other registered stores remain valid for reading.
