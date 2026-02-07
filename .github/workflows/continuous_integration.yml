@@ -31,18 +31,20 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       minio:
-        image: minio/minio:latest
+        image: minio/minio
         ports:
           - 9000:9000
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
         options: >-
-          --health-cmd "mc ready local"
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
-          server /data
+          --entrypoint sh
+          -c
+          "minio server /data"
     strategy:
       fail-fast: false
       matrix:
