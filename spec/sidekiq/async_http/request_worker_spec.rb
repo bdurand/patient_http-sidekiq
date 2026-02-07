@@ -46,5 +46,37 @@ RSpec.describe Sidekiq::AsyncHttp::RequestWorker do
       # Verify that the callback was invoked
       expect(TestCallback.completion_calls).not_to be_empty
     end
+
+    context "with decryption configured" do
+      after { Sidekiq::AsyncHttp.reset_configuration! }
+
+      it "decrypts data before loading the request" do
+        template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "http://example.com")
+        request = template.get("/test")
+
+        # Encrypt the data by wrapping it
+        encrypted_data = request.as_json.merge("_encrypted" => true)
+
+        # Configure decryption to remove the marker
+        Sidekiq::AsyncHttp.configure do |c|
+          c.decryption { |data| data.except("_encrypted") }
+        end
+
+        stub_request(:get, "http://example.com/test")
+          .to_return(status: 200, body: "OK", headers: {"Content-Type" => "text/plain"})
+
+        Sidekiq::Testing.inline! do
+          Sidekiq::AsyncHttp::RequestWorker.new.perform(
+            encrypted_data,
+            TestCallback.name,
+            false,
+            nil,
+            SecureRandom.uuid
+          )
+        end
+
+        expect(TestCallback.completion_calls).not_to be_empty
+      end
+    end
   end
 end

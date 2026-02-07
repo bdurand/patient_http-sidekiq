@@ -301,23 +301,27 @@ Sidekiq::AsyncHttp.get(
 
 ### Sensitive Data Handling
 
-Responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if the response contains sensitive data since the data will be stored in plain text.
+Requests and responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if they contains sensitive data since the data will be stored in plain text.
 
-You can use the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem to encrypt the response data before it is stored in Redis.
+You can configure an optional `encryptor` and `decryptor` to encrypt request and response data when it is serialized:
 
 ```ruby
-Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
 Sidekiq::AsyncHttp.configure do |config|
-  config.sidekiq_options = {
-    encrypted_args: [:result]
-  }
+  config.encryptor = ->(data) { MyEncryption.encrypt(data) }
+  config.decryptor = ->(encrypted_value) { MyEncryption.decrypt(encrypted_value) }
 end
 ```
 
-See the [sidekiq-encrypted_args documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details on configuring encryption.
+The encryptor will be given a hash and should return a JSON safe value. The decryptor will be given the output from the encyptor and should return the original value.
 
-> [!NOTE]
-> The encryption feature in Sidekiq Enterprise will not work for this because it can only be applied to a single hash argument that must be the last argument to the job.
+If the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem is installed, it will be used automatically by default.
+
+```ruby
+# No additional configuration needed - encryption is automatic
+Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
+```
+
+See the [documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details on configuring encryption with that gem.
 
 ## Configuration
 

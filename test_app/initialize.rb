@@ -22,7 +22,6 @@ end
 Sidekiq::AsyncHttp.configure do |config|
   config.max_connections = AppConfig.max_connections
   config.proxy_url = ENV["HTTP_PROXY"]
-  config.sidekiq_options = {encrypted_args: [:result, :request]}
   config.register_payload_store(:files, adapter: :file, directory: File.join(__dir__, "tmp/payloads"))
   config.payload_store_threshold = 1024
 end

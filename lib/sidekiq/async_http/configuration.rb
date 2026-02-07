@@ -24,6 +24,12 @@ module Sidekiq
       # @return [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
       attr_reader :sidekiq_options
 
+      # @return [#call] The configured encryptor callable
+      attr_reader :encryptor
+
+      # @return [#call] The configured decryptor callable
+      attr_reader :decryptor
+
       # Initializes a new Configuration with the specified options.
       #
       # @param heartbeat_interval [Integer] Interval for updating inflight request heartbeats in seconds
@@ -44,6 +50,9 @@ module Sidekiq
         pool_options[:logger] ||= Sidekiq.logger
 
         super(**pool_options)
+
+        @encryptor = nil
+        @decryptor = nil
 
         self.sidekiq_options = sidekiq_options
         self.heartbeat_interval = heartbeat_interval
@@ -97,6 +106,52 @@ module Sidekiq
         apply_sidekiq_options(options)
       end
 
+      # Set the encryption callable for encrypting payloads before serialization.
+      #
+      # @param callable [#call, nil] An object that responds to #call, taking data and returning encrypted data
+      # @yield [data] A block that takes data and returns encrypted data
+      # @raise [ArgumentError] If both callable and block are provided, or if callable doesn't respond to #call
+      def encryption(callable = nil, &block)
+        @encryptor = resolve_callable(:encryption, callable, &block)
+      end
+
+      # Set the decryption callable for decrypting payloads after deserialization.
+      #
+      # @param callable [#call, nil] An object that responds to #call, taking data and returning decrypted data
+      # @yield [data] A block that takes data and returns decrypted data
+      # @raise [ArgumentError] If both callable and block are provided, or if callable doesn't respond to #call
+      def decryption(callable = nil, &block)
+        @decryptor = resolve_callable(:decryption, callable, &block)
+      end
+
+      # Encrypt data using the configured encryptor.
+      #
+      # @param data [Object] the data to encrypt
+      # @return [Object] the encrypted data
+      def encrypt(data)
+        return @encryptor.call(data) if @encryptor
+
+        if defined?(Sidekiq::EncryptedArgs)
+          Sidekiq::EncryptedArgs.encrypt(data)
+        else
+          data
+        end
+      end
+
+      # Decrypt data using the configured decryptor.
+      #
+      # @param data [Object] the data to decrypt
+      # @return [Object] the decrypted data
+      def decrypt(data)
+        return @decryptor.call(data) if @decryptor
+
+        if defined?(Sidekiq::EncryptedArgs)
+          Sidekiq::EncryptedArgs.decrypt(data)
+        else
+          data
+        end
+      end
+
       # Convert to hash for inspection
       # @return [Hash] hash representation with string keys
       def to_h
@@ -104,11 +159,25 @@ module Sidekiq
           "payload_store_threshold" => payload_store_threshold,
           "heartbeat_interval" => heartbeat_interval,
           "orphan_threshold" => orphan_threshold,
-          "sidekiq_options" => sidekiq_options
+          "sidekiq_options" => sidekiq_options,
+          "encryptor" => !@encryptor.nil?,
+          "decryptor" => !@decryptor.nil?
         )
       end
 
       private
+
+      def resolve_callable(name, callable = nil, &block)
+        if callable && block
+          raise ArgumentError, "#{name} accepts either a callable argument or a block, not both"
+        end
+
+        if callable && !callable.respond_to?(:call)
+          raise ArgumentError, "#{name} callable must respond to #call"
+        end
+
+        callable || block
+      end
 
       def apply_sidekiq_options(options)
         Sidekiq::AsyncHttp::RequestWorker.sidekiq_options(options)

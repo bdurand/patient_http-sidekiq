@@ -34,6 +34,7 @@ module Sidekiq
         # Fetch from external storage if needed
         ref_data = AsyncHttpPool::ExternalStorage.storage_ref?(data) ? data : nil
         actual_data = ref_data ? Sidekiq::AsyncHttp.external_storage.fetch(data) : data
+        actual_data = Sidekiq::AsyncHttp.configuration.decrypt(actual_data)
 
         request = Request.load(actual_data)
         sidekiq_job = Sidekiq::AsyncHttp::Context.current_job

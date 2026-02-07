@@ -551,6 +551,29 @@ RSpec.describe Sidekiq::AsyncHttp do
         expect(req_id).to eq(request_id)
       end
 
+      context "with encryption configured" do
+        after { described_class.reset_configuration! }
+
+        it "encrypts request data before enqueuing" do
+          described_class.configure do |c|
+            c.encryption { |data| data.merge("_encrypted" => true) }
+          end
+
+          request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+
+          described_class.execute(
+            request,
+            callback: TestCallback
+          )
+
+          job_args = Sidekiq::AsyncHttp::RequestWorker.jobs.first["args"]
+          request_data = job_args[0]
+
+          expect(request_data["_encrypted"]).to eq(true)
+          expect(request_data["url"]).to eq("https://example.com")
+        end
+      end
+
       it "validates the callback class" do
         request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
 

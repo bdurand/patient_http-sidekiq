@@ -53,6 +53,7 @@ module Sidekiq
         # Fetch from external storage if needed
         ref_data = AsyncHttp.external_storage.storage_ref?(data) ? data : nil
         actual_data = ref_data ? AsyncHttp.external_storage.fetch(data) : data
+        actual_data = Sidekiq::AsyncHttp.configuration.decrypt(actual_data)
 
         begin
           if result_type == "response"

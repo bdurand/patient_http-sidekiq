@@ -68,11 +68,12 @@ module Sidekiq
       private
 
       def store_if_needed(data)
+        encrypted = Sidekiq::AsyncHttp.configuration.encrypt(data)
         external_storage = Sidekiq::AsyncHttp.external_storage
         if external_storage.enabled?
-          external_storage.store(data, max_size: Sidekiq::AsyncHttp.configuration.payload_store_threshold)
+          external_storage.store(encrypted, max_size: Sidekiq::AsyncHttp.configuration.payload_store_threshold)
         else
-          data
+          encrypted
         end
       end
     end
