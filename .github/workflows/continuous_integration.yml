@@ -59,7 +59,7 @@ jobs:
       run: |
         docker run -d \
           --name minio \
-          -p 9000:9000 \
+          -p 24456:9000 \
           -e MINIO_ROOT_USER=minioadmin \
           -e MINIO_ROOT_PASSWORD=minioadmin \
           minio/minio server /data --console-address ":9001"
@@ -67,7 +67,7 @@ jobs:
         max_attempts=20
         attempt=0
         while [ $attempt -lt $max_attempts ]; do
-          if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+          if curl -sf http://localhost:24456/minio/health/live > /dev/null 2>&1; then
             echo "MinIO is ready after $attempt attempts"
             exit 0
           fi
