@@ -7,7 +7,7 @@ class RequestAction
       k.sub(/^HTTP_/, "").split("_").map(&:downcase).join("-")
     end
 
-    request = Sidekiq::AsyncHttp::Request.new(
+    request = AsyncHttpPool::Request.new(
       rack_request.request_method.downcase.to_sym,
       rack_request.url,
       headers: headers,

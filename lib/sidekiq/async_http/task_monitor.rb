@@ -135,7 +135,7 @@ module Sidekiq
         # @return [void]
         # @api private
         def clear_all!
-          unless Sidekiq::AsyncHttp.testing?
+          unless AsyncHttpPool.testing?
             raise "clear_all! is only allowed in test environment"
           end
 

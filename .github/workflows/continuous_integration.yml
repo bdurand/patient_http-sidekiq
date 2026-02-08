@@ -24,7 +24,7 @@ jobs:
       valkey:
         image: valkey/valkey:latest
         ports:
-          - 24455:6379
+          - 24470:6379
         options: >-
           --health-cmd "valkey-cli ping"
           --health-interval 1s
@@ -37,8 +37,6 @@ jobs:
           - ruby: "ruby"
             yard: true
             standardrb: true
-          - ruby: "ruby"
-            appraisal: "without_payload_store_gems"
           - ruby: "4.0"
             appraisal: "sidekiq_8"
           - ruby: "3.4"
@@ -47,41 +45,8 @@ jobs:
             appraisal: "sidekiq_7"
           - ruby: "3.2"
             appraisal: "sidekiq_7.0"
-          - ruby: "3.4"
-            appraisal: "activerecord_8.0"
-          - ruby: "3.3"
-            appraisal: "activerecord_7.2"
-          - ruby: "4.0"
-            appraisal: "redis_5"
     steps:
     - uses: actions/checkout@v2
-    - name: Start MinIO
-      run: |
-        docker run -d \
-          --name minio \
-          -p 24456:9000 \
-          -e MINIO_ROOT_USER=minioadmin \
-          -e MINIO_ROOT_PASSWORD=minioadmin \
-          minio/minio server /data --console-address ":9001"
-        echo "Waiting for MinIO to be ready..."
-        max_attempts=20
-        attempt=0
-        while [ $attempt -lt $max_attempts ]; do
-          if curl -sf http://localhost:24456/minio/health/live > /dev/null 2>&1; then
-            echo "MinIO is ready after $attempt attempts"
-            exit 0
-          fi
-          attempt=$((attempt + 1))
-          echo "Attempt $attempt/$max_attempts - MinIO not ready yet"
-          sleep 1
-        done
-        echo "MinIO failed to start within $max_attempts seconds"
-        docker logs minio
-        exit 1
-        if [ $elapsed -ge $timeout ]; then
-          echo "MinIO failed to start within ${timeout} seconds"
-          exit 1
-        fi
     - name: Set up Ruby ${{ matrix.ruby }}
       uses: ruby/setup-ruby@v1
       with:

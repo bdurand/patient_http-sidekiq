@@ -39,7 +39,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       stub_request(:get, "https://api.example.com/users")
         .to_return(status: 200, body: '{"users": []}', headers: {"Content-Type" => "application/json"})
 
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/users")
 
       # Execute request
@@ -54,7 +54,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       expect(TestCallback.completion_calls.size).to eq(1)
 
       response = TestCallback.completion_calls.first
-      expect(response).to be_a(Sidekiq::AsyncHttp::Response)
+      expect(response).to be_a(AsyncHttpPool::Response)
       expect(response.status).to eq(200)
       expect(response.body).to eq('{"users": []}')
       expect(response.callback_args[:arg1]).to eq("arg1")
@@ -69,7 +69,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
         .with(body: '{"name":"John"}')
         .to_return(status: 201, body: '{"id": 123}', headers: {"Content-Type" => "application/json"})
 
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.post("/users", json: {name: "John"})
 
       Sidekiq::AsyncHttp::RequestExecutor.execute(
@@ -89,7 +89,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
     it "handles 4xx and 5xx responses as successful (they are valid HTTP responses)" do
       stub_request(:get, "https://api.example.com/missing").to_return(status: 404, body: "Not Found")
 
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/missing")
 
       Sidekiq::AsyncHttp::RequestExecutor.execute(
@@ -113,7 +113,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       # Stub connection error
       stub_request(:get, "https://api.example.com/users").to_raise(Errno::ECONNREFUSED)
 
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/users")
 
       Sidekiq::AsyncHttp::RequestExecutor.execute(
@@ -128,7 +128,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       expect(TestCallback.completion_calls.size).to eq(0)
 
       error = TestCallback.error_calls.first
-      expect(error).to be_a(Sidekiq::AsyncHttp::Error)
+      expect(error).to be_a(AsyncHttpPool::Error)
       expect(error.error_class).to eq(Errno::ECONNREFUSED)
       expect(error.callback_args[:arg1]).to eq("arg1")
 
@@ -141,7 +141,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       stub_request(:get, "https://api.example.com/slow")
         .to_timeout
 
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "https://api.example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "https://api.example.com")
       request = template.get("/slow")
 
       Sidekiq::AsyncHttp::RequestExecutor.execute(
@@ -155,7 +155,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
       expect(TestCallback.completion_calls.size).to eq(0)
 
       error = TestCallback.error_calls.first
-      expect(error).to be_a(Sidekiq::AsyncHttp::Error)
+      expect(error).to be_a(AsyncHttpPool::Error)
       expect(error.callback_args[:action]).to eq("slow")
     end
   end
@@ -166,7 +166,7 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
         .with(headers: {"Authorization" => "Bearer token123"})
         .to_return(status: 200, body: "OK")
 
-      request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/secure", headers: {"Authorization" => "Bearer token123"})
+      request = AsyncHttpPool::Request.new(:get, "https://api.example.com/secure", headers: {"Authorization" => "Bearer token123"})
 
       Sidekiq::AsyncHttp::RequestExecutor.execute(
         request,

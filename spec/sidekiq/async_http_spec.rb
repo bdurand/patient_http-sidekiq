@@ -122,7 +122,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       described_class.start
       processor = described_class.processor
 
-      expect(processor).to be_a(Sidekiq::AsyncHttp::Processor)
+      expect(processor).to be_a(AsyncHttpPool::Processor)
       expect(processor).to be_running
     end
   end
@@ -137,7 +137,7 @@ RSpec.describe Sidekiq::AsyncHttp do
     end
 
     it "returns false when processor is stopped" do
-      described_class.instance_variable_set(:@processor, Sidekiq::AsyncHttp::Processor.new(described_class.configuration))
+      described_class.instance_variable_set(:@processor, AsyncHttpPool::Processor.new(described_class.configuration))
 
       expect(described_class.running?).to be(false)
     end
@@ -159,7 +159,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       described_class.start
       described_class.processor.wait_for_running
 
-      expect(described_class.processor).to be_a(Sidekiq::AsyncHttp::Processor)
+      expect(described_class.processor).to be_a(AsyncHttpPool::Processor)
       expect(described_class.processor).to be_running
     end
 
@@ -292,7 +292,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       described_class.start
       second_processor = described_class.processor
 
-      expect(second_processor).to be_a(Sidekiq::AsyncHttp::Processor)
+      expect(second_processor).to be_a(AsyncHttpPool::Processor)
       expect(second_processor).not_to be(first_processor)
       expect(second_processor).to be_running
     end
@@ -403,10 +403,10 @@ RSpec.describe Sidekiq::AsyncHttp do
           responses << response
         end
 
-        described_class.invoke_completion_callbacks(Sidekiq::AsyncHttp::Response.load(response_data))
+        described_class.invoke_completion_callbacks(AsyncHttpPool::Response.load(response_data))
 
         expect(responses.size).to eq(2)
-        expect(responses.first).to be_a(Sidekiq::AsyncHttp::Response)
+        expect(responses.first).to be_a(AsyncHttpPool::Response)
         expect(responses.first.status).to eq(200)
         expect(responses.first.url).to eq("https://api.example.com/users")
         expect(responses.first.http_method).to eq(:get)
@@ -420,9 +420,9 @@ RSpec.describe Sidekiq::AsyncHttp do
           response_received = response
         end
 
-        described_class.invoke_completion_callbacks(Sidekiq::AsyncHttp::Response.load(response_data))
+        described_class.invoke_completion_callbacks(AsyncHttpPool::Response.load(response_data))
 
-        expect(response_received).to be_a(Sidekiq::AsyncHttp::Response)
+        expect(response_received).to be_a(AsyncHttpPool::Response)
         expect(response_received.status).to eq(200)
         expect(response_received.headers["Content-Type"]).to eq("application/json")
         expect(response_received.body).to eq('{"message":"success"}')
@@ -472,10 +472,10 @@ RSpec.describe Sidekiq::AsyncHttp do
           errors << error
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
+        described_class.invoke_error_callbacks(AsyncHttpPool::RequestError.load(error_data))
 
         expect(errors.size).to eq(2)
-        expect(errors.first).to be_a(Sidekiq::AsyncHttp::RequestError)
+        expect(errors.first).to be_a(AsyncHttpPool::RequestError)
         expect(errors.first.error_class).to eq(Timeout::Error)
         expect(errors.first.message).to eq("Request timed out")
         expect(errors.first.error_type).to eq(:timeout)
@@ -489,9 +489,9 @@ RSpec.describe Sidekiq::AsyncHttp do
           error_received = error
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
+        described_class.invoke_error_callbacks(AsyncHttpPool::RequestError.load(error_data))
 
-        expect(error_received).to be_a(Sidekiq::AsyncHttp::RequestError)
+        expect(error_received).to be_a(AsyncHttpPool::RequestError)
         expect(error_received.error_class).to eq(Timeout::Error)
         expect(error_received.message).to eq("Request timed out")
         expect(error_received.backtrace).to eq(["line 1", "line 2", "line 3"])
@@ -514,14 +514,14 @@ RSpec.describe Sidekiq::AsyncHttp do
           call_order << :third
         end
 
-        described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
+        described_class.invoke_error_callbacks(AsyncHttpPool::RequestError.load(error_data))
 
         expect(call_order).to eq([:first, :second, :third])
       end
 
       it "does nothing when no callbacks are registered" do
         expect do
-          described_class.invoke_error_callbacks(Sidekiq::AsyncHttp::RequestError.load(error_data))
+          described_class.invoke_error_callbacks(AsyncHttpPool::RequestError.load(error_data))
         end.not_to raise_error
       end
     end
@@ -530,7 +530,7 @@ RSpec.describe Sidekiq::AsyncHttp do
   describe "HTTP request helpers" do
     describe "#execute" do
       it "enqueues the request using RequestWorker" do
-        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+        request = AsyncHttpPool::Request.new(:get, "https://example.com")
 
         request_id = described_class.execute(
           request,
@@ -541,7 +541,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
         job_args = Sidekiq::AsyncHttp::RequestWorker.jobs.first["args"]
         request_data, callback_name, raise_error_responses, callback_args, req_id = job_args
-        async_request = Sidekiq::AsyncHttp::Request.load(request_data)
+        async_request = AsyncHttpPool::Request.load(request_data)
 
         expect(async_request.http_method).to eq(:get)
         expect(async_request.url).to eq("https://example.com")
@@ -559,7 +559,7 @@ RSpec.describe Sidekiq::AsyncHttp do
             c.encryption { |data| data.merge("_encrypted" => true) }
           end
 
-          request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+          request = AsyncHttpPool::Request.new(:get, "https://example.com")
 
           described_class.execute(
             request,
@@ -575,7 +575,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       end
 
       it "validates the callback class" do
-        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+        request = AsyncHttpPool::Request.new(:get, "https://example.com")
 
         expect do
           described_class.execute(request, callback: String)
@@ -583,7 +583,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       end
 
       it "validates callback_args is a hash-like object" do
-        request = Sidekiq::AsyncHttp::Request.new(:get, "https://example.com")
+        request = AsyncHttpPool::Request.new(:get, "https://example.com")
 
         expect do
           described_class.execute(
@@ -597,7 +597,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".request" do
       it "enqueues an async HTTP request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:get, "https://api.example.com/data")
         request_id = described_class.request(:get, "https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
@@ -609,7 +609,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       end
 
       it "passes through all options to the worker" do
-        request = Sidekiq::AsyncHttp::Request.new(
+        request = AsyncHttpPool::Request.new(
           :post,
           "https://api.example.com/submit",
           headers: {"Content-Type" => "application/json"},
@@ -636,7 +636,7 @@ RSpec.describe Sidekiq::AsyncHttp do
       end
 
       it "can pass the request body as json" do
-        request = Sidekiq::AsyncHttp::Request.new(
+        request = AsyncHttpPool::Request.new(
           :post,
           "https://api.example.com/submit",
           headers: {"Content-Type" => "application/json; encoding=utf-8"},
@@ -658,7 +658,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".get" do
       it "enqueues an async GET request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:get, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:get, "https://api.example.com/data")
         request_id = described_class.get("https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
@@ -672,7 +672,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".post" do
       it "enqueues an async POST request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:post, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:post, "https://api.example.com/data")
         request_id = described_class.post("https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
@@ -686,7 +686,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".put" do
       it "enqueues an async PUT request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:put, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:put, "https://api.example.com/data")
         request_id = described_class.put("https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
@@ -700,7 +700,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".patch" do
       it "enqueues an async PATCH request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:patch, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:patch, "https://api.example.com/data")
         request_id = described_class.patch("https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]
@@ -714,7 +714,7 @@ RSpec.describe Sidekiq::AsyncHttp do
 
     describe ".delete" do
       it "enqueues an async DELETE request in a worker" do
-        request = Sidekiq::AsyncHttp::Request.new(:delete, "https://api.example.com/data")
+        request = AsyncHttpPool::Request.new(:delete, "https://api.example.com/data")
         request_id = described_class.delete("https://api.example.com/data", callback: TestCallback)
         job = Sidekiq::AsyncHttp::RequestWorker.jobs.last
         request_data, callback_name, raise_error_responses, callback_args, req_id = job["args"]

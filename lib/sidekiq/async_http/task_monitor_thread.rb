@@ -5,7 +5,7 @@ module Sidekiq
     # Background thread that maintains heartbeats and performs garbage collection
     # for in-flight HTTP requests.
     class TaskMonitorThread
-      include TimeHelper
+      include AsyncHttpPool::TimeHelper
 
       # Minimum seconds to sleep between monitor thread checks
       MAX_MONITOR_SLEEP = 5.0

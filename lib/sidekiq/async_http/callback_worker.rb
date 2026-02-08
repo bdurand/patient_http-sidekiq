@@ -47,7 +47,7 @@ module Sidekiq
       # @param result_type [String] "response" or "error" indicating the type of result
       # @param callback_service_name [String] Fully qualified callback service class name
       def perform(data, result_type, callback_service_name)
-        callback_service_class = ClassHelper.resolve_class_name(callback_service_name)
+        callback_service_class = AsyncHttpPool::ClassHelper.resolve_class_name(callback_service_name)
         callback_service = callback_service_class.new
 
         # Fetch from external storage if needed
@@ -57,11 +57,11 @@ module Sidekiq
 
         begin
           if result_type == "response"
-            response = Response.load(actual_data)
+            response = AsyncHttpPool::Response.load(actual_data)
             Sidekiq::AsyncHttp.invoke_completion_callbacks(response)
             callback_service.on_complete(response)
           elsif result_type == "error"
-            error = Error.load(actual_data)
+            error = AsyncHttpPool::Error.load(actual_data)
             Sidekiq::AsyncHttp.invoke_error_callbacks(error)
             callback_service.on_error(error)
           else

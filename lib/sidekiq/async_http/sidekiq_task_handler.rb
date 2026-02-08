@@ -62,7 +62,7 @@ module Sidekiq
       #
       # @return [Class] worker class
       def worker_class
-        ClassHelper.resolve_class_name(@sidekiq_job["class"])
+        AsyncHttpPool::ClassHelper.resolve_class_name(@sidekiq_job["class"])
       end
 
       private

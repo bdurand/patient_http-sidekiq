@@ -9,25 +9,13 @@ module TaskMonitorHelpers
   # Used to simulate old requests that should be considered orphaned.
   #
   # @param registry [Sidekiq::AsyncHttp::TaskMonitor] the registry instance
-  # @param task [Sidekiq::AsyncHttp::RequestTask] the task to update
+  # @param task [AsyncHttpPool::RequestTask] the task to update
   # @param timestamp_ms [Integer] the timestamp in milliseconds
   def set_task_timestamp(registry, task, timestamp_ms)
     full_task_id = registry.full_task_id(task.id)
     Sidekiq.redis do |redis|
       redis.zadd(Sidekiq::AsyncHttp::TaskMonitor::INFLIGHT_INDEX_KEY,
         timestamp_ms, full_task_id)
-    end
-  end
-
-  # Set a raw task ID's timestamp in the inflight registry.
-  # Used for simulating orphaned requests from crashed processes.
-  #
-  # @param task_id [String] the full task ID
-  # @param timestamp_ms [Integer] the timestamp in milliseconds
-  def set_raw_task_timestamp(task_id, timestamp_ms)
-    Sidekiq.redis do |redis|
-      redis.zadd(Sidekiq::AsyncHttp::TaskMonitor::INFLIGHT_INDEX_KEY,
-        timestamp_ms, task_id)
     end
   end
 
@@ -47,18 +35,6 @@ module TaskMonitorHelpers
         full_task_id, job_payload.to_json)
     end
     full_task_id
-  end
-
-  # Get the raw timestamp for a task from Redis.
-  #
-  # @param registry [Sidekiq::AsyncHttp::TaskMonitor] the registry instance
-  # @param task [Sidekiq::AsyncHttp::RequestTask] the task
-  # @return [Float, nil] the timestamp as a float, or nil if not found
-  def get_raw_task_timestamp(registry, task)
-    full_task_id = registry.task_id(task)
-    Sidekiq.redis do |redis|
-      redis.zscore(Sidekiq::AsyncHttp::TaskMonitor::INFLIGHT_INDEX_KEY, full_task_id)
-    end
   end
 end
 

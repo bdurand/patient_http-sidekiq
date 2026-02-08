@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "sidekiq"
-require_relative "../async_http_pool"
+require "async_http_pool"
 
 # Main module for the Sidekiq Async HTTP gem.
 #
@@ -66,36 +66,7 @@ require_relative "../async_http_pool"
 #    processor, workers within that process share it.
 module Sidekiq
   module AsyncHttp
-    # Re-export pool exceptions
-    NotRunningError = AsyncHttpPool::NotRunningError
-    MaxCapacityError = AsyncHttpPool::MaxCapacityError
-    ResponseTooLargeError = AsyncHttpPool::ResponseTooLargeError
-
     VERSION = AsyncHttpPool::VERSION
-
-    # Re-export pool classes for convenience
-    ClassHelper = AsyncHttpPool::ClassHelper
-    TimeHelper = AsyncHttpPool::TimeHelper
-    CallbackArgs = AsyncHttpPool::CallbackArgs
-    CallbackValidator = AsyncHttpPool::CallbackValidator
-    HttpHeaders = AsyncHttpPool::HttpHeaders
-    Payload = AsyncHttpPool::Payload
-    PayloadStore = AsyncHttpPool::PayloadStore
-    Request = AsyncHttpPool::Request
-    RequestTemplate = AsyncHttpPool::RequestTemplate
-    Response = AsyncHttpPool::Response
-    Error = AsyncHttpPool::Error
-    HttpError = AsyncHttpPool::HttpError
-    ClientError = AsyncHttpPool::ClientError
-    ServerError = AsyncHttpPool::ServerError
-    RequestError = AsyncHttpPool::RequestError
-    RedirectError = AsyncHttpPool::RedirectError
-    TooManyRedirectsError = AsyncHttpPool::TooManyRedirectsError
-    RecursiveRedirectError = AsyncHttpPool::RecursiveRedirectError
-    TaskHandler = AsyncHttpPool::TaskHandler
-    RequestTask = AsyncHttpPool::RequestTask
-    Processor = AsyncHttpPool::Processor
-    LifecycleManager = AsyncHttpPool::LifecycleManager
 
     # Sidekiq-specific autoloads
     autoload :CallbackWorker, File.join(__dir__, "async_http/callback_worker")
@@ -145,7 +116,7 @@ module Sidekiq
       # Add a callback to be executed after a successful request completion.
       #
       # @yield [response] block to execute after an HTTP request completes
-      # @yieldparam response [Response] the HTTP response
+      # @yieldparam response [AsyncHttpPool::Response] the HTTP response
       def after_completion(&block)
         @after_completion_callbacks << block
       end
@@ -153,7 +124,7 @@ module Sidekiq
       # Add a callback to be executed after a request error.
       #
       # @yield [error] block to execute after an HTTP request errors
-      # @yieldparam error [Error] information about the error that was raised
+      # @yieldparam error [AsyncHttpPool::Error] information about the error that was raised
       def after_error(&block)
         @after_error_callbacks << block
       end
@@ -201,11 +172,11 @@ module Sidekiq
 
       # Execute an async HTTP request.
       #
-      # @param request [Request] the HTTP request to execute
+      # @param request [AsyncHttpPool::Request] the HTTP request to execute
       # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
       #   instance methods, or its fully qualified class name.
       # @param callback_args [#to_h, nil] Arguments to pass to callback via the
-      #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
+      #   AsyncHttpPool::Response/AsyncHttpPool::Error object. Must respond to +to_h+ and contain only JSON-native types
       #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
       #   converted to strings for serialization. Access via +response.callback_args+ or
       #   +error.callback_args+ using symbol or string keys.
@@ -213,9 +184,9 @@ module Sidekiq
       #   and calls +on_error+ instead of +on_complete+. Defaults to false.
       # @return [String] the request ID
       def execute(request, callback:, callback_args: nil, raise_error_responses: false)
-        CallbackValidator.validate!(callback)
+        AsyncHttpPool::CallbackValidator.validate!(callback)
         callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
-        callback_args = CallbackValidator.validate_callback_args(callback_args)
+        callback_args = AsyncHttpPool::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
         encrypted = configuration.encrypt(request.as_json)
@@ -236,7 +207,7 @@ module Sidekiq
       # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
       # @param url [String, URI] full URL to request
       # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param headers [Hash, HttpHeaders] request headers
+      # @param headers [Hash, AsyncHttpPool::HttpHeaders] request headers
       # @param body [String, nil] request body
       # @param json [Object, nil] JSON object to serialize as body
       # @param timeout [Float] request timeout in seconds
@@ -254,7 +225,7 @@ module Sidekiq
         raise_error_responses: nil,
         callback_args: nil
       )
-        request = Request.new(method, url, body: body, json: json, headers: headers, timeout: timeout)
+        request = AsyncHttpPool::Request.new(method, url, body: body, json: json, headers: headers, timeout: timeout)
         execute(request, callback: callback, raise_error_responses: raise_error_responses, callback_args: callback_args)
       end
 
@@ -309,7 +280,7 @@ module Sidekiq
       def start
         return if running?
 
-        @processor = Processor.new(configuration)
+        @processor = AsyncHttpPool::Processor.new(configuration)
         @processor.observe(ProcessorObserver.new(@processor))
         @processor.start
       end
@@ -348,7 +319,7 @@ module Sidekiq
 
       # Invoke the registered completion callbacks
       #
-      # @param response [Response] the HTTP response
+      # @param response [AsyncHttpPool::Response] the HTTP response
       # @return [void]
       # @api private
       def invoke_completion_callbacks(response)
@@ -359,7 +330,7 @@ module Sidekiq
 
       # Invoke the registered error callbacks
       #
-      # @param error [Error] information about the error that was raised
+      # @param error [AsyncHttpPool::Error] information about the error that was raised
       # @return [void]
       # @api private
       def invoke_error_callbacks(error)
@@ -368,23 +339,9 @@ module Sidekiq
         end
       end
 
-      # Check if running in testing mode.
-      #
-      # @api private
-      def testing?
-        AsyncHttpPool.testing?
-      end
-
-      # Set testing mode. This should only be set in testing environments.
-      #
-      # @api private
-      def testing=(value)
-        AsyncHttpPool.testing = value
-      end
-
       # Returns the processor instance (internal accessor)
       #
-      # @return [Processor, nil]
+      # @return [AsyncHttpPool::Processor, nil]
       # @api private
       attr_accessor :processor
     end

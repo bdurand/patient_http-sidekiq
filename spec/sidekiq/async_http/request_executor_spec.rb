@@ -4,9 +4,9 @@ require "spec_helper"
 
 RSpec.describe Sidekiq::AsyncHttp::RequestExecutor do
   describe "#execute" do
-    let(:request) { Sidekiq::AsyncHttp::Request.new(:get, "https://example.com") }
+    let(:request) { AsyncHttpPool::Request.new(:get, "https://example.com") }
     let(:job_hash) { {"class" => "TestWorker", "args" => [1, 2, 3]} }
-    let(:processor) { instance_double(Sidekiq::AsyncHttp::Processor) }
+    let(:processor) { instance_double(AsyncHttpPool::Processor) }
 
     before do
       allow(Sidekiq::AsyncHttp).to receive(:processor).and_return(processor)
@@ -31,7 +31,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestExecutor do
 
       it "enqueues a RequestTask to the processor" do
         expect(processor).to receive(:enqueue) do |task|
-          expect(task).to be_a(Sidekiq::AsyncHttp::RequestTask)
+          expect(task).to be_a(AsyncHttpPool::RequestTask)
           expect(task.request).to eq(request)
           expect(task.task_handler.sidekiq_job).to eq(job_hash)
           expect(task.callback).to eq("TestCallback")
@@ -131,7 +131,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestExecutor do
             sidekiq_job: job_hash,
             callback: TestCallback
           )
-        end.to raise_error(Sidekiq::AsyncHttp::NotRunningError, /processor is not running/)
+        end.to raise_error(AsyncHttpPool::NotRunningError, /processor is not running/)
       end
 
       it "does not enqueue to processor" do
@@ -143,7 +143,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestExecutor do
             sidekiq_job: job_hash,
             callback: TestCallback
           )
-        rescue Sidekiq::AsyncHttp::NotRunningError
+        rescue AsyncHttpPool::NotRunningError
           # Expected
         end
       end
