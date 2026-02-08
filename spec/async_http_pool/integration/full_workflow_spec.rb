@@ -6,17 +6,15 @@ RSpec.describe "Full Workflow Integration", :integration do
   include Async::RSpec::Reactor
 
   let(:config) do
-    Sidekiq::AsyncHttp::Configuration.new.tap do |c|
-      c.max_connections = 10
-      c.request_timeout = 5
-    end
+    AsyncHttpPool::Configuration.new(
+      max_connections: 10,
+      request_timeout: 5
+    )
   end
 
-  let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+  let(:processor) { AsyncHttpPool::Processor.new(config) }
 
   around do |example|
-    TestCallback.reset_calls!
-
     # Disable WebMock completely for integration tests
     WebMock.reset!
     WebMock.allow_net_connect!
@@ -32,9 +30,9 @@ RSpec.describe "Full Workflow Integration", :integration do
   end
 
   describe "successful POST request workflow" do
-    it "makes async POST request and calls success worker with response containing callback_args" do
+    it "makes async POST request and calls completion handler with response containing callback_args" do
       # Build request
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
       request = template.post(
         "/test/200",
         body: '{"event":"user.created","user_id":123}',
@@ -45,16 +43,15 @@ RSpec.describe "Full Workflow Integration", :integration do
       )
 
       # Create request task with test callback
-      sidekiq_job = {
-        "class" => "TestWorker",
+      handler = TestTaskHandler.new({
+        "class" => "Worker",
         "jid" => "test-jid-123",
         "args" => []
-      }
-      task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(sidekiq_job)
+      })
 
-      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+      request_task = AsyncHttpPool::RequestTask.new(
         request: request,
-        task_handler: task_handler,
+        task_handler: handler,
         callback: TestCallback,
         callback_args: {webhook_id: "webhook_id", index: 1}
       )
@@ -65,17 +62,13 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Wait for request to complete
       processor.wait_for_idle(timeout: 2)
 
-      # Process enqueued Sidekiq jobs
-      Sidekiq::Worker.drain_all
-
-      # Verify TestCallback on_complete was called
-      expect(TestCallback.completion_calls.size).to eq(1)
+      # Verify on_complete was called
+      expect(handler.completions.size).to eq(1)
 
       # Verify response details
-      response = TestCallback.completion_calls.first
+      response = handler.completions.first[:response]
 
-      # Verify response hash contains correct status, body
-      expect(response).to be_a(Sidekiq::AsyncHttp::Response)
+      expect(response).to be_a(AsyncHttpPool::Response)
       expect(response.status).to eq(200)
 
       # Parse the response body JSON
@@ -88,34 +81,32 @@ RSpec.describe "Full Workflow Integration", :integration do
       expect(response.success?).to be true
 
       # Verify callback_args passed through correctly
-      expect(response.callback_args[:webhook_id]).to eq("webhook_id")
-      expect(response.callback_args[:index]).to eq(1)
+      expect(response.callback_args.as_json).to eq({"webhook_id" => "webhook_id", "index" => 1})
 
       # Verify no error callback was called
-      expect(TestCallback.error_calls).to be_empty
+      expect(handler.errors).to be_empty
     end
   end
 
   describe "successful GET request workflow" do
-    it "makes async GET request and calls success worker" do
+    it "makes async GET request and calls completion handler" do
       # Build request
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
       request = template.get(
         "/test/200",
         headers: {"Authorization" => "Bearer token123"}
       )
 
       # Create request task
-      sidekiq_job = {
-        "class" => "TestWorker",
+      handler = TestTaskHandler.new({
+        "class" => "Worker",
         "jid" => "test-jid-456",
         "args" => []
-      }
-      task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(sidekiq_job)
+      })
 
-      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+      request_task = AsyncHttpPool::RequestTask.new(
         request: request,
-        task_handler: task_handler,
+        task_handler: handler,
         callback: TestCallback,
         callback_args: {resource: "user", id: 123, action: "fetch"}
       )
@@ -124,38 +115,35 @@ RSpec.describe "Full Workflow Integration", :integration do
       processor.enqueue(request_task)
       processor.wait_for_idle(timeout: 2)
 
-      # Process enqueued jobs
-      Sidekiq::Worker.drain_all
-
       # Verify on_complete was called
-      expect(TestCallback.completion_calls.size).to eq(1)
+      expect(handler.completions.size).to eq(1)
 
-      response = TestCallback.completion_calls.first
+      response = handler.completions.first[:response]
       expect(response.status).to eq(200)
 
       # Verify response contains request info
       response_data = JSON.parse(response.body)
       expect(response_data["status"]).to eq(200)
       expect(response_data["headers"]["authorization"]).to eq("Bearer token123")
-      expect(response.callback_args[:resource]).to eq("user")
-      expect(response.callback_args[:id]).to eq(123)
-      expect(response.callback_args[:action]).to eq("fetch")
+      expect(response.callback_args.as_json).to eq({"resource" => "user", "id" => 123, "action" => "fetch"})
     end
   end
 
   describe "multiple concurrent requests" do
     it "handles multiple requests with different responses" do
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
+      task_handlers = []
 
       # Enqueue 3 requests with different status codes
       [200, 201, 202].each_with_index do |status, i|
         request = template.get("/test/#{status}")
-        handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({
-          "class" => "TestWorker",
+        handler = TestTaskHandler.new({
+          "class" => "Worker",
           "jid" => "jid-#{i}",
           "args" => [i]
         })
-        request_task = Sidekiq::AsyncHttp::RequestTask.new(
+        task_handlers << handler
+        request_task = AsyncHttpPool::RequestTask.new(
           request: request,
           task_handler: handler,
           callback: TestCallback
@@ -166,23 +154,19 @@ RSpec.describe "Full Workflow Integration", :integration do
       # Wait for all to complete
       processor.wait_for_idle(timeout: 2)
 
-      # Process enqueued jobs
-      Sidekiq::Worker.drain_all
-
       # Verify all 3 on_complete callbacks called
-      expect(TestCallback.completion_calls.size).to eq(3)
+      all_completions = task_handlers.flat_map(&:completions)
+      expect(all_completions.size).to eq(3)
 
       # Verify each got correct response
-      responses = TestCallback.completion_calls
-      statuses = responses.map(&:status).sort
-
+      statuses = all_completions.map { |c| c[:response].status }.sort
       expect(statuses).to eq([200, 201, 202])
     end
   end
 
   describe "request with params and headers" do
     it "properly encodes params and sends headers" do
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
       request = template.get(
         "/test/200",
         params: {"q" => "ruby", "page" => "2", "limit" => "50"},
@@ -192,8 +176,8 @@ RSpec.describe "Full Workflow Integration", :integration do
         }
       )
 
-      handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({"class" => "TestWorker", "jid" => "jid", "args" => []})
-      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+      handler = TestTaskHandler.new({"class" => "Worker", "jid" => "jid", "args" => []})
+      request_task = AsyncHttpPool::RequestTask.new(
         request: request,
         task_handler: handler,
         callback: TestCallback
@@ -202,11 +186,8 @@ RSpec.describe "Full Workflow Integration", :integration do
       processor.enqueue(request_task)
       processor.wait_for_idle(timeout: 2)
 
-      # Process enqueued jobs
-      Sidekiq::Worker.drain_all
-
-      expect(TestCallback.completion_calls.size).to eq(1)
-      response = TestCallback.completion_calls.first
+      expect(handler.completions.size).to eq(1)
+      response = handler.completions.first[:response]
       expect(response.status).to eq(200)
 
       # Verify params and headers were sent
@@ -222,10 +203,10 @@ RSpec.describe "Full Workflow Integration", :integration do
   describe "processor lifecycle" do
     it "can be started and stopped cleanly" do
       # Make a request
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+      template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
       request = template.get("/test/200")
-      handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({"class" => "TestWorker", "jid" => "jid", "args" => []})
-      request_task = Sidekiq::AsyncHttp::RequestTask.new(
+      handler = TestTaskHandler.new({"class" => "Worker", "jid" => "jid", "args" => []})
+      request_task = AsyncHttpPool::RequestTask.new(
         request: request,
         task_handler: handler,
         callback: TestCallback
@@ -238,11 +219,8 @@ RSpec.describe "Full Workflow Integration", :integration do
       processor.stop(timeout: 1)
       expect(processor.stopped?).to be true
 
-      # Process enqueued jobs
-      Sidekiq::Worker.drain_all
-
       # Verify request completed
-      expect(TestCallback.completion_calls.size).to eq(1)
+      expect(handler.completions.size).to eq(1)
     end
   end
 end

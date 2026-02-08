@@ -42,6 +42,25 @@ RSpec.describe Sidekiq::AsyncHttp::SidekiqTaskHandler do
     end
   end
 
+  describe "#retry" do
+    it "re-enqueues the original Sidekiq job" do
+      expect(Sidekiq::Client).to receive(:push).with(sidekiq_job).and_return("new-jid")
+      result = handler.retry
+      expect(result).to eq("new-jid")
+    end
+
+    it "preserves all job attributes" do
+      job_with_metadata = sidekiq_job.merge("retry_count" => 2, "custom_field" => "value")
+      handler_with_metadata = described_class.new(job_with_metadata)
+      expect(Sidekiq::Client).to receive(:push) do |job|
+        expect(job["retry_count"]).to eq(2)
+        expect(job["custom_field"]).to eq("value")
+        "new-jid"
+      end
+      handler_with_metadata.retry
+    end
+  end
+
   describe "#on_error" do
     before { TestCallback.reset_calls! }
     after { Sidekiq::AsyncHttp.reset_configuration! }

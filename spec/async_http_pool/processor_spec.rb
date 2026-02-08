@@ -26,8 +26,7 @@ RSpec.describe AsyncHttpPool::Processor do
       body: body,
       timeout: timeout
     )
-    sidekiq_job = {"class" => worker_class, "jid" => jid || SecureRandom.uuid, "args" => job_args}
-    task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(sidekiq_job)
+    task_handler = TestTaskHandler.new({"class" => worker_class, "jid" => jid || SecureRandom.uuid, "args" => job_args})
     AsyncHttpPool::RequestTask.new(
       request: request,
       task_handler: task_handler,
@@ -820,23 +819,19 @@ RSpec.describe AsyncHttpPool::Processor do
       end
     end
 
-    it "enqueues CallbackWorker with response data" do
+    it "calls task_handler on_complete with response" do
       processor.send(:handle_completion, mock_request, response)
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
+      expect(mock_request.task_handler.completions.size).to eq(1)
     end
 
-    it "enqueues CallbackWorker with response hash, result type, and callback service name" do
+    it "passes response and callback to task_handler on_complete" do
       processor.send(:handle_completion, mock_request, response)
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.last
-      job_args = job["args"]
-      expect(job_args.size).to eq(3)
-      expect(job_args[0]).to be_a(Hash)
-      response_data = job_args[0]
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["callback_args"]).to eq({"id" => 1, "arg" => "test_arg"})
-      expect(job_args[1]).to eq("response")
-      expect(job_args[2]).to eq("TestCallback")
+      expect(mock_request.task_handler.completions.size).to eq(1)
+      completion = mock_request.task_handler.completions.last
+      expect(completion[:response]).to be_a(AsyncHttpPool::Response)
+      expect(completion[:response].status).to eq(200)
+      expect(completion[:response].callback_args.as_json).to eq({"id" => 1, "arg" => "test_arg"})
+      expect(completion[:callback]).to eq("TestCallback")
     end
 
     it "logs success at debug level" do
@@ -869,28 +864,25 @@ RSpec.describe AsyncHttpPool::Processor do
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("timeout")
-      expect(error_hash["class_name"]).to eq("Async::TimeoutError")
-      expect(error_hash["message"]).to eq("Request timed out")
-      expect(error_hash["request_id"]).to eq(mock_request.id)
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.error_type).to eq(:timeout)
+      expect(error.error_class).to eq(Async::TimeoutError)
+      expect(error.message).to eq("Request timed out")
+      expect(error.request_id).to eq(mock_request.id)
     end
 
-    it "enqueues CallbackWorker with error hash, result type, and callback service name" do
+    it "passes error and callback to task_handler on_error" do
       exception = StandardError.new("Test error")
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.last
-      job_args = job["args"]
-      expect(job_args.size).to eq(3)
-      expect(job_args[0]).to be_a(Hash)
-      error_data = job_args[0]
-      expect(error_data["callback_args"]).to eq({"id" => 1, "arg" => "test_arg"})
-      expect(job_args[1]).to eq("error")
-      expect(job_args[2]).to eq("TestCallback")
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error_entry = mock_request.task_handler.errors.last
+      error = error_entry[:error]
+      expect(error).to be_a(AsyncHttpPool::RequestError)
+      expect(error.callback_args.as_json).to eq({"id" => 1, "arg" => "test_arg"})
+      expect(error_entry[:callback]).to eq("TestCallback")
     end
 
     it "handles timeout errors" do
@@ -898,9 +890,9 @@ RSpec.describe AsyncHttpPool::Processor do
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("timeout")
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.error_type).to eq(:timeout)
     end
 
     it "handles connection errors" do
@@ -908,9 +900,9 @@ RSpec.describe AsyncHttpPool::Processor do
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("connection")
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.error_type).to eq(:connection)
     end
 
     it "handles SSL errors" do
@@ -918,9 +910,9 @@ RSpec.describe AsyncHttpPool::Processor do
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("ssl")
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.error_type).to eq(:ssl)
     end
 
     it "handles unknown errors" do
@@ -930,9 +922,9 @@ RSpec.describe AsyncHttpPool::Processor do
         processor.send(:handle_error, mock_request, exception)
       end
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["error_type"]).to eq("unknown")
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.error_type).to eq(:unknown)
     end
 
     it "logs error at warn level" do
@@ -950,8 +942,9 @@ RSpec.describe AsyncHttpPool::Processor do
       expect(log_output.string).to match(/enqueued callback TestCallback/)
     end
 
-    it "handles errors during enqueue gracefully", :disable_testing_mode do
-      allow(Sidekiq::AsyncHttp::CallbackWorker).to receive(:perform_async).and_raise(StandardError.new("Sidekiq error"))
+    it "handles errors during task_handler on_error gracefully", :disable_testing_mode do
+      # Make the task handler's on_error raise
+      allow(mock_request.task_handler).to receive(:on_error).and_raise(StandardError.new("Handler error"))
 
       log_output = StringIO.new
       logger = Logger.new(log_output)
@@ -970,15 +963,15 @@ RSpec.describe AsyncHttpPool::Processor do
       expect(log_output.string).to match(/\[AsyncHttpPool\] Failed to enqueue error worker for request #{Regexp.escape(mock_request.id)}/)
     end
 
-    it "includes backtrace in error hash" do
+    it "includes backtrace in error" do
       exception = StandardError.new("Test error")
       exception.set_backtrace(["line 1", "line 2", "line 3"])
 
       processor.send(:handle_error, mock_request, exception)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      error_hash = Sidekiq::AsyncHttp::CallbackWorker.jobs.last["args"].first
-      expect(error_hash["backtrace"]).to eq(["line 1", "line 2", "line 3"])
+      expect(mock_request.task_handler.errors.size).to eq(1)
+      error = mock_request.task_handler.errors.last[:error]
+      expect(error.backtrace).to eq(["line 1", "line 2", "line 3"])
     end
   end
 
@@ -990,10 +983,6 @@ RSpec.describe AsyncHttpPool::Processor do
         status: 200,
         headers: mock_headers,
         protocol: "HTTP/1.1")
-    end
-
-    before do
-      allow(Sidekiq::Client).to receive(:push).and_return("new-jid")
     end
 
     it "completes all in-flight requests during clean shutdown" do
@@ -1038,11 +1027,11 @@ RSpec.describe AsyncHttpPool::Processor do
       # Stop with short timeout (request won't complete)
       processor.stop(timeout: 0.001)
 
-      # Should re-enqueue the incomplete request via Sidekiq::Client.push
-      expect(Sidekiq::Client).to have_received(:push) do |job|
-        expect(job["class"]).to eq("TestWorker")
-        expect(job["args"]).to eq([4, 5, 6])
-      end
+      # Should re-enqueue the incomplete request via task_handler.retry
+      retries = request.task_handler.retries
+      expect(retries.size).to eq(1)
+      expect(retries.first["class"]).to eq("TestWorker")
+      expect(retries.first["args"]).to eq([4, 5, 6])
     end
 
     it "re-enqueues multiple incomplete requests" do
@@ -1079,11 +1068,11 @@ RSpec.describe AsyncHttpPool::Processor do
       # Stop with short timeout
       processor.stop(timeout: 0.001)
 
-      # Should re-enqueue all incomplete requests
-      expect(Sidekiq::Client).to have_received(:push).exactly(3).times do |job|
-        expect(job["class"]).to eq("TestWorker")
-        expect([[10, 20], [30, 40], [50, 60]]).to include(job["args"])
-      end
+      # Should re-enqueue all incomplete requests via task_handler.retry
+      all_retries = [request1, request2, request3].flat_map { |r| r.task_handler.retries }
+      expect(all_retries.size).to eq(3)
+      retry_args = all_retries.map { |r| r["args"] }
+      expect(retry_args).to contain_exactly([10, 20], [30, 40], [50, 60])
     end
 
     it "logs re-enqueued requests at info level" do
@@ -1124,9 +1113,6 @@ RSpec.describe AsyncHttpPool::Processor do
           {status: 200, body: "response body", headers: {}}
         end
 
-      # Make re-enqueue fail
-      allow(Sidekiq::Client).to receive(:push).and_raise(StandardError.new("Enqueue failed"))
-
       log_output = StringIO.new
       logger = Logger.new(log_output)
 
@@ -1135,10 +1121,11 @@ RSpec.describe AsyncHttpPool::Processor do
 
       processor_with_logger.start
 
-      # Enqueue a request
+      # Enqueue a request with a handler that raises on retry
       request = create_request_task(
         job_args: [7, 8, 9]
       )
+      allow(request.task_handler).to receive(:retry).and_raise(StandardError.new("Enqueue failed"))
       processor_with_logger.enqueue(request)
       processor_with_logger.wait_for_processing
 
@@ -1166,12 +1153,11 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["url"]).to eq("https://api.example.com/new-path")
-      expect(response_data["redirects"]).to eq(["https://api.example.com/old-path"])
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(200)
+      expect(response.url).to eq("https://api.example.com/new-path")
+      expect(response.redirects).to eq(["https://api.example.com/old-path"])
     end
 
     it "follows redirect chain" do
@@ -1193,16 +1179,15 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["url"]).to eq("https://api.example.com/3")
-      expect(response_data["redirects"]).to eq([
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(200)
+      expect(response.url).to eq("https://api.example.com/3")
+      expect(response.redirects).to eq([
         "https://api.example.com/1",
         "https://api.example.com/2"
       ])
-      expect(response_data["request_id"]).to eq(request.id)
+      expect(response.request_id).to eq(request.id)
     end
 
     it "converts POST to GET on 302 redirect" do
@@ -1218,11 +1203,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["http_method"]).to eq("get")
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(200)
+      expect(response.http_method).to eq(:get)
     end
 
     it "preserves POST method on 307 redirect" do
@@ -1239,11 +1223,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["http_method"]).to eq("post")
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(200)
+      expect(response.http_method).to eq(:post)
     end
 
     it "raises TooManyRedirectsError when max redirects exceeded" do
@@ -1257,7 +1240,7 @@ RSpec.describe AsyncHttpPool::Processor do
 
       # Use max_redirects of 3
       request = AsyncHttpPool::Request.new(:get, "https://api.example.com/1", max_redirects: 3)
-      handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({"class" => "TestWorker", "jid" => SecureRandom.uuid, "args" => []})
+      handler = TestTaskHandler.new({"class" => "TestWorker", "jid" => SecureRandom.uuid, "args" => []})
       task = AsyncHttpPool::RequestTask.new(
         request: request,
         task_handler: handler,
@@ -1266,11 +1249,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(task)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      error_data = job["args"].first
-      expect(error_data["error_class"]).to eq(AsyncHttpPool::TooManyRedirectsError.name)
-      expect(error_data["redirects"].size).to eq(4) # original + 3 redirects
+      expect(handler.errors.size).to eq(1)
+      error = handler.errors.first[:error]
+      expect(error).to be_a(AsyncHttpPool::TooManyRedirectsError)
+      expect(error.redirects.size).to eq(4) # original + 3 redirects
     end
 
     it "raises RecursiveRedirectError on redirect loop" do
@@ -1286,11 +1268,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      error_data = job["args"].first
-      expect(error_data["error_class"]).to eq(AsyncHttpPool::RecursiveRedirectError.name)
-      expect(error_data["url"]).to eq("https://api.example.com/a")
+      expect(request.task_handler.errors.size).to eq(1)
+      error = request.task_handler.errors.first[:error]
+      expect(error).to be_a(AsyncHttpPool::RecursiveRedirectError)
+      expect(error.url).to eq("https://api.example.com/a")
     end
 
     it "does not follow redirect when max_redirects is 0" do
@@ -1300,7 +1281,7 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.start
 
       request = AsyncHttpPool::Request.new(:get, "https://api.example.com/old", max_redirects: 0)
-      handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({"class" => "TestWorker", "jid" => SecureRandom.uuid, "args" => []})
+      handler = TestTaskHandler.new({"class" => "TestWorker", "jid" => SecureRandom.uuid, "args" => []})
       task = AsyncHttpPool::RequestTask.new(
         request: request,
         task_handler: handler,
@@ -1309,11 +1290,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(task)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(302)
-      expect(response_data["redirects"]).to eq([])
+      expect(handler.completions.size).to eq(1)
+      response = handler.completions.first[:response]
+      expect(response.status).to eq(302)
+      expect(response.redirects).to eq([])
     end
 
     it "handles relative redirect URLs" do
@@ -1329,11 +1309,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(200)
-      expect(response_data["url"]).to eq("https://api.example.com/path/new")
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(200)
+      expect(response.url).to eq("https://api.example.com/path/new")
     end
 
     it "does not follow redirect without Location header" do
@@ -1346,11 +1325,10 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["status"]).to eq(302)
-      expect(response_data["redirects"]).to eq([])
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.status).to eq(302)
+      expect(response.redirects).to eq([])
     end
 
     it "preserves callback_args through redirect chain" do
@@ -1366,10 +1344,9 @@ RSpec.describe AsyncHttpPool::Processor do
       processor.enqueue(request)
       processor.wait_for_idle(timeout: 2)
 
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+      expect(request.task_handler.completions.size).to eq(1)
+      response = request.task_handler.completions.first[:response]
+      expect(response.callback_args.as_json).to eq({"user_id" => 123, "action" => "fetch"})
     end
   end
 end
