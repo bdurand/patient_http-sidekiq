@@ -136,7 +136,7 @@ class ApiCallback
 
   def on_error(error)
     # Called for exceptions AND HTTP errors when using raise_error_responses
-    if error.is_a?(Sidekiq::AsyncHttp::HttpError)
+    if error.is_a?(AsyncHttpPool::HttpError)
       # Access the response via error.response
       Rails.logger.error("HTTP #{error.status} from #{error.url}: #{error.response.body}")
     else
@@ -157,7 +157,7 @@ The `HttpError` provides convenient access to the response:
 
 ```ruby
 def on_error(error)
-  if error.is_a?(Sidekiq::AsyncHttp::HttpError)
+  if error.is_a?(AsyncHttpPool::HttpError)
     puts error.status              # HTTP status code
     puts error.url                 # Request URL
     puts error.http_method         # HTTP method
@@ -222,12 +222,12 @@ Available options:
 
 ### Using Request Templates
 
-For repeated requests to the same API, use `Sidekiq::AsyncHttp::RequestTemplate` to share configuration:
+For repeated requests to the same API, use `AsyncHttpPool::RequestTemplate` to share configuration:
 
 ```ruby
 class ApiService
   def initialize
-    @template = Sidekiq::AsyncHttp::RequestTemplate.new(
+    @template = AsyncHttpPool::RequestTemplate.new(
       base_url: "https://api.example.com",
       headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
       timeout: 60

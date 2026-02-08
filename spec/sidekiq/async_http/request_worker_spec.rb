@@ -13,7 +13,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestWorker do
     end
 
     let(:config) { Sidekiq::AsyncHttp::Configuration.new }
-    let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+    let(:processor) { AsyncHttpPool::Processor.new(config) }
 
     around do |example|
       processor.run do
@@ -27,7 +27,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestWorker do
     end
 
     it "processes the request and invokes the callback" do
-      template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "http://example.com")
+      template = AsyncHttpPool::RequestTemplate.new(base_url: "http://example.com")
       request = template.get("/test")
 
       stub_request(:get, "http://example.com/test")
@@ -51,7 +51,7 @@ RSpec.describe Sidekiq::AsyncHttp::RequestWorker do
       after { Sidekiq::AsyncHttp.reset_configuration! }
 
       it "decrypts data before loading the request" do
-        template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: "http://example.com")
+        template = AsyncHttpPool::RequestTemplate.new(base_url: "http://example.com")
         request = template.get("/test")
 
         # Encrypt the data by wrapping it

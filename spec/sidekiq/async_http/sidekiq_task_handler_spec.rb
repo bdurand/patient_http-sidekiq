@@ -22,7 +22,7 @@ RSpec.describe Sidekiq::AsyncHttp::SidekiqTaskHandler do
         c.encryption { |data| data.merge("_encrypted" => true) }
       end
 
-      response = Sidekiq::AsyncHttp::Response.new(
+      response = AsyncHttpPool::Response.new(
         status: 200,
         headers: {"Content-Type" => "text/plain"},
         body: "OK",
@@ -70,7 +70,7 @@ RSpec.describe Sidekiq::AsyncHttp::SidekiqTaskHandler do
         c.encryption { |data| data.merge("_encrypted" => true) }
       end
 
-      error = Sidekiq::AsyncHttp::RequestError.new(
+      error = AsyncHttpPool::RequestError.new(
         class_name: "StandardError",
         message: "test error",
         backtrace: ["line 1"],

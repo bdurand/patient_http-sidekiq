@@ -17,16 +17,16 @@ require "async/rspec"
 require "sidekiq/testing"
 require "console"
 
+require_relative "../lib/sidekiq-async_http"
+
 # Suppress Async task warnings (like EPIPE errors from early connection closes)
 # These are expected in tests that intentionally close connections early
 Console.logger.level = Logger::FATAL
 
-require_relative "../lib/sidekiq-async_http"
-
-# Configure Redis URL for tests - use Valkey container on port 24455, database 0
+# Configure Redis URL for tests - use Valkey container on port 24470, database 0
 # Can be overridden with REDIS_URL environment variable
 # Using 127.0.0.1 instead of localhost to avoid macOS local network permission issues
-ENV["REDIS_URL"] ||= "redis://127.0.0.1:24455/0"
+ENV["REDIS_URL"] ||= "redis://127.0.0.1:24470/0"
 
 # Disable all real HTTP connections except localhost (for test server)
 WebMock.disable_net_connect!(allow_localhost: true)
@@ -51,7 +51,7 @@ def test_web_server
   $test_web_server ||= TestWebServer.new # rubocop:disable Style/GlobalVars
 end
 
-Sidekiq::AsyncHttp.testing = true
+AsyncHttpPool.testing = true
 
 RSpec.configure do |config|
   config.disable_monkey_patching!
@@ -83,23 +83,6 @@ RSpec.configure do |config|
       sleep(0.5)
       retry
     end
-
-    S3Helper.setup
-    ActiveRecordHelper.setup
-    RedisHelper.setup
-  end
-
-  # Clear S3 bucket before each S3 test
-  config.before(:each, :s3) do
-    S3Helper.clear_bucket
-  end
-
-  config.before(:each, :active_record) do
-    ActiveRecordHelper.flushdb
-  end
-
-  config.before(:each, :redis) do
-    RedisHelper.flushdb
   end
 
   # Flush Redis database after each test
@@ -117,10 +100,10 @@ RSpec.configure do |config|
   end
 
   config.around(:each, :disable_testing_mode) do |example|
-    Sidekiq::AsyncHttp.testing = false
+    AsyncHttpPool.testing = false
     example.run
   ensure
-    Sidekiq::AsyncHttp.testing = true
+    AsyncHttpPool.testing = true
   end
 
   config.after(:suite) do

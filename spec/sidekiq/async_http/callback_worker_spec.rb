@@ -16,7 +16,7 @@ RSpec.describe Sidekiq::AsyncHttp::CallbackWorker do
         "callback_args" => {}
       }
 
-      expect(Sidekiq::AsyncHttp).to receive(:invoke_completion_callbacks).with(an_instance_of(Sidekiq::AsyncHttp::Response))
+      expect(Sidekiq::AsyncHttp).to receive(:invoke_completion_callbacks).with(an_instance_of(AsyncHttpPool::Response))
 
       Sidekiq::AsyncHttp::CallbackWorker.new.perform(
         response_data,
@@ -44,7 +44,7 @@ RSpec.describe Sidekiq::AsyncHttp::CallbackWorker do
           c.decryption { |data| data.except("_encrypted") }
         end
 
-        expect(Sidekiq::AsyncHttp).to receive(:invoke_completion_callbacks).with(an_instance_of(Sidekiq::AsyncHttp::Response))
+        expect(Sidekiq::AsyncHttp).to receive(:invoke_completion_callbacks).with(an_instance_of(AsyncHttpPool::Response))
 
         Sidekiq::AsyncHttp::CallbackWorker.new.perform(
           response_data,
@@ -64,7 +64,7 @@ RSpec.describe Sidekiq::AsyncHttp::CallbackWorker do
         "callback_args" => {}
       }
 
-      expect(Sidekiq::AsyncHttp).to receive(:invoke_error_callbacks).with(an_instance_of(Sidekiq::AsyncHttp::RequestError))
+      expect(Sidekiq::AsyncHttp).to receive(:invoke_error_callbacks).with(an_instance_of(AsyncHttpPool::RequestError))
 
       Sidekiq::AsyncHttp::CallbackWorker.new.perform(
         error_data,

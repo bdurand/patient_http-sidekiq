@@ -9,7 +9,7 @@ module TaskMonitorHelpers
   # Used to simulate old requests that should be considered orphaned.
   #
   # @param registry [Sidekiq::AsyncHttp::TaskMonitor] the registry instance
-  # @param task [Sidekiq::AsyncHttp::RequestTask] the task to update
+  # @param task [AsyncHttpPool::RequestTask] the task to update
   # @param timestamp_ms [Integer] the timestamp in milliseconds
   def set_task_timestamp(registry, task, timestamp_ms)
     full_task_id = registry.full_task_id(task.id)
@@ -52,7 +52,7 @@ module TaskMonitorHelpers
   # Get the raw timestamp for a task from Redis.
   #
   # @param registry [Sidekiq::AsyncHttp::TaskMonitor] the registry instance
-  # @param task [Sidekiq::AsyncHttp::RequestTask] the task
+  # @param task [AsyncHttpPool::RequestTask] the task
   # @return [Float, nil] the timestamp as a float, or nil if not found
   def get_raw_task_timestamp(registry, task)
     full_task_id = registry.task_id(task)

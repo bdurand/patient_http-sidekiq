@@ -14,9 +14,4 @@ gem "standard", "~>1.0"
 gem "simplecov", "~> 0.22"
 gem "yard"
 
-gem "redis"
-
-gem "aws-sdk-s3"
-
-gem "activerecord"
-gem "sqlite3"
+gem "async_http_pool", github: "bdurand/async_http_pool", branch: "main"

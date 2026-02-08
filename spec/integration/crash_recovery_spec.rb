@@ -11,7 +11,7 @@ RSpec.describe "Crash Recovery", :integration do
       orphan_threshold: 3
     )
   end
-  let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+  let(:processor) { AsyncHttpPool::Processor.new(config) }
   let(:observer) { Sidekiq::AsyncHttp::ProcessorObserver.new(processor) }
   let(:task_monitor) { observer.task_monitor }
   let(:web_server) { TestWebServer.new }
@@ -39,10 +39,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => [42]
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
+    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
     task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
 
-    task = Sidekiq::AsyncHttp::RequestTask.new(
+    task = AsyncHttpPool::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -86,10 +86,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
+    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
     task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
 
-    task = Sidekiq::AsyncHttp::RequestTask.new(
+    task = AsyncHttpPool::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -150,10 +150,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = Sidekiq::AsyncHttp::Request.new(:get, "http://localhost:9876/test")
+    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
     task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
 
-    task = Sidekiq::AsyncHttp::RequestTask.new(
+    task = AsyncHttpPool::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -189,7 +189,7 @@ RSpec.describe "Crash Recovery", :integration do
       heartbeat_interval: 1,
       orphan_threshold: 2
     )
-    fast_processor = Sidekiq::AsyncHttp::Processor.new(fast_config)
+    fast_processor = AsyncHttpPool::Processor.new(fast_config)
     fast_processor.run do
       # Create an orphaned request that appears to be from a different (crashed) process
       job_payload = {
