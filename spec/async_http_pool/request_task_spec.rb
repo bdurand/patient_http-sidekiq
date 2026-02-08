@@ -17,7 +17,7 @@ RSpec.describe AsyncHttpPool::RequestTask do
     }
   end
 
-  let(:task_handler) { Sidekiq::AsyncHttp::SidekiqTaskHandler.new(sidekiq_job) }
+  let(:task_handler) { TestTaskHandler.new(sidekiq_job) }
 
   let(:callback) { "TestCallback" }
 
@@ -166,45 +166,22 @@ RSpec.describe AsyncHttpPool::RequestTask do
   end
 
   describe "#retry" do
-    it "re-enqueues the original Sidekiq job" do
+    it "delegates to the task handler" do
       task = described_class.new(
         request: request,
         task_handler: task_handler,
         callback: callback
       )
 
-      expect(Sidekiq::Client).to receive(:push).with(sidekiq_job).and_return("new-jid")
-
       result = task.retry
-      expect(result).to eq("new-jid")
-    end
-
-    it "preserves all job attributes" do
-      job_with_metadata = sidekiq_job.merge(
-        "retry_count" => 2,
-        "failed_at" => Time.now.to_f,
-        "custom_field" => "value"
-      )
-      handler_with_metadata = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_with_metadata)
-
-      task = described_class.new(
-        request: request,
-        task_handler: handler_with_metadata,
-        callback: callback
-      )
-
-      expect(Sidekiq::Client).to receive(:push) do |job|
-        expect(job["retry_count"]).to eq(2)
-        expect(job["custom_field"]).to eq("value")
-        "new-jid"
-      end
-
-      task.retry
+      expect(result).to start_with("retry-")
+      expect(task_handler.retries.size).to eq(1)
+      expect(task_handler.retries.first).to eq(sidekiq_job)
     end
   end
 
   describe "#completed!" do
-    it "enqueues the CallbackWorker with response" do
+    it "calls task_handler on_complete with response" do
       task = described_class.new(
         request: request,
         task_handler: task_handler,
@@ -223,14 +200,12 @@ RSpec.describe AsyncHttpPool::RequestTask do
       expect(task.response).to eq(response)
       expect(task.success?).to be(true)
 
-      # Should enqueue CallbackWorker
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      expect(job["args"].size).to eq(3)
-      response_data, result_type, callback_name = job["args"]
-      expect(result_type).to eq("response")
-      expect(callback_name).to eq(callback)
-      expect(response_data["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+      # Should call task_handler on_complete
+      expect(task_handler.completions.size).to eq(1)
+      completion = task_handler.completions.first
+      expect(completion[:response]).to eq(response)
+      expect(completion[:response].callback_args.as_json).to eq({"user_id" => 123, "action" => "fetch"})
+      expect(completion[:callback]).to eq(callback)
       expect(task.duration).to be > 0
       expect(task.completed_at).not_to be_nil
     end
@@ -255,15 +230,14 @@ RSpec.describe AsyncHttpPool::RequestTask do
       sleep(0.001)
 
       task.completed!(response)
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      response_data = job["args"].first
-      expect(response_data["callback_args"]).to eq({})
+      expect(task_handler.completions.size).to eq(1)
+      completion = task_handler.completions.first
+      expect(completion[:response].callback_args.as_json).to eq({})
     end
   end
 
   describe "#error!" do
-    it "enqueues the CallbackWorker with error" do
+    it "calls task_handler on_error with error" do
       task = described_class.new(
         request: request,
         task_handler: task_handler,
@@ -279,14 +253,12 @@ RSpec.describe AsyncHttpPool::RequestTask do
       expect(task.error).to eq(exception)
       expect(task.error?).to be(true)
 
-      # Should enqueue CallbackWorker
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      expect(job["args"].size).to eq(3)
-      error_data, result_type, callback_name = job["args"]
-      expect(result_type).to eq("error")
-      expect(callback_name).to eq(callback)
-      expect(error_data["callback_args"]).to eq({"user_id" => 123, "action" => "fetch"})
+      # Should call task_handler on_error
+      expect(task_handler.errors.size).to eq(1)
+      error_entry = task_handler.errors.first
+      expect(error_entry[:error]).to be_a(AsyncHttpPool::RequestError)
+      expect(error_entry[:error].callback_args.as_json).to eq({"user_id" => 123, "action" => "fetch"})
+      expect(error_entry[:callback]).to eq(callback)
       expect(task.duration).to be > 0
       expect(task.completed_at).not_to be_nil
     end
@@ -301,10 +273,9 @@ RSpec.describe AsyncHttpPool::RequestTask do
       exception = StandardError.new("Something went wrong")
 
       task.error!(exception)
-      expect(Sidekiq::AsyncHttp::CallbackWorker.jobs.size).to eq(1)
-      job = Sidekiq::AsyncHttp::CallbackWorker.jobs.first
-      error_data = job["args"].first
-      expect(error_data["callback_args"]).to eq({})
+      expect(task_handler.errors.size).to eq(1)
+      error_entry = task_handler.errors.first
+      expect(error_entry[:error].callback_args.as_json).to eq({})
     end
   end
 

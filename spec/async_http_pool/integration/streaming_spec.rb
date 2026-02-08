@@ -4,17 +4,15 @@ require "spec_helper"
 
 RSpec.describe "Streaming Response Integration", :integration do
   let(:config) do
-    Sidekiq::AsyncHttp::Configuration.new.tap do |c|
-      c.max_connections = 3
-      c.request_timeout = 10
-    end
+    AsyncHttpPool::Configuration.new(
+      max_connections: 3,
+      request_timeout: 10
+    )
   end
 
-  let(:processor) { Sidekiq::AsyncHttp::Processor.new(config) }
+  let(:processor) { AsyncHttpPool::Processor.new(config) }
 
   around do |example|
-    TestCallback.reset_calls!
-
     # Disable WebMock for integration tests
     WebMock.reset!
     WebMock.allow_net_connect!
@@ -35,19 +33,21 @@ RSpec.describe "Streaming Response Integration", :integration do
     # Create 3 concurrent requests that each take 500ms
     # If they run concurrently (non-blocking), total time should be ~500ms
     # If they block each other (sequential), total time would be ~1500ms
-    template = Sidekiq::AsyncHttp::RequestTemplate.new(base_url: test_web_server.base_url)
+    template = AsyncHttpPool::RequestTemplate.new(base_url: test_web_server.base_url)
+    task_handlers = []
 
     start_time = Time.now
 
     3.times do |i|
       request = template.get("/delay/500")
 
-      handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new({
-        "class" => "TestWorker",
+      handler = TestTaskHandler.new({
+        "class" => "Worker",
         "jid" => "jid-#{i}",
         "args" => [i]
       })
-      task = Sidekiq::AsyncHttp::RequestTask.new(
+      task_handlers << handler
+      task = AsyncHttpPool::RequestTask.new(
         request: request,
         task_handler: handler,
         callback: TestCallback
@@ -61,14 +61,13 @@ RSpec.describe "Streaming Response Integration", :integration do
 
     total_duration = Time.now - start_time
 
-    # Process Sidekiq jobs
-    Sidekiq::Worker.drain_all
-
     # Verify all 3 requests completed
-    expect(TestCallback.completion_calls.size).to eq(3)
+    all_completions = task_handlers.flat_map(&:completions)
+    expect(all_completions.size).to eq(3)
 
     # Verify all completed successfully
-    TestCallback.completion_calls.each do |response|
+    all_completions.each do |completion|
+      response = completion[:response]
       expect(response.status).to eq(200)
       expect(response.duration).to be >= 0.5 # Each takes at least 500ms
     end

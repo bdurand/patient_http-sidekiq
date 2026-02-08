@@ -144,17 +144,14 @@ RSpec.describe AsyncHttpPool::PayloadStore::RedisStore do
     it "handles concurrent access safely" do
       threads = 10.times.map do |i|
         Thread.new do
-          # Each thread gets its own Redis connection from the pool
-          Sidekiq.redis do |redis|
-            store = described_class.new(redis: redis)
-            key = "thread-#{i}"
-            data = {"thread" => i, "data" => "x" * 1000}
+          store = described_class.new(redis: redis)
+          key = "thread-#{i}"
+          data = {"thread" => i, "data" => "x" * 1000}
 
-            store.store(key, data)
-            fetched = store.fetch(key)
-            expect(fetched["thread"]).to eq(i)
-            store.delete(key)
-          end
+          store.store(key, data)
+          fetched = store.fetch(key)
+          expect(fetched["thread"]).to eq(i)
+          store.delete(key)
         end
       end
 

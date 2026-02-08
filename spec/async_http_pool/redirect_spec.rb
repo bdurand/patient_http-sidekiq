@@ -15,7 +15,7 @@ RSpec.describe "Redirect handling" do
       "queue" => "default"
     }
   end
-  let(:task_handler) { Sidekiq::AsyncHttp::SidekiqTaskHandler.new(sidekiq_job) }
+  let(:task_handler) { TestTaskHandler.new(sidekiq_job) }
 
   describe "redirect status codes" do
     describe "followable redirects" do
