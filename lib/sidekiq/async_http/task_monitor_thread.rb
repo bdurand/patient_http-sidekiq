@@ -127,6 +127,9 @@ module Sidekiq
       #
       # @return [void]
       def attempt_garbage_collection
+        # Check if GC is needed based on coordinated timestamp
+        return unless @task_monitor.gc_needed?
+
         # Try to acquire the distributed lock
         return unless @task_monitor.acquire_gc_lock
 
@@ -136,6 +139,9 @@ module Sidekiq
           if count > 0
             @config.logger&.info("[Sidekiq::AsyncHttp] Garbage collection: re-enqueued #{count} orphaned requests")
           end
+
+          # Record this GC run to coordinate with other processes
+          @task_monitor.record_gc_run
         ensure
           @task_monitor.release_gc_lock
         end

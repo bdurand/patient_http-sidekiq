@@ -20,6 +20,7 @@ module Sidekiq
       INFLIGHT_JOBS_KEY = "sidekiq:async_http:inflight_jobs"
       PROCESS_SET_KEY = "sidekiq:async_http:processes"
       GC_LOCK_KEY = "sidekiq:async_http:gc_lock"
+      GC_LAST_RUN_KEY = "sidekiq:async_http:gc_last_run"
 
       # Lua script for atomic orphan removal.
       # Checks if the task is still orphaned (timestamp < threshold) and removes it atomically.
@@ -140,7 +141,7 @@ module Sidekiq
           end
 
           Sidekiq.redis do |redis|
-            redis.del(INFLIGHT_INDEX_KEY, INFLIGHT_JOBS_KEY, PROCESS_SET_KEY, GC_LOCK_KEY)
+            redis.del(INFLIGHT_INDEX_KEY, INFLIGHT_JOBS_KEY, PROCESS_SET_KEY, GC_LOCK_KEY, GC_LAST_RUN_KEY)
           end
         end
 
@@ -329,6 +330,35 @@ module Sidekiq
         end
       end
 
+      # Check if garbage collection should run based on the last run timestamp.
+      #
+      # Returns true if the GC_LAST_RUN_KEY doesn't exist in Redis or if enough
+      # time has elapsed since the last GC run.
+      #
+      # @return [Boolean] true if GC should run, false otherwise
+      def gc_needed?
+        last_run = Sidekiq.redis do |redis|
+          redis.get(GC_LAST_RUN_KEY)
+        end
+
+        return true if last_run.nil?
+
+        last_run_time = Time.at(last_run.to_f / 1000.0)
+        Time.now - last_run_time >= config.heartbeat_interval
+      end
+
+      # Record the timestamp of the last GC run in Redis.
+      #
+      # The timestamp is stored with a TTL slightly longer than the heartbeat
+      # interval to coordinate GC execution across multiple processes.
+      #
+      # @return [void]
+      def record_gc_run
+        Sidekiq.redis do |redis|
+          redis.set(GC_LAST_RUN_KEY, (Time.now.to_f * 1000).to_i, ex: gc_last_run_ttl)
+        end
+      end
+
       # Find and re-enqueue orphaned requests.
       #
       # @param orphan_threshold_seconds [Numeric] age threshold for considering a request orphaned
@@ -483,6 +513,16 @@ module Sidekiq
       def gc_lock_ttl
         # Set to 2x the heartbeat interval, with a minimum of 120 seconds
         [config.heartbeat_interval * 2, 120].max
+      end
+
+      # Calculate the TTL for the last GC run timestamp.
+      # Should be a bit longer than the heartbeat interval to ensure
+      # proper coordination across processes.
+      #
+      # @return [Integer] TTL in seconds
+      def gc_last_run_ttl
+        # Set to 1.5x the heartbeat interval
+        (config.heartbeat_interval * 1.5).round
       end
 
       # Calculate the TTL for the process max_connections key.
