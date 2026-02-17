@@ -515,6 +515,9 @@ The server will run on http://localhost:9292 and can be started with:
 bundle exec rake test_app
 ```
 
+## Further Reading
+
+- [Architecture](ARCHITECTURE.md)
 
 
 ## License

@@ -489,3 +489,7 @@ TaskMonitor.untrack(request_id)
 - **Redis-based coordination**: TaskMonitor uses Redis for distributed coordination
 - **Immutable values**: Request/Response/Error objects are immutable once created
 - **Sidekiq job isolation**: Each CallbackWorker runs in its own thread
+
+## Further Reading
+
+- [README](README.md)
