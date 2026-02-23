@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class RunJobsAction
-  include AsyncHttpPool::RequestHelper
+  include PatientHttp::RequestHelper
 
   BASE_URL = "http://localhost:#{ENV.fetch("PORT", "9292")}"
 

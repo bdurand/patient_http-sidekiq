@@ -2,8 +2,8 @@
 
 require "bundler/setup"
 require "rack/session"
-require_relative "../lib/sidekiq-async_http"
-require_relative "../lib/sidekiq/async_http/web_ui"
+require_relative "../lib/patient_http-sidekiq"
+require_relative "../lib/patient_http/sidekiq/web_ui"
 
 Dir.glob(File.join(__dir__, "actions/*.rb")).each do |file|
   require file

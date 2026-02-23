@@ -5,14 +5,14 @@ require "support/test_web_server"
 
 RSpec.describe "Crash Recovery", :integration do
   let(:config) do
-    Sidekiq::AsyncHttp::Configuration.new(
+    PatientHttp::Sidekiq::Configuration.new(
       max_connections: 5,
       heartbeat_interval: 1,
       orphan_threshold: 3
     )
   end
-  let(:processor) { AsyncHttpPool::Processor.new(config) }
-  let(:observer) { Sidekiq::AsyncHttp::ProcessorObserver.new(processor) }
+  let(:processor) { PatientHttp::Processor.new(config) }
+  let(:observer) { PatientHttp::Sidekiq::ProcessorObserver.new(processor) }
   let(:task_monitor) { observer.task_monitor }
   let(:web_server) { TestWebServer.new }
 
@@ -28,8 +28,8 @@ RSpec.describe "Crash Recovery", :integration do
     processor.stop(timeout: 1)
 
     # Force release any lock
-    Sidekiq.redis do |redis|
-      redis.del(Sidekiq::AsyncHttp::TaskMonitor::GC_LOCK_KEY)
+    ::Sidekiq.redis do |redis|
+      redis.del(PatientHttp::Sidekiq::TaskMonitor::GC_LOCK_KEY)
     end
 
     # Create an orphaned request by manually registering and setting old timestamp
@@ -39,10 +39,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => [42]
     }
 
-    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
-    task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
+    request = PatientHttp::Request.new(:get, "http://localhost:9876/test")
+    task_handler = PatientHttp::Sidekiq::TaskHandler.new(job_payload)
 
-    task = AsyncHttpPool::RequestTask.new(
+    task = PatientHttp::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -55,7 +55,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Verify it's registered
     expect(task_monitor.registered?(task)).to be true
-    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(1)
+    expect(PatientHttp::Sidekiq::TaskMonitor.inflight_count).to eq(1)
 
     # Mock Sidekiq::Client to capture re-enqueued job
     reenqueued_jobs = []
@@ -73,7 +73,7 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Verify it's removed from task_monitor
     expect(task_monitor.registered?(task)).to be false
-    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(0)
+    expect(PatientHttp::Sidekiq::TaskMonitor.inflight_count).to eq(0)
 
     task_monitor.release_gc_lock
   end
@@ -86,10 +86,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
-    task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
+    request = PatientHttp::Request.new(:get, "http://localhost:9876/test")
+    task_handler = PatientHttp::Sidekiq::TaskHandler.new(job_payload)
 
-    task = AsyncHttpPool::RequestTask.new(
+    task = PatientHttp::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -113,7 +113,7 @@ RSpec.describe "Crash Recovery", :integration do
     # Should not be cleaned up because heartbeat was updated
     expect(count).to eq(0)
     expect(task_monitor.registered?(task)).to be true
-    expect(Sidekiq::AsyncHttp::TaskMonitor.inflight_count).to eq(1)
+    expect(PatientHttp::Sidekiq::TaskMonitor.inflight_count).to eq(1)
   end
 
   it "handles distributed locking correctly" do
@@ -121,13 +121,13 @@ RSpec.describe "Crash Recovery", :integration do
     processor.stop(timeout: 1)
 
     # Force release any lock
-    Sidekiq.redis do |redis|
-      redis.del(Sidekiq::AsyncHttp::TaskMonitor::GC_LOCK_KEY)
+    ::Sidekiq.redis do |redis|
+      redis.del(PatientHttp::Sidekiq::TaskMonitor::GC_LOCK_KEY)
     end
 
     # Create two task_monitor instances simulating two processes
-    task_monitor1 = Sidekiq::AsyncHttp::TaskMonitor.new(config)
-    task_monitor2 = Sidekiq::AsyncHttp::TaskMonitor.new(config)
+    task_monitor1 = PatientHttp::Sidekiq::TaskMonitor.new(config)
+    task_monitor2 = PatientHttp::Sidekiq::TaskMonitor.new(config)
 
     # First should acquire lock
     expect(task_monitor1.acquire_gc_lock).to be true
@@ -150,10 +150,10 @@ RSpec.describe "Crash Recovery", :integration do
       "args" => []
     }
 
-    request = AsyncHttpPool::Request.new(:get, "http://localhost:9876/test")
-    task_handler = Sidekiq::AsyncHttp::SidekiqTaskHandler.new(job_payload)
+    request = PatientHttp::Request.new(:get, "http://localhost:9876/test")
+    task_handler = PatientHttp::Sidekiq::TaskHandler.new(job_payload)
 
-    task = AsyncHttpPool::RequestTask.new(
+    task = PatientHttp::RequestTask.new(
       request: request,
       task_handler: task_handler,
       callback: TestCallback
@@ -184,12 +184,12 @@ RSpec.describe "Crash Recovery", :integration do
 
   it "performs garbage collection automatically via monitor thread" do
     # Configure with shorter intervals for faster testing
-    fast_config = Sidekiq::AsyncHttp::Configuration.new(
+    fast_config = PatientHttp::Sidekiq::Configuration.new(
       max_connections: 5,
       heartbeat_interval: 1,
       orphan_threshold: 2
     )
-    fast_processor = AsyncHttpPool::Processor.new(fast_config)
+    fast_processor = PatientHttp::Processor.new(fast_config)
     fast_processor.run do
       # Create an orphaned request that appears to be from a different (crashed) process
       job_payload = {

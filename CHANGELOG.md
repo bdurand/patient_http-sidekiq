@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Dedicated async HTTP processor thread for Sidekiq to avoid blocking worker threads during in-flight requests.
-- `Sidekiq::AsyncHttp` API with convenience methods for common HTTP verbs (`get`, `post`, `put`, `patch`, and `delete`).
+- `PatientHttp::Sidekiq` API with convenience methods for common HTTP verbs (`get`, `post`, `put`, `patch`, and `delete`).
 - Callback-based completion and error handling via `on_complete` and `on_error`, executed as Sidekiq jobs.
 - Support for callback context via `callback_args`, available from response and error objects.
 - Built-in runtime visibility with task monitoring and a Sidekiq Web UI page for async HTTP activity.

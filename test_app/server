@@ -17,9 +17,9 @@ rack_app, _ = Rack::Builder.parse_file(File.expand_path("config.ru", __dir__))
 app = Protocol::Rack::Adapter.new(rack_app)
 
 puts "=" * 80
-puts "Sidekiq::AsyncHttp Test Application (Async HTTP Server)"
+puts "PatientHttp::Sidekiq Test Application (Async HTTP Server)"
 puts "=" * 80
-puts "Processor max_connections: #{Sidekiq::AsyncHttp.configuration.max_connections}"
+puts "Processor max_connections: #{PatientHttp::Sidekiq.configuration.max_connections}"
 puts "Redis URL: #{AppConfig.redacted_redis_url}"
 puts "Web UI: http://localhost:#{AppConfig.port}/"
 puts "=" * 80

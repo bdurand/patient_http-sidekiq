@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-# Encapsulates current Sidekiq and AsyncHttp statistics.
+# Encapsulates current Sidekiq and Sidekiq statistics.
 class CurrentStats
   attr_reader :inflight, :busy, :enqueued, :retry, :processed, :failed
 
   def initialize
     sidekiq_stats = Sidekiq::Stats.new
-    @inflight = Sidekiq::AsyncHttp.processor&.inflight_count.to_i
+    @inflight = PatientHttp::Sidekiq.processor&.inflight_count.to_i
     @busy = Sidekiq::ProcessSet.new.reduce(0) { |sum, process| sum + process["busy"].to_i }
     @enqueued = sidekiq_stats.enqueued
     @retry = sidekiq_stats.retry_size

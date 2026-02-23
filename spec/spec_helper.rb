@@ -14,10 +14,11 @@ require "bundler/setup"
 
 require "webmock/rspec"
 require "async/rspec"
-require "sidekiq/testing"
 require "console"
 
-require_relative "../lib/sidekiq-async_http"
+require_relative "../lib/patient_http-sidekiq"
+
+require "sidekiq/testing"
 
 # Suppress Async task warnings (like EPIPE errors from early connection closes)
 # These are expected in tests that intentionally close connections early
@@ -44,14 +45,14 @@ Sidekiq.strict_args!(true)
 Sidekiq.logger.level = Logger::ERROR
 
 # Set up Sidekiq middlewares for tests
-Sidekiq::AsyncHttp.append_middleware
+PatientHttp::Sidekiq.append_middleware
 
 $test_web_server = nil # rubocop:disable Style/GlobalVars
 def test_web_server
   $test_web_server ||= TestWebServer.new # rubocop:disable Style/GlobalVars
 end
 
-AsyncHttpPool.testing = true
+PatientHttp.testing = true
 
 RSpec.configure do |config|
   config.disable_monkey_patching!
@@ -75,7 +76,7 @@ RSpec.configure do |config|
     # Retry connection in case Redis is starting up
     retries = 3
     begin
-      Sidekiq.redis(&:flushdb)
+      ::Sidekiq.redis(&:flushdb)
     rescue RedisClient::CannotConnectError
       retries -= 1
       raise unless retries > 0
@@ -87,12 +88,12 @@ RSpec.configure do |config|
 
   # Flush Redis database after each test
   config.before do |_example|
-    Sidekiq.redis(&:flushdb)
+    ::Sidekiq.redis(&:flushdb)
     Sidekiq::Job.clear_all
   end
 
   config.after do
-    Sidekiq::AsyncHttp.reset! if Sidekiq::AsyncHttp.running?
+    PatientHttp::Sidekiq.reset! if PatientHttp::Sidekiq.running?
   end
 
   config.before(:each, :integration) do
@@ -100,14 +101,14 @@ RSpec.configure do |config|
   end
 
   config.around(:each, :disable_testing_mode) do |example|
-    AsyncHttpPool.testing = false
+    PatientHttp.testing = false
     example.run
   ensure
-    AsyncHttpPool.testing = true
+    PatientHttp.testing = true
   end
 
   config.after(:suite) do
     test_web_server.stop
-    Sidekiq::AsyncHttp.stop if Sidekiq::AsyncHttp.running?
+    PatientHttp::Sidekiq.stop if PatientHttp::Sidekiq.running?
   end
 end

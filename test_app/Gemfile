@@ -7,4 +7,4 @@ gem "rack-session"
 gem "sidekiq-encrypted_args"
 gem "irb"
 
-gem "async_http_pool", github: "bdurand/async_http_pool", branch: "main"
+gem "patient_http", github: "bdurand/patient_http", branch: "main"
