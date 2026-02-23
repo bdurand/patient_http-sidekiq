@@ -14,4 +14,5 @@ gem "standard", "~>1.0"
 gem "simplecov", "~> 0.22"
 gem "yard"
 
-gem "async_http_pool", github: "bdurand/async_http_pool", branch: "main"
+# gem "patient_http", github: "bdurand/patient_http", branch: "main"
+gem "patient_http", path: "../async_http_pool"

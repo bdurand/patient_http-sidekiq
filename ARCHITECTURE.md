@@ -2,23 +2,23 @@
 
 ## Overview
 
-Sidekiq::AsyncHttp provides a Sidekiq integration layer for the [async_http_pool](https://github.com/bdurand/async_http_pool) gem, enabling long-running HTTP requests to be offloaded from Sidekiq worker threads to a dedicated async I/O processor. This integration uses Sidekiq's job system for request enqueueing and callback invocation, while leveraging async_http_pool's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking worker threads.
+PatientHttp::Sidekiq provides a Sidekiq integration layer for the [patient_http](https://github.com/bdurand/patient_http) gem, enabling long-running HTTP requests to be offloaded from Sidekiq worker threads to a dedicated async I/O processor. This integration uses Sidekiq's job system for request enqueueing and callback invocation, while leveraging patient_http's Fiber-based concurrency to handle hundreds of concurrent HTTP requests without blocking worker threads.
 
 ## Key Design Principles
 
 1. **Non-blocking Workers**: Worker threads enqueue HTTP requests via Sidekiq jobs and immediately return, freeing them to process other jobs
-2. **Singleton Processor**: One async I/O processor (from async_http_pool) per Sidekiq process handles all HTTP requests using Fiber-based concurrency
+2. **Singleton Processor**: One async I/O processor (from patient_http) per Sidekiq process handles all HTTP requests using Fiber-based concurrency
 3. **Callback Service Pattern**: HTTP responses are processed by callback service classes with `on_complete` and `on_error` methods, invoked via Sidekiq jobs
 4. **Lifecycle Integration**: Processor lifecycle is tightly coupled with Sidekiq's startup, quiet, and shutdown events
 5. **Sidekiq-Native Task Handling**: Request lifecycle operations (enqueueing, callbacks, retries) use Sidekiq's job system
 
 ## Core Components
 
-### AsyncHttpPool::Processor (from async_http_pool gem)
+### PatientHttp::Processor (from patient_http gem)
 The heart of the system - a singleton that runs in a dedicated thread with its own Fiber reactor. Manages the async HTTP request queue and handles concurrent request execution using Ruby's `async` gem with HTTP/2 connection pooling.
 
-### SidekiqTaskHandler
-Implements the async_http_pool's `TaskHandler` interface to integrate with Sidekiq's job system:
+### TaskHandler
+Implements the patient_http's `TaskHandler` interface to integrate with Sidekiq's job system:
 - Enqueues `CallbackWorker` jobs when requests complete or error
 - Handles request retries via `Sidekiq::Client.push`
 - Manages large payloads via `ExternalStorage` before enqueueing
@@ -29,14 +29,14 @@ A Sidekiq worker that receives HTTP request specifications and submits them to t
 ### CallbackWorker
 A Sidekiq worker that invokes callback service methods (`on_complete` or `on_error`) when HTTP requests complete. Handles payload decryption and external storage retrieval.
 
-### SidekiqLifecycleHooks
+### LifecycleHooks
 Registers Sidekiq server lifecycle hooks to automatically:
 - Start the processor when Sidekiq starts (`:startup` event)
 - Drain the processor when Sidekiq receives TSTP signal (`:quiet` event)
 - Stop the processor gracefully when Sidekiq shuts down (`:shutdown` event)
 
 ### RequestHelper Handler Registration
-On startup, the integration automatically registers a handler with `AsyncHttpPool::RequestHelper` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `Sidekiq::AsyncHttp.execute` invocations. The handler is unregistered on shutdown.
+On startup, the integration automatically registers a handler with `PatientHttp::RequestHelper` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `PatientHttp::Sidekiq.execute` invocations. The handler is unregistered on shutdown.
 
 ### ProcessorObserver
 Observes processor state changes and updates the TaskMonitor's Redis heartbeats, enabling distributed crash recovery.
@@ -54,10 +54,10 @@ Background thread that periodically:
 - Scans for orphaned requests from crashed processes
 - Performs garbage collection on stale Redis data
 
-### Request/Response/Error (from async_http_pool gem)
+### Request/Response/Error (from patient_http gem)
 Immutable value objects representing HTTP requests and their results. All are JSON-serializable for passing through Sidekiq jobs.
 
-### ExternalStorage (from async_http_pool gem)
+### ExternalStorage (from patient_http gem)
 Handles storage and retrieval of large payloads (requests, responses, errors) to Redis or disk when they exceed the payload size threshold, preventing Sidekiq job serialization issues.
 
 ### Configuration
@@ -65,7 +65,7 @@ Sidekiq-specific configuration including:
 - Callback queue names
 - Encryption for sensitive data
 - External storage settings
-- Integration with async_http_pool's configuration
+- Integration with patient_http's configuration
 
 ## Callback Service Pattern
 
@@ -91,7 +91,7 @@ class FetchDataCallback
 end
 
 # Make a request from anywhere in your code
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/users/123",
   callback: FetchDataCallback,
   callback_args: {user_id: 123}
@@ -103,11 +103,11 @@ Sidekiq::AsyncHttp.get(
 ```mermaid
 sequenceDiagram
     participant App as Application Code
-    participant Module as Sidekiq::AsyncHttp
+    participant Module as PatientHttp::Sidekiq
     participant ReqWorker as RequestWorker
-    participant Processor as AsyncHttpPool::Processor
+    participant Processor as PatientHttp::Processor
     participant Sidekiq as Sidekiq Queue
-    participant Handler as SidekiqTaskHandler
+    participant Handler as TaskHandler
     participant CbWorker as CallbackWorker
     participant Callback as Callback Service
 
@@ -144,8 +144,8 @@ sequenceDiagram
 ```
 
 Key integration points:
-1. **RequestWorker** converts Sidekiq job args into async_http_pool Request objects
-2. **SidekiqTaskHandler** converts processor callbacks into Sidekiq jobs
+1. **RequestWorker** converts Sidekiq job args into patient_http Request objects
+2. **TaskHandler** converts processor callbacks into Sidekiq jobs
 3. **CallbackWorker** invokes the user's callback service methods
 4. **ExternalStorage** handles large payloads transparently at each step
 
@@ -153,18 +153,18 @@ Key integration points:
 
 ```mermaid
 erDiagram
-    SIDEKIQ-ASYNC-HTTP ||--|| ASYNC-HTTP-POOL : "integrates with"
-    SIDEKIQ-ASYNC-HTTP ||--|| SIDEKIQ-TASK-HANDLER : "provides"
-    SIDEKIQ-ASYNC-HTTP ||--|| REQUEST-WORKER : "defines"
-    SIDEKIQ-ASYNC-HTTP ||--|| CALLBACK-WORKER : "defines"
-    SIDEKIQ-ASYNC-HTTP ||--|| TASK-MONITOR : "manages"
-    SIDEKIQ-ASYNC-HTTP ||--|| LIFECYCLE-HOOKS : "registers"
+    PATIENT-HTTP-SIDEKIQ ||--|| PATIENT-HTTP : "integrates with"
+    PATIENT-HTTP-SIDEKIQ ||--|| SIDEKIQ-TASK-HANDLER : "provides"
+    PATIENT-HTTP-SIDEKIQ ||--|| REQUEST-WORKER : "defines"
+    PATIENT-HTTP-SIDEKIQ ||--|| CALLBACK-WORKER : "defines"
+    PATIENT-HTTP-SIDEKIQ ||--|| TASK-MONITOR : "manages"
+    PATIENT-HTTP-SIDEKIQ ||--|| LIFECYCLE-HOOKS : "registers"
 
-    ASYNC-HTTP-POOL ||--|| PROCESSOR : "provides"
-    ASYNC-HTTP-POOL ||--|| REQUEST : "defines"
-    ASYNC-HTTP-POOL ||--|| RESPONSE : "defines"
-    ASYNC-HTTP-POOL ||--|| ERROR : "defines"
-    ASYNC-HTTP-POOL ||--|| EXTERNAL-STORAGE : "provides"
+    PATIENT-HTTP ||--|| PROCESSOR : "provides"
+    PATIENT-HTTP ||--|| REQUEST : "defines"
+    PATIENT-HTTP ||--|| RESPONSE : "defines"
+    PATIENT-HTTP ||--|| ERROR : "defines"
+    PATIENT-HTTP ||--|| EXTERNAL-STORAGE : "provides"
 
     PROCESSOR ||--|| TASK-HANDLER : "uses"
     PROCESSOR ||--o{ REQUEST : "processes"
@@ -224,21 +224,21 @@ erDiagram
 
 ### Integration Points
 
-**Sidekiq → async_http_pool:**
-- `RequestWorker` converts Sidekiq job args to `AsyncHttpPool::Request` objects
-- `SidekiqTaskHandler` implements `AsyncHttpPool::TaskHandler` interface
+**Sidekiq → patient_http:**
+- `RequestWorker` converts Sidekiq job args to `PatientHttp::Request` objects
+- `TaskHandler` implements `PatientHttp::TaskHandler` interface
 - `Processor` is created and managed by the Sidekiq integration layer
 
-**async_http_pool → Sidekiq:**
+**patient_http → Sidekiq:**
 - Processor calls `TaskHandler#on_complete` and `TaskHandler#on_error` callbacks
-- `SidekiqTaskHandler` enqueues `CallbackWorker` jobs via Sidekiq
+- `TaskHandler` enqueues `CallbackWorker` jobs via Sidekiq
 - Large payloads are stored via `ExternalStorage` before enqueueing
 
 ## Process Model
 
 Each Sidekiq process runs:
 - Multiple worker threads (configured via Sidekiq concurrency)
-- **One** async HTTP processor thread (from async_http_pool)
+- **One** async HTTP processor thread (from patient_http)
 - **One** fiber reactor within the processor thread
 - **One** task monitor thread for crash recovery
 
@@ -258,7 +258,7 @@ Each Sidekiq process runs:
 │                            │                                │
 │                            ▼                                │
 │               ┌─────────────────────────┐                   │
-│               │  AsyncHttpPool          │                   │
+│               │  PatientHttp          │                   │
 │               │  Processor              │                   │
 │               │  (Dedicated Thread)     │                   │
 │               │                         │                   │
@@ -298,18 +298,18 @@ Each Sidekiq process runs:
 ### Architectural Layers
 
 **Application Layer:**
-- User code calls `Sidekiq::AsyncHttp.get/post/etc`
-- Or includes `AsyncHttpPool::RequestHelper` for `async_get/async_post/etc` instance methods
+- User code calls `PatientHttp::Sidekiq.get/post/etc`
+- Or includes `PatientHttp::RequestHelper` for `async_get/async_post/etc` instance methods
 - Callback services implement `on_complete` and `on_error`
 
 **Sidekiq Integration Layer (this gem):**
 - `RequestWorker` - Sidekiq job to submit requests
 - `CallbackWorker` - Sidekiq job to invoke callbacks
-- `SidekiqTaskHandler` - Bridges processor callbacks to Sidekiq jobs
-- `SidekiqLifecycleHooks` - Manages processor lifecycle
+- `TaskHandler` - Bridges processor callbacks to Sidekiq jobs
+- `LifecycleHooks` - Manages processor lifecycle
 - `TaskMonitor` - Crash recovery and inflight tracking
 
-**HTTP Processing Layer (async_http_pool):**
+**HTTP Processing Layer (patient_http):**
 - `Processor` - Main async I/O processor
 - `Request/Response/Error` - Value objects
 - `ExternalStorage` - Large payload handling
@@ -324,7 +324,7 @@ The system uses multiple levels of concurrency:
 - Execute `RequestWorker` and `CallbackWorker` jobs
 - Block only briefly while submitting requests to the processor
 
-### Async HTTP Processor Thread (from async_http_pool)
+### Async HTTP Processor Thread (from patient_http)
 - Runs Ruby's Fiber scheduler (`async` gem) for non-blocking I/O
 - Maintains HTTP/2 connection pools for efficient connection reuse
 - Multiplexes hundreds of concurrent HTTP requests via fibers
@@ -343,7 +343,7 @@ The system uses multiple levels of concurrency:
 
 ## State Management
 
-The processor (from async_http_pool) maintains state through its lifecycle, managed by Sidekiq lifecycle hooks:
+The processor (from patient_http) maintains state through its lifecycle, managed by Sidekiq lifecycle hooks:
 
 - **stopped**: Initial state, not processing requests
 - **starting**: Processor is initializing, reactor thread launching
@@ -354,11 +354,11 @@ The processor (from async_http_pool) maintains state through its lifecycle, mana
 **Lifecycle Integration:**
 
 ```ruby
-# Registered automatically via SidekiqLifecycleHooks
+# Registered automatically via LifecycleHooks
 Sidekiq.configure_server do |config|
-  config.on(:startup) { Sidekiq::AsyncHttp.start }    # → processor state: running
-  config.on(:quiet)   { Sidekiq::AsyncHttp.quiet }    # → processor state: draining
-  config.on(:shutdown) { Sidekiq::AsyncHttp.stop }    # → processor state: stopping
+  config.on(:startup) { PatientHttp::Sidekiq.start }    # → processor state: running
+  config.on(:quiet)   { PatientHttp::Sidekiq.quiet }    # → processor state: draining
+  config.on(:shutdown) { PatientHttp::Sidekiq.stop }    # → processor state: stopping
 end
 ```
 
@@ -385,18 +385,18 @@ In-flight requests are tracked in Redis to enable recovery when Sidekiq processe
 6. Prevents lost work during deployments or crashes
 
 **Redis Keys:**
-- `sidekiq:async_http:inflight_index` - Sorted set of request IDs by timestamp
-- `sidekiq:async_http:inflight_jobs` - Hash of request payloads
-- `sidekiq:async_http:processes` - Set of active process IDs
-- `sidekiq:async_http:gc_lock` - Distributed lock for garbage collection
+- `sidekiq:patient_http:inflight_index` - Sorted set of request IDs by timestamp
+- `sidekiq:patient_http:inflight_jobs` - Hash of request payloads
+- `sidekiq:patient_http:processes` - Set of active process IDs
+- `sidekiq:patient_http:gc_lock` - Distributed lock for garbage collection
 
 ## Configuration
 
-Configuration is split between Sidekiq-specific concerns and async_http_pool settings:
+Configuration is split between Sidekiq-specific concerns and patient_http settings:
 
 ### Sidekiq Integration Settings
 ```ruby
-Sidekiq::AsyncHttp.configure do |config|
+PatientHttp::Sidekiq.configure do |config|
   # Sidekiq-specific
   config.callback_queue = "callbacks"        # Queue name for CallbackWorker jobs
   config.request_queue = "http_requests"     # Queue name for RequestWorker jobs
@@ -414,9 +414,9 @@ end
 ```
 
 ### Async HTTP Pool Settings (delegated)
-All async_http_pool configuration is accessible:
+All patient_http configuration is accessible:
 ```ruby
-Sidekiq::AsyncHttp.configure do |config|
+PatientHttp::Sidekiq.configure do |config|
   # HTTP settings
   config.default_timeout = 30
   config.max_connections = 100
@@ -431,7 +431,7 @@ Sidekiq::AsyncHttp.configure do |config|
 end
 ```
 
-The configuration object is passed to the `AsyncHttpPool::Processor` on startup.
+The configuration object is passed to the `PatientHttp::Processor` on startup.
 
 ## Web UI
 
@@ -439,13 +439,13 @@ Optional Sidekiq Web integration (via `WebUI` module) provides:
 
 - Real-time processor state (running/draining/stopped)
 - In-flight request counts by process
-- Historical statistics from async_http_pool metrics
+- Historical statistics from patient_http metrics
 - Health indicators
 - Max connection capacity per process
 
 The Web UI reads from:
 - `TaskMonitor` Redis keys for inflight counts
-- `AsyncHttpPool::Processor` stats for metrics
+- `PatientHttp::Processor` stats for metrics
 - Process registry for distributed monitoring
 
 ## Data Flow
@@ -454,12 +454,12 @@ The Web UI reads from:
 
 ```
 Application Code
-  ↓ Sidekiq::AsyncHttp.get(url, callback: MyCallback)
+  ↓ PatientHttp::Sidekiq.get(url, callback: MyCallback)
 RequestWorker job enqueued
   ↓ Sidekiq processes job
 RequestWorker#perform
-  ↓ Creates Request, SidekiqTaskHandler
-AsyncHttpPool::Processor.submit(request, handler)
+  ↓ Creates Request, TaskHandler
+PatientHttp::Processor.submit(request, handler)
   ↓ Queued in memory
 TaskMonitor.track(request_id, handler)
   ↓ Stored in Redis
@@ -473,7 +473,7 @@ Response/Error received
 ```
 Fiber completes with Response
   ↓
-SidekiqTaskHandler#on_complete(response, callback)
+TaskHandler#on_complete(response, callback)
   ↓ Stores via ExternalStorage if large
 CallbackWorker job enqueued
   ↓ Sidekiq processes job

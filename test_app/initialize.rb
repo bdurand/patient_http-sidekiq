@@ -3,7 +3,7 @@
 require "time"
 require "sidekiq"
 require "sidekiq/encrypted_args"
-require_relative "../lib/sidekiq-async_http"
+require_relative "../lib/patient_http-sidekiq"
 
 require_relative "app_config"
 
@@ -18,19 +18,19 @@ Sidekiq.configure_client do |config|
   config.redis = {url: AppConfig.redis_url}
 end
 
-# Configure Sidekiq::AsyncHttp processor
-Sidekiq::AsyncHttp.configure do |config|
+# Configure PatientHttp::Sidekiq processor
+PatientHttp::Sidekiq.configure do |config|
   config.max_connections = AppConfig.max_connections
   config.proxy_url = ENV["HTTP_PROXY"]
   config.register_payload_store(:files, adapter: :file, directory: File.join(__dir__, "tmp/payloads"))
   config.payload_store_threshold = 1024
 end
 
-Sidekiq::AsyncHttp.after_completion do |response|
+PatientHttp::Sidekiq.after_completion do |response|
   Sidekiq.logger.info("Async HTTP Continuation: #{response.status} #{response.http_method.to_s.upcase} #{response.url}")
 end
 
-Sidekiq::AsyncHttp.after_error do |error|
+PatientHttp::Sidekiq.after_error do |error|
   Sidekiq.logger.error("Async HTTP Error: #{error.error_class.name} #{error.message} on #{error.http_method.to_s.upcase} #{error.url}")
 end
 

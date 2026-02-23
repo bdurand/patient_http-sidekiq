@@ -1,0 +1,93 @@
+# frozen_string_literal: true
+
+require "spec_helper"
+
+RSpec.describe PatientHttp::Sidekiq::TaskHandler do
+  let(:sidekiq_job) do
+    {
+      "class" => "TestWorker",
+      "jid" => "test-jid-123",
+      "args" => [1, 2, 3]
+    }
+  end
+
+  let(:handler) { described_class.new(sidekiq_job) }
+
+  describe "#on_complete" do
+    before { TestCallback.reset_calls! }
+    after { PatientHttp::Sidekiq.reset_configuration! }
+
+    it "encrypts the response data before enqueuing" do
+      PatientHttp::Sidekiq.configure do |c|
+        c.encryption { |data| data.merge("_encrypted" => true) }
+      end
+
+      response = PatientHttp::Response.new(
+        status: 200,
+        headers: {"Content-Type" => "text/plain"},
+        body: "OK",
+        duration: 0.1,
+        request_id: "req-123",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+
+      handler.on_complete(response, TestCallback.name)
+
+      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
+      data = job["args"][0]
+
+      expect(data["_encrypted"]).to eq(true)
+      expect(data["status"]).to eq(200)
+    end
+  end
+
+  describe "#retry" do
+    it "re-enqueues the original Sidekiq job" do
+      expect(Sidekiq::Client).to receive(:push).with(sidekiq_job).and_return("new-jid")
+      result = handler.retry
+      expect(result).to eq("new-jid")
+    end
+
+    it "preserves all job attributes" do
+      job_with_metadata = sidekiq_job.merge("retry_count" => 2, "custom_field" => "value")
+      handler_with_metadata = described_class.new(job_with_metadata)
+      expect(Sidekiq::Client).to receive(:push) do |job|
+        expect(job["retry_count"]).to eq(2)
+        expect(job["custom_field"]).to eq("value")
+        "new-jid"
+      end
+      handler_with_metadata.retry
+    end
+  end
+
+  describe "#on_error" do
+    before { TestCallback.reset_calls! }
+    after { PatientHttp::Sidekiq.reset_configuration! }
+
+    it "encrypts the error data before enqueuing" do
+      PatientHttp::Sidekiq.configure do |c|
+        c.encryption { |data| data.merge("_encrypted" => true) }
+      end
+
+      error = PatientHttp::RequestError.new(
+        class_name: "StandardError",
+        message: "test error",
+        backtrace: ["line 1"],
+        error_type: "runtime",
+        duration: 0.1,
+        request_id: "req-456",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+
+      handler.on_error(error, TestCallback.name)
+
+      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
+      data = job["args"][0]
+
+      expect(data["_encrypted"]).to eq(true)
+      expect(data["message"]).to eq("test error")
+    end
+  end
+end

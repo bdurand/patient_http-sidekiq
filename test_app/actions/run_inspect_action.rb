@@ -28,7 +28,7 @@ class RunInspectAction
 
     body = request.params["body"]
 
-    Sidekiq::AsyncHttp.request(
+    PatientHttp::Sidekiq.request(
       http_method,
       url,
       callback: "InspectCallback",

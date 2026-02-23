@@ -1,8 +1,8 @@
-# Sidekiq::AsyncHttp
+# PatientHttp::Sidekiq
 
-[![Continuous Integration](https://github.com/bdurand/sidekiq-async_http/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/bdurand/sidekiq-async_http/actions/workflows/continuous_integration.yml)
+[![Continuous Integration](https://github.com/bdurand/patient_http-sidekiq/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/bdurand/patient_http-sidekiq/actions/workflows/continuous_integration.yml)
 [![Ruby Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://github.com/testdouble/standard)
-[![Gem Version](https://badge.fury.io/rb/sidekiq-async_http.svg)](https://badge.fury.io/rb/sidekiq-async_http)
+[![Gem Version](https://badge.fury.io/rb/patient_http-sidekiq.svg)](https://badge.fury.io/rb/patient_http-sidekiq)
 
 *Built for APIs that like to think.*
 
@@ -67,10 +67,10 @@ end
 
 ### 2. Make HTTP Requests
 
-Make HTTP requests from anywhere in your code using `Sidekiq::AsyncHttp`:
+Make HTTP requests from anywhere in your code using `PatientHttp::Sidekiq`:
 
 ```ruby
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/users/#{user_id}",
   callback: FetchDataCallback,
   callback_args: {user_id: user_id}
@@ -79,9 +79,9 @@ Sidekiq::AsyncHttp.get(
 
 ### 3. That's It!
 
-The processor starts automatically with Sidekiq. When the HTTP request completes, your callback's `on_complete` method is executed as a new Sidekiq job with the [Response](lib/sidekiq/async_http/response.rb) object.
+The processor starts automatically with Sidekiq. When the HTTP request completes, your callback's `on_complete` method is executed as a new Sidekiq job with the [Response](lib/sidekiq/patient_http/response.rb) object.
 
-If an error occurs during the request, the `on_error` method is called with an [Error](lib/sidekiq/async_http/error.rb) object.
+If an error occurs during the request, the `on_error` method is called with an [Error](lib/sidekiq/patient_http/error.rb) object.
 
 The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args:` option. You can access them using symbol or string keys:
 
@@ -91,7 +91,7 @@ response.callback_args["user_id"]   # String access
 ```
 
 > [!NOTE]
-> HTTP requests are made asynchronously. Calling `Sidekiq::AsyncHttp.get` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
+> HTTP requests are made asynchronously. Calling `PatientHttp::Sidekiq.get` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
 
 > [!IMPORTANT]
 > Do not re-raise errors in the `on_error` callback as a means to retry. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
@@ -119,7 +119,7 @@ class ApiCallback
   end
 end
 
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/data/#{id}",
   callback: ApiCallback
 )
@@ -136,7 +136,7 @@ class ApiCallback
 
   def on_error(error)
     # Called for exceptions AND HTTP errors when using raise_error_responses
-    if error.is_a?(AsyncHttpPool::HttpError)
+    if error.is_a?(PatientHttp::HttpError)
       # Access the response via error.response
       Rails.logger.error("HTTP #{error.status} from #{error.url}: #{error.response.body}")
     else
@@ -146,7 +146,7 @@ class ApiCallback
   end
 end
 
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/data/#{id}",
   callback: ApiCallback,
   raise_error_responses: true
@@ -157,7 +157,7 @@ The `HttpError` provides convenient access to the response:
 
 ```ruby
 def on_error(error)
-  if error.is_a?(AsyncHttpPool::HttpError)
+  if error.is_a?(PatientHttp::HttpError)
     puts error.status              # HTTP status code
     puts error.url                 # Request URL
     puts error.http_method         # HTTP method
@@ -170,41 +170,41 @@ end
 
 ## Usage Patterns
 
-### Making Requests with Sidekiq::AsyncHttp
+### Making Requests with PatientHttp::Sidekiq
 
-The main entry point is the `Sidekiq::AsyncHttp` module, which provides convenience methods for all HTTP verbs:
+The main entry point is the `PatientHttp::Sidekiq` module, which provides convenience methods for all HTTP verbs:
 
 ```ruby
 # GET request
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/users/123",
   callback: MyCallback,
   callback_args: {user_id: 123}
 )
 
 # POST request with JSON body
-Sidekiq::AsyncHttp.post(
+PatientHttp::Sidekiq.post(
   "https://api.example.com/users",
   callback: MyCallback,
   json: {name: "John", email: "john@example.com"}
 )
 
 # PUT request
-Sidekiq::AsyncHttp.put(
+PatientHttp::Sidekiq.put(
   "https://api.example.com/users/123",
   callback: MyCallback,
   json: {name: "Updated Name"}
 )
 
 # PATCH request
-Sidekiq::AsyncHttp.patch(
+PatientHttp::Sidekiq.patch(
   "https://api.example.com/users/123",
   callback: MyCallback,
   json: {status: "active"}
 )
 
 # DELETE request
-Sidekiq::AsyncHttp.delete(
+PatientHttp::Sidekiq.delete(
   "https://api.example.com/users/123",
   callback: MyCallback
 )
@@ -222,12 +222,12 @@ Available options:
 
 ### Using Request Templates
 
-For repeated requests to the same API, use `AsyncHttpPool::RequestTemplate` to share configuration:
+For repeated requests to the same API, use `PatientHttp::RequestTemplate` to share configuration:
 
 ```ruby
 class ApiService
   def initialize
-    @template = AsyncHttpPool::RequestTemplate.new(
+    @template = PatientHttp::RequestTemplate.new(
       base_url: "https://api.example.com",
       headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
       timeout: 60
@@ -236,7 +236,7 @@ class ApiService
 
   def fetch_user(user_id)
     request = @template.get("/users/#{user_id}")
-    Sidekiq::AsyncHttp.execute(
+    PatientHttp::Sidekiq.execute(
       request,
       callback: FetchUserCallback,
       callback_args: {user_id: user_id}
@@ -245,7 +245,7 @@ class ApiService
 
   def update_user(user_id, attributes)
     request = @template.patch("/users/#{user_id}", json: attributes)
-    Sidekiq::AsyncHttp.execute(
+    PatientHttp::Sidekiq.execute(
       request,
       callback: UpdateUserCallback,
       callback_args: {user_id: user_id}
@@ -256,13 +256,13 @@ end
 
 ### Using the RequestHelper Module
 
-For classes that make many async HTTP requests, you can include `AsyncHttpPool::RequestHelper` to get convenient instance methods like `async_get`, `async_post`, `async_put`, `async_patch`, and `async_delete`. You can also define a request template at the class level using the `request_template` class method to set shared options like `base_url`, `headers`, and `timeout`.
+For classes that make many async HTTP requests, you can include `PatientHttp::RequestHelper` to get convenient instance methods like `async_get`, `async_post`, `async_put`, `async_patch`, and `async_delete`. You can also define a request template at the class level using the `request_template` class method to set shared options like `base_url`, `headers`, and `timeout`.
 
 When using this gem, the request handler is automatically registered when the processor starts and unregistered when it stops — no manual setup is required.
 
 ```ruby
 class NotificationService
-  include AsyncHttpPool::RequestHelper
+  include PatientHttp::RequestHelper
 
   request_template base_url: "https://api.example.com",
                    headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
@@ -285,9 +285,9 @@ class NotificationService
 end
 ```
 
-The `async_*` methods accept the same options as `Sidekiq::AsyncHttp.get`, `Sidekiq::AsyncHttp.post`, etc. Paths are resolved relative to the `base_url` defined in the request template.
+The `async_*` methods accept the same options as `PatientHttp::Sidekiq.get`, `PatientHttp::Sidekiq.post`, etc. Paths are resolved relative to the `base_url` defined in the request template.
 
-See the [async_http_pool gem](https://github.com/bdurand/async_http_pool) for the full `RequestHelper` documentation.
+See the [patient_http gem](https://github.com/bdurand/patient_http) for the full `RequestHelper` documentation.
 
 ### Callback Arguments
 
@@ -317,7 +317,7 @@ class FetchDataCallback
 end
 
 # Pass data via callback_args option
-Sidekiq::AsyncHttp.get(
+PatientHttp::Sidekiq.get(
   "https://api.example.com/users/#{user_id}",
   callback: FetchDataCallback,
   callback_args: {
@@ -341,7 +341,7 @@ Requests and responses from asynchronous HTTP requests will be pushed to Redis i
 You can configure an optional `encryptor` and `decryptor` to encrypt request and response data when it is serialized:
 
 ```ruby
-Sidekiq::AsyncHttp.configure do |config|
+PatientHttp::Sidekiq.configure do |config|
   config.encryptor = ->(data) { MyEncryption.encrypt(data) }
   config.decryptor = ->(encrypted_value) { MyEncryption.decrypt(encrypted_value) }
 end
@@ -363,7 +363,7 @@ See the [documentation](https://github.com/bdurand/sidekiq-encrypted_args) for m
 The gem can be configured globally in an initializer:
 
 ```ruby
-Sidekiq::AsyncHttp.configure do |config|
+PatientHttp::Sidekiq.configure do |config|
   # Maximum concurrent HTTP requests (default: 256)
   config.max_connections = 256
 
@@ -409,14 +409,14 @@ Sidekiq::AsyncHttp.configure do |config|
   config.raise_error_responses = false
 
   # Sidekiq options for RequestWorker and CallbackWorker
-  config.sidekiq_options = {queue: "async_http", retry: 5}
+  config.sidekiq_options = {queue: "patient_http", retry: 5}
 
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
 end
 ```
 
-See the [Configuration](lib/sidekiq/async_http/configuration.rb) class for all available options.
+See the [Configuration](lib/sidekiq/patient_http/configuration.rb) class for all available options.
 
 ### Tuning Tips
 
@@ -444,7 +444,7 @@ If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processo
 ```ruby
 # config/routes.rb (Rails)
 require "sidekiq/web"
-require "sidekiq/async_http/web_ui"
+require "sidekiq/patient_http/web_ui"
 
 mount Sidekiq::Web => "/sidekiq"
 ```
@@ -459,13 +459,13 @@ The Web UI shows:
 You can register callbacks to integrate with your monitoring system using the `after_completion` and `after_error` hooks:
 
 ```ruby
-Sidekiq::AsyncHttp.after_completion do |response|
-  StatsD.timing("async_http.duration", response.duration * 1000)
-  StatsD.increment("async_http.status.#{response.status}")
+PatientHttp::Sidekiq.after_completion do |response|
+  StatsD.timing("patient_http.duration", response.duration * 1000)
+  StatsD.increment("patient_http.status.#{response.status}")
 end
 
-Sidekiq::AsyncHttp.after_error do |error|
-  StatsD.increment("async_http.error.#{error.error_type}")
+PatientHttp::Sidekiq.after_error do |error|
+  StatsD.increment("patient_http.error.#{error.error_type}")
   Sentry.capture_message("Async HTTP error: #{error.message}")
 end
 ```
@@ -509,7 +509,7 @@ The gem supports `Sidekiq::Testing.inline!` mode for synchronous testing. When i
 Add this line to your application's Gemfile:
 
 ```ruby
-gem "sidekiq-async_http"
+gem "patient_http-sidekiq"
 ```
 
 Then execute:
@@ -520,7 +520,7 @@ bundle install
 
 ## Contributing
 
-Open a pull request on [GitHub](https://github.com/bdurand/sidekiq-async_http).
+Open a pull request on [GitHub](https://github.com/bdurand/patient_http-sidekiq).
 
 Please use the [standardrb](https://github.com/testdouble/standard) syntax and lint your code with `standardrb --fix` before submitting.
 
