@@ -11,8 +11,9 @@ require "patient_http"
 #
 # Make HTTP requests from anywhere in your code:
 #
-#   PatientHttp::Sidekiq.get(
-#     "https://api.example.com/users/123",
+#   request = PatientHttp::Request.new(:get, "https://api.example.com/users/123")
+#   PatientHttp::Sidekiq.execute(
+#     request,
 #     callback: MyCallback,
 #     callback_args: {user_id: 123}
 #   )
@@ -201,80 +202,6 @@ module PatientHttp
         request_id
       end
 
-      # Enqueue an async HTTP request.
-      #
-      # @param method [Symbol] HTTP method (:get, :post, :put, :patch, :delete)
-      # @param url [String, URI] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param headers [Hash, PatientHttp::HttpHeaders] request headers
-      # @param body [String, nil] request body
-      # @param json [Object, nil] JSON object to serialize as body
-      # @param params [Hash, nil] query parameters to append to URL
-      # @param timeout [Float] request timeout in seconds
-      # @param raise_error_responses [Boolean, nil] treat non-2xx responses as errors
-      # @param callback_args [Hash, nil] arguments to pass to callback via response/error
-      # @return [String] request ID
-      def request(
-        method,
-        url,
-        callback:,
-        headers: {},
-        body: nil,
-        json: nil,
-        params: nil,
-        timeout: nil,
-        raise_error_responses: nil,
-        callback_args: nil
-      )
-        request = PatientHttp::Request.new(method, url, body: body, json: json, headers: headers, params: params, timeout: timeout)
-        execute(request, callback: callback, raise_error_responses: raise_error_responses, callback_args: callback_args)
-      end
-
-      # Convenience method for GET requests
-      # @param url [String] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param options [Hash] additional options (see #request)
-      # @return [String] request ID
-      def get(url, callback:, **options)
-        request(:get, url, callback: callback, **options)
-      end
-
-      # Convenience method for POST requests
-      # @param url [String] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param options [Hash] additional options (see #request)
-      # @return [String] request ID
-      def post(url, callback:, **options)
-        request(:post, url, callback: callback, **options)
-      end
-
-      # Convenience method for PUT requests
-      # @param url [String] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param options [Hash] additional options (see #request)
-      # @return [String] request ID
-      def put(url, callback:, **options)
-        request(:put, url, callback: callback, **options)
-      end
-
-      # Convenience method for PATCH requests
-      # @param url [String] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param options [Hash] additional options (see #request)
-      # @return [String] request ID
-      def patch(url, callback:, **options)
-        request(:patch, url, callback: callback, **options)
-      end
-
-      # Convenience method for DELETE requests
-      # @param url [String] full URL to request
-      # @param callback [Class, String] callback service class with on_complete and on_error instance methods
-      # @param options [Hash] additional options (see #request)
-      # @return [String] request ID
-      def delete(url, callback:, **options)
-        request(:delete, url, callback: callback, **options)
-      end
-
       # Start the processor
       #
       # @return [void]
@@ -294,7 +221,7 @@ module PatientHttp
           )
         end
 
-        PatientHttp::RequestHelper.register_handler(@request_handler)
+        PatientHttp.register_handler(@request_handler)
       end
 
       # Signal the processor to drain (stop accepting new requests)
@@ -317,7 +244,7 @@ module PatientHttp
         @processor.stop(timeout: timeout)
 
         if @request_handler
-          PatientHttp::RequestHelper.unregister_handler(@request_handler)
+          PatientHttp.unregister_handler(@request_handler)
         end
 
         @processor = nil

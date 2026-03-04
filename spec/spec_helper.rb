@@ -18,7 +18,11 @@ require "console"
 
 require_relative "../lib/patient_http-sidekiq"
 
-require "sidekiq/testing"
+if Gem::Version.new(Sidekiq::VERSION) < Gem::Version.new("8.1.0")
+  require "sidekiq/testing"
+else
+  Sidekiq.testing!(:fake)
+end
 
 # Suppress Async task warnings (like EPIPE errors from early connection closes)
 # These are expected in tests that intentionally close connections early
@@ -35,9 +39,6 @@ WebMock.disable_net_connect!(allow_localhost: true)
 Dir.glob(File.join(__dir__, "support", "**", "*.rb")).sort.each do |file|
   require file
 end
-
-# Use fake mode for Sidekiq during tests
-Sidekiq::Testing.fake!
 
 Sidekiq.strict_args!(true)
 
