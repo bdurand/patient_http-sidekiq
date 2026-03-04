@@ -70,8 +70,9 @@ end
 Make HTTP requests from anywhere in your code using `PatientHttp::Sidekiq`:
 
 ```ruby
-PatientHttp::Sidekiq.get(
-  "https://api.example.com/users/#{user_id}",
+request = PatientHttp::Request.new(:get, "https://api.example.com/users/#{user_id}")
+PatientHttp::Sidekiq.execute(
+  request,
   callback: FetchDataCallback,
   callback_args: {user_id: user_id}
 )
@@ -91,7 +92,7 @@ response.callback_args["user_id"]   # String access
 ```
 
 > [!NOTE]
-> HTTP requests are made asynchronously. Calling `PatientHttp::Sidekiq.get` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
+> HTTP requests are made asynchronously. Calling `PatientHttp::Sidekiq.execute` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
 
 > [!IMPORTANT]
 > Do not re-raise errors in the `on_error` callback as a means to retry. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
@@ -119,8 +120,9 @@ class ApiCallback
   end
 end
 
-PatientHttp::Sidekiq.get(
-  "https://api.example.com/data/#{id}",
+request = PatientHttp::Request.new(:get, "https://api.example.com/data/#{id}")
+PatientHttp::Sidekiq.execute(
+  request,
   callback: ApiCallback
 )
 ```
@@ -146,8 +148,9 @@ class ApiCallback
   end
 end
 
-PatientHttp::Sidekiq.get(
-  "https://api.example.com/data/#{id}",
+request = PatientHttp::Request.new(:get, "https://api.example.com/data/#{id}")
+PatientHttp::Sidekiq.execute(
+  request,
   callback: ApiCallback,
   raise_error_responses: true
 )
@@ -172,52 +175,42 @@ end
 
 ### Making Requests with PatientHttp::Sidekiq
 
-The main entry point is the `PatientHttp::Sidekiq` module, which provides convenience methods for all HTTP verbs:
+The main entry point is the `PatientHttp::Sidekiq` module. Use `PatientHttp::Request` to build the request and `PatientHttp::Sidekiq.execute` to enqueue it:
 
 ```ruby
 # GET request
-PatientHttp::Sidekiq.get(
-  "https://api.example.com/users/123",
-  callback: MyCallback,
-  callback_args: {user_id: 123}
-)
+request = PatientHttp::Request.new(:get, "https://api.example.com/users/123")
+PatientHttp::Sidekiq.execute(request, callback: MyCallback, callback_args: {user_id: 123})
 
 # POST request with JSON body
-PatientHttp::Sidekiq.post(
-  "https://api.example.com/users",
-  callback: MyCallback,
-  json: {name: "John", email: "john@example.com"}
-)
+request = PatientHttp::Request.new(:post, "https://api.example.com/users", json: {name: "John", email: "john@example.com"})
+PatientHttp::Sidekiq.execute(request, callback: MyCallback)
 
 # PUT request
-PatientHttp::Sidekiq.put(
-  "https://api.example.com/users/123",
-  callback: MyCallback,
-  json: {name: "Updated Name"}
-)
+request = PatientHttp::Request.new(:put, "https://api.example.com/users/123", json: {name: "Updated Name"})
+PatientHttp::Sidekiq.execute(request, callback: MyCallback)
 
 # PATCH request
-PatientHttp::Sidekiq.patch(
-  "https://api.example.com/users/123",
-  callback: MyCallback,
-  json: {status: "active"}
-)
+request = PatientHttp::Request.new(:patch, "https://api.example.com/users/123", json: {status: "active"})
+PatientHttp::Sidekiq.execute(request, callback: MyCallback)
 
 # DELETE request
-PatientHttp::Sidekiq.delete(
-  "https://api.example.com/users/123",
-  callback: MyCallback
-)
+request = PatientHttp::Request.new(:delete, "https://api.example.com/users/123")
+PatientHttp::Sidekiq.execute(request, callback: MyCallback)
 ```
 
-Available options:
+Available `PatientHttp::Request` options:
 
-- `callback:` - (required) Callback service class or class name
-- `callback_args:` - Hash of arguments passed to callback via response/error
 - `headers:` - Request headers
 - `body:` - Request body (for POST/PUT/PATCH)
 - `json:` - Object to serialize as JSON body (cannot use with body)
+- `params:` - Query parameters to append to URL
 - `timeout:` - Request timeout in seconds
+
+Available `PatientHttp::Sidekiq.execute` options:
+
+- `callback:` - (required) Callback service class or class name
+- `callback_args:` - Hash of arguments passed to callback via response/error
 - `raise_error_responses:` - Treat non-2xx responses as errors
 
 ### Using Request Templates
@@ -317,8 +310,9 @@ class FetchDataCallback
 end
 
 # Pass data via callback_args option
-PatientHttp::Sidekiq.get(
-  "https://api.example.com/users/#{user_id}",
+request = PatientHttp::Request.new(:get, "https://api.example.com/users/#{user_id}")
+PatientHttp::Sidekiq.execute(
+  request,
   callback: FetchDataCallback,
   callback_args: {
     user_id: user_id,
