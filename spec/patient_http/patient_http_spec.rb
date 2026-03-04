@@ -594,6 +594,5 @@ RSpec.describe PatientHttp::Sidekiq do
         end.to raise_error(ArgumentError, /callback_args must respond to to_h/)
       end
     end
-
   end
 end
