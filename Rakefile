@@ -32,8 +32,9 @@ task test_app: "test_app:start"
 namespace :test_app do
   desc "Start the test application"
   task :start do
-    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
-    exec "cd test_app && ruby server"
+    Bundler.with_unbundled_env do
+      exec("ruby", "server", chdir: File.expand_path("test_app", __dir__))
+    end
   end
 
   desc "Stop the running test application on default port 9292 or PORT env var"
@@ -48,20 +49,34 @@ namespace :test_app do
         puts "Killing process #{pid}..."
         system("kill #{pid}")
       end
-      sleep 1
+
+      process_died = false
+      20.times do
+        process_died = `lsof -ti :#{port}`.split("\n").map(&:strip).reject(&:empty?).empty?
+        break if process_died
+
+        sleep(0.25)
+      end
+
+      unless process_died
+        pids.each { |pid| system("kill -9 #{pid}") unless process_died }
+      end
+
       puts "Test application stopped"
     end
   end
 
   desc "Open an interactive console with test application loaded"
   task :console do
-    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
-    exec "cd test_app && ruby console"
+    Bundler.with_unbundled_env do
+      exec("ruby", "console", chdir: File.expand_path("test_app", __dir__))
+    end
   end
 
   desc "Install bundle for the test application"
   task :bundle do
-    ENV["BUNDLE_GEMFILE"] = File.expand_path("test_app/Gemfile", __dir__)
-    exec "cd test_app && bundle install"
+    Bundler.with_unbundled_env do
+      exec("bundle", "install", chdir: File.expand_path("test_app", __dir__))
+    end
   end
 end
