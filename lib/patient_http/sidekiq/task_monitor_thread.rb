@@ -46,7 +46,7 @@ module PatientHttp
         rescue => e
           # Log error but don't crash
           @config.logger&.error("[PatientHttp::Sidekiq] Monitor error: #{e.message}\n#{e.backtrace.join("\n")}")
-          raise if Sidekiq.testing?
+          raise if ::Sidekiq.testing?
         end
 
         @thread.name = "patient-http-monitor"
@@ -120,7 +120,7 @@ module PatientHttp
         @config.logger&.debug("[PatientHttp::Sidekiq] Updated heartbeats for #{request_ids.size} inflight requests")
       rescue => e
         @config.logger&.error("[PatientHttp::Sidekiq] Failed to update heartbeats: #{e.class} - #{e.message}")
-        raise if Sidekiq.testing?
+        raise if ::Sidekiq.testing?
       end
 
       # Attempt to acquire GC lock and clean up orphaned requests.
@@ -147,7 +147,7 @@ module PatientHttp
         end
       rescue => e
         @config.logger&.error("[PatientHttp::Sidekiq] Garbage collection failed: #{e.class} - #{e.message}")
-        raise if Sidekiq.testing?
+        raise if ::Sidekiq.testing?
       end
     end
   end

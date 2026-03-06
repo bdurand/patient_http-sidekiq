@@ -14,7 +14,6 @@ RSpec.describe "Crash Recovery", :integration do
   let(:processor) { PatientHttp::Processor.new(config) }
   let(:observer) { PatientHttp::Sidekiq::ProcessorObserver.new(processor) }
   let(:task_monitor) { observer.task_monitor }
-  let(:web_server) { TestWebServer.new }
 
   around do |example|
     processor.observe(observer)
@@ -97,14 +96,13 @@ RSpec.describe "Crash Recovery", :integration do
 
     # Register task (simulating it being in flight)
     task_monitor.register(task)
-    full_task_id = task_monitor.full_task_id(task.id)
 
     # Set an old timestamp
     old_timestamp_ms = ((Time.now.to_f - 2) * 1000).round
     set_task_timestamp(task_monitor, task, old_timestamp_ms)
 
     # Update heartbeat (simulating monitor thread)
-    task_monitor.update_heartbeats([full_task_id])
+    task_monitor.update_heartbeats([task.id])
 
     # Try to clean up with 3-second threshold
     expect(Sidekiq::Client).not_to receive(:push)

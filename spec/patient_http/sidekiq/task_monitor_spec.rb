@@ -192,7 +192,6 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitor do
     it "handles race condition atomically with Lua script" do
       # Register a task
       registry.register(task)
-      registry.full_task_id(task.id)
 
       # Set old timestamp
       old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round

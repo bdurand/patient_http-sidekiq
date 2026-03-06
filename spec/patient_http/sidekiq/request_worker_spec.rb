@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe PatientHttp::Sidekiq::RequestWorker do
-  describe ".perform" do
+  describe "#perform" do
     let(:sidekiq_job) do
       {
         "class" => "TestWorkers::Worker",

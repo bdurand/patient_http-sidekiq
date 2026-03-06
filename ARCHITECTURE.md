@@ -36,7 +36,7 @@ Registers Sidekiq server lifecycle hooks to automatically:
 - Stop the processor gracefully when Sidekiq shuts down (`:shutdown` event)
 
 ### RequestHelper Handler Registration
-On startup, the integration automatically registers a handler with `PatientHttp::RequestHelper` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `PatientHttp::Sidekiq.execute` invocations. The handler is unregistered on shutdown.
+On startup, the integration automatically registers a handler via `PatientHttp.register_handler!` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `PatientHttp::Sidekiq.execute` invocations. The handler is unregistered on shutdown.
 
 ### ProcessorObserver
 Observes processor state changes and updates the TaskMonitor's Redis heartbeats, enabling distributed crash recovery.
@@ -389,6 +389,7 @@ In-flight requests are tracked in Redis to enable recovery when Sidekiq processe
 - `sidekiq:patient_http:inflight_jobs` - Hash of request payloads
 - `sidekiq:patient_http:processes` - Set of active process IDs
 - `sidekiq:patient_http:gc_lock` - Distributed lock for garbage collection
+- `sidekiq:patient_http:gc_last_run` - Timestamp of last garbage collection run
 
 ## Configuration
 
@@ -397,15 +398,14 @@ Configuration is split between Sidekiq-specific concerns and patient_http settin
 ### Sidekiq Integration Settings
 ```ruby
 PatientHttp::Sidekiq.configure do |config|
-  # Sidekiq-specific
-  config.callback_queue = "callbacks"        # Queue name for CallbackWorker jobs
-  config.request_queue = "http_requests"     # Queue name for RequestWorker jobs
+  # Sidekiq worker options (applied to both RequestWorker and CallbackWorker)
+  config.sidekiq_options = {queue: "patient_http", retry: 5}
 
   # Encryption (for sensitive data in Sidekiq jobs)
-  config.encryptor = MyEncryptor
+  config.encryption { |data| MyEncryption.encrypt(data) }
+  config.decryption { |data| MyEncryption.decrypt(data) }
 
-  # External storage (for large payloads)
-  config.external_storage_enabled = true
+  # External storage threshold (for large payloads)
   config.payload_store_threshold = 100_000   # bytes
 
   # Shutdown timeout
@@ -418,13 +418,11 @@ All patient_http configuration is accessible:
 ```ruby
 PatientHttp::Sidekiq.configure do |config|
   # HTTP settings
-  config.default_timeout = 30
+  config.request_timeout = 30
   config.max_connections = 100
-  config.http2_enabled = true
 
   # Retry behavior
-  config.max_retries = 3
-  config.retry_wait = 1.0
+  config.retries = 3
 
   # Proxy settings
   config.proxy_url = ENV["HTTP_PROXY"]

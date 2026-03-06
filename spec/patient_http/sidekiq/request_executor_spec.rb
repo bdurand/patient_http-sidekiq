@@ -3,7 +3,7 @@
 require "spec_helper"
 
 RSpec.describe PatientHttp::Sidekiq::RequestExecutor do
-  describe "#execute" do
+  describe ".execute" do
     let(:request) { PatientHttp::Request.new(:get, "https://example.com") }
     let(:job_hash) { {"class" => "TestWorker", "args" => [1, 2, 3]} }
     let(:processor) { instance_double(PatientHttp::Processor) }
