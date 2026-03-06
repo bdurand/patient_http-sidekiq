@@ -6,7 +6,7 @@
 
 *Built for APIs that like to think.*
 
-This gem provides a mechanism to offload HTTP requests to a dedicated async I/O processor running in your Sidekiq process, freeing worker threads immediately while HTTP requests are in flight.
+This gem provides a mechanism to offload HTTP requests to a dedicated async I/O processor running in your Sidekiq process, freeing worker threads immediately while HTTP requests are in flight. It provides an integration for the [patient_http gem](https://github.com/bdurand/patient_http) to make asynchronous HTTP requests from anywhere in your application utilizing Sidekiq to handle callbacks.
 
 ## Motivation
 
@@ -67,12 +67,12 @@ end
 
 ### 2. Make HTTP Requests
 
-Make HTTP requests from anywhere in your code using `PatientHttp::Sidekiq`:
+Make HTTP requests from anywhere in your code using `PatientHttp`:
 
 ```ruby
-request = PatientHttp::Request.new(:get, "https://api.example.com/users/#{user_id}")
-PatientHttp::Sidekiq.execute(
-  request,
+PatientHttp.get(
+  "https://api.example.com/users/#{user_id}",
+  headers: {"Authorization" => "Bearer #{ENV['API_KEY']}"},
   callback: FetchDataCallback,
   callback_args: {user_id: user_id}
 )
@@ -80,9 +80,11 @@ PatientHttp::Sidekiq.execute(
 
 ### 3. That's It!
 
-The processor starts automatically with Sidekiq. When the HTTP request completes, your callback's `on_complete` method is executed as a new Sidekiq job with the [Response](lib/sidekiq/patient_http/response.rb) object.
+The request will be enqueued as a Sidekiq job and passed to a [PatientHttp](https://github.com/bdurand/patient_http) processor to execute asynchronously. When the HTTP request completes, your callback's `on_complete` method is executed in another Sidekiq job.
 
-If an error occurs during the request, the `on_error` method is called with an [Error](lib/sidekiq/patient_http/error.rb) object.
+If an error occurs during the request, the `on_error` method is called instead.
+
+You can also call `PatientHttp.post`, `PatientHttp.put`, `PatientHttp.patch`, and `PatientHttp.delete` for other HTTP methods. See the [patient_http docs](https://github.com/bdurand/patient_http) for the full API reference.
 
 The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args:` option. You can access them using symbol or string keys:
 
@@ -90,9 +92,6 @@ The `response.callback_args` and `error.callback_args` provide access to the arg
 response.callback_args[:user_id]    # Symbol access
 response.callback_args["user_id"]   # String access
 ```
-
-> [!NOTE]
-> HTTP requests are made asynchronously. Calling `PatientHttp::Sidekiq.execute` enqueues a Sidekiq job to make the request, so you can call it from anywhere in your code (Sidekiq workers, Rails controllers, background scripts, etc.).
 
 > [!IMPORTANT]
 > Do not re-raise errors in the `on_error` callback as a means to retry. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
@@ -120,9 +119,8 @@ class ApiCallback
   end
 end
 
-request = PatientHttp::Request.new(:get, "https://api.example.com/data/#{id}")
-PatientHttp::Sidekiq.execute(
-  request,
+PatientHttp.get(
+  "https://api.example.com/data/#{id}",
   callback: ApiCallback
 )
 ```
@@ -148,9 +146,8 @@ class ApiCallback
   end
 end
 
-request = PatientHttp::Request.new(:get, "https://api.example.com/data/#{id}")
-PatientHttp::Sidekiq.execute(
-  request,
+PatientHttp.get(
+  "https://api.example.com/data/#{id}",
   callback: ApiCallback,
   raise_error_responses: true
 )
@@ -173,45 +170,58 @@ end
 
 ## Usage Patterns
 
-### Making Requests with PatientHttp::Sidekiq
+### Making Requests
 
-The main entry point is the `PatientHttp::Sidekiq` module. Use `PatientHttp::Request` to build the request and `PatientHttp::Sidekiq.execute` to enqueue it:
+The primary interface for making requests is through the `PatientHttp` module, which provides convenience methods for all HTTP verbs:
 
 ```ruby
 # GET request
-request = PatientHttp::Request.new(:get, "https://api.example.com/users/123")
-PatientHttp::Sidekiq.execute(request, callback: MyCallback, callback_args: {user_id: 123})
+PatientHttp.get("https://api.example.com/users/123",
+  callback: MyCallback, callback_args: {user_id: 123})
 
 # POST request with JSON body
-request = PatientHttp::Request.new(:post, "https://api.example.com/users", json: {name: "John", email: "john@example.com"})
-PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+PatientHttp.post("https://api.example.com/users",
+  json: {name: "John", email: "john@example.com"},
+  callback: MyCallback)
 
 # PUT request
-request = PatientHttp::Request.new(:put, "https://api.example.com/users/123", json: {name: "Updated Name"})
-PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+PatientHttp.put("https://api.example.com/users/123",
+  json: {name: "Updated Name"},
+  callback: MyCallback)
 
 # PATCH request
-request = PatientHttp::Request.new(:patch, "https://api.example.com/users/123", json: {status: "active"})
-PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+PatientHttp.patch("https://api.example.com/users/123",
+  json: {status: "active"},
+  callback: MyCallback)
 
 # DELETE request
-request = PatientHttp::Request.new(:delete, "https://api.example.com/users/123")
-PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+PatientHttp.delete("https://api.example.com/users/123",
+  callback: MyCallback)
 ```
 
-Available `PatientHttp::Request` options:
+Available request options:
 
+- `callback:` - (required) Callback service class or class name
+- `callback_args:` - Hash of arguments passed to callback via response/error
 - `headers:` - Request headers
 - `body:` - Request body (for POST/PUT/PATCH)
 - `json:` - Object to serialize as JSON body (cannot use with body)
 - `params:` - Query parameters to append to URL
 - `timeout:` - Request timeout in seconds
-
-Available `PatientHttp::Sidekiq.execute` options:
-
-- `callback:` - (required) Callback service class or class name
-- `callback_args:` - Hash of arguments passed to callback via response/error
 - `raise_error_responses:` - Treat non-2xx responses as errors
+
+You can also build a `PatientHttp::Request` object and pass it to `PatientHttp.execute` for more control:
+
+```ruby
+request = PatientHttp::Request.new(:get, "https://api.example.com/users/123",
+  headers: {"Authorization" => "Bearer token"},
+  params: {include: "profile"},
+  timeout: 30
+)
+PatientHttp.execute(request: request, callback: MyCallback, callback_args: {user_id: 123})
+```
+
+See the [patient_http docs](https://github.com/bdurand/patient_http) for the full `Request` and `Response` API reference.
 
 ### Using Request Templates
 
@@ -229,8 +239,8 @@ class ApiService
 
   def fetch_user(user_id)
     request = @template.get("/users/#{user_id}")
-    PatientHttp::Sidekiq.execute(
-      request,
+    PatientHttp.execute(
+      request: request,
       callback: FetchUserCallback,
       callback_args: {user_id: user_id}
     )
@@ -238,8 +248,8 @@ class ApiService
 
   def update_user(user_id, attributes)
     request = @template.patch("/users/#{user_id}", json: attributes)
-    PatientHttp::Sidekiq.execute(
-      request,
+    PatientHttp.execute(
+      request: request,
       callback: UpdateUserCallback,
       callback_args: {user_id: user_id}
     )
@@ -278,7 +288,7 @@ class NotificationService
 end
 ```
 
-The `async_*` methods accept the same options as `PatientHttp::Sidekiq.get`, `PatientHttp::Sidekiq.post`, etc. Paths are resolved relative to the `base_url` defined in the request template.
+The `async_*` methods accept the same options as `PatientHttp.get`, `PatientHttp.post`, etc. Paths are resolved relative to the `base_url` defined in the request template.
 
 See the [patient_http gem](https://github.com/bdurand/patient_http) for the full `RequestHelper` documentation.
 
@@ -310,9 +320,8 @@ class FetchDataCallback
 end
 
 # Pass data via callback_args option
-request = PatientHttp::Request.new(:get, "https://api.example.com/users/#{user_id}")
-PatientHttp::Sidekiq.execute(
-  request,
+PatientHttp.get(
+  "https://api.example.com/users/#{user_id}",
   callback: FetchDataCallback,
   callback_args: {
     user_id: user_id,
@@ -330,18 +339,27 @@ PatientHttp::Sidekiq.execute(
 
 ### Sensitive Data Handling
 
-Requests and responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if they contains sensitive data since the data will be stored in plain text.
+Requests and responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if they contain sensitive data since the data will be stored in plain text.
 
-You can configure an optional `encryptor` and `decryptor` to encrypt request and response data when it is serialized:
+You can configure encryption and decryption callables to encrypt request and response data when it is serialized:
 
 ```ruby
 PatientHttp::Sidekiq.configure do |config|
-  config.encryptor = ->(data) { MyEncryption.encrypt(data) }
-  config.decryptor = ->(encrypted_value) { MyEncryption.decrypt(encrypted_value) }
+  config.encryption { |data| MyEncryption.encrypt(data) }
+  config.decryption { |encrypted_value| MyEncryption.decrypt(encrypted_value) }
 end
 ```
 
-The encryptor will be given a hash and should return a JSON safe value. The decryptor will be given the output from the encyptor and should return the original value.
+The encryption callable will be given a hash and should return a JSON-safe value. The decryption callable will be given the output from the encryption callable and should return the original value.
+
+You can also pass any object that responds to `call`:
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.encryption(->(data) { MyEncryption.encrypt(data) })
+  config.decryption(->(encrypted_value) { MyEncryption.decrypt(encrypted_value) })
+end
+```
 
 If the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem is installed, it will be used automatically by default.
 
@@ -377,17 +395,23 @@ PatientHttp::Sidekiq.configure do |config|
   # Supports authentication: "http://user:pass@proxy.example.com:8080"
   config.proxy_url = "http://proxy.example.com:8080"
 
-  # Default User-Agent header for all requests (optional)
+  # Default User-Agent header for all requests (default: "PatientHttp")
   config.user_agent = "MyApp/1.0"
 
   # Timeout for graceful shutdown in seconds (default: the Sidekiq
   # shutdown timeout minus 2 seconds). This should be less than Sidekiq's
-  # shutdown timeout
+  # shutdown timeout.
   config.shutdown_timeout = 23
 
   # Maximum response body size in bytes (default: 1MB)
   # Responses larger than this will trigger ResponseTooLargeError
   config.max_response_size = 1024 * 1024
+
+  # Maximum number of redirects to follow (default: 5, 0 disables)
+  config.max_redirects = 5
+
+  # Whether to raise HttpError for non-2xx responses by default (default: false)
+  config.raise_error_responses = false
 
   # Heartbeat interval for crash recovery in seconds (default: 60)
   config.heartbeat_interval = 60
@@ -396,21 +420,24 @@ PatientHttp::Sidekiq.configure do |config|
   # Requests older than this without a heartbeat will be re-enqueued
   config.orphan_threshold = 300
 
-  # Maximum number of redirects to follow (default: 5, 0 disables)
-  config.max_redirects = 5
-
-  # Whether to raise HttpError for non-2xx responses by default (default: false)
-  config.raise_error_responses = false
+  # Size threshold in bytes for external payload storage (default: 64KB)
+  # Payloads larger than this will be stored externally when a payload
+  # store is configured.
+  config.payload_store_threshold = 64 * 1024
 
   # Sidekiq options for RequestWorker and CallbackWorker
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
+
+  # Encryption for sensitive data (see Sensitive Data Handling)
+  config.encryption { |data| MyEncryption.encrypt(data) }
+  config.decryption { |data| MyEncryption.decrypt(data) }
 end
 ```
 
-See the [Configuration](lib/sidekiq/patient_http/configuration.rb) class for all available options.
+See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all available options.
 
 ### Tuning Tips
 
@@ -423,7 +450,7 @@ See the [Configuration](lib/sidekiq/patient_http/configuration.rb) class for all
 
 > [!IMPORTANT]
 >
-> One difference between using this gem and making synchronous HTTP requests from a Sidekiq job is that the if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
+> One difference between using this gem and making synchronous HTTP requests from a Sidekiq job is that if `max_connections` is reached due to slow asynchronous requests, new requests will trigger an error on the Sidekiq Job. The Sidekiq retry mechanism will handle re-enqueuing the job.
 >
 > In contrast, slow synchronous HTTP requests will fill up the Sidekiq worker pool and block new jobs from being dequeued until a worker thread becomes free.
 >
@@ -433,12 +460,12 @@ See the [Configuration](lib/sidekiq/patient_http/configuration.rb) class for all
 
 ### Web UI
 
-If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics:
+If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics. The extension auto-registers when `Sidekiq::Web` is defined:
 
 ```ruby
 # config/routes.rb (Rails)
 require "sidekiq/web"
-require "sidekiq/patient_http/web_ui"
+require "patient_http-sidekiq"
 
 mount Sidekiq::Web => "/sidekiq"
 ```
