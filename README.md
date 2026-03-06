@@ -6,7 +6,7 @@
 
 *Built for APIs that like to think.*
 
-This gem provides a mechanism to offload HTTP requests to a dedicated async I/O processor running in your Sidekiq process, freeing worker threads immediately while HTTP requests are in flight. It provides an integration for the [patient_http gem](https://github.com/bdurand/patient_http) to make asynchronous HTTP requests from anywhere in your application utilizing Sidekiq to handle callbacks.
+This gem provides a mechanism to offload HTTP requests to a dedicated async I/O processor running in your Sidekiq process using the [patient_http gem](https://github.com/bdurand/patient_http). Worker threads are freed immediately while HTTP requests are in flight so that they can do other work instead of waiting for HTTP responses.
 
 ## Motivation
 
@@ -54,8 +54,12 @@ Define a callback service class with `on_complete` and `on_error` methods:
 class FetchDataCallback
   def on_complete(response)
     user_id = response.callback_args[:user_id]
-    data = response.json
-    User.find(user_id).update!(external_data: data)
+    if response.success?
+      data = response.json
+      User.find(user_id).update!(external_data: data)
+    else
+      Rails.logger.error("HTTP #{response.status} fetching data for user #{user_id}")
+    end
   end
 
   def on_error(error)
@@ -86,15 +90,10 @@ If an error occurs during the request, the `on_error` method is called instead.
 
 You can also call `PatientHttp.post`, `PatientHttp.put`, `PatientHttp.patch`, and `PatientHttp.delete` for other HTTP methods. See the [patient_http docs](https://github.com/bdurand/patient_http) for the full API reference.
 
-The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args:` option. You can access them using symbol or string keys:
-
-```ruby
-response.callback_args[:user_id]    # Symbol access
-response.callback_args["user_id"]   # String access
-```
+The `response.callback_args` and `error.callback_args` provide access to the arguments you passed via the `callback_args` option.
 
 > [!IMPORTANT]
-> Do not re-raise errors in the `on_error` callback as a means to retry. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
+> Do not re-raise errors in the `on_error` callback as a means to retry the request. That will just retry the error callback job. If you want to retry the original request, you can enqueue a new request from within `on_error`. Be careful with this approach, though, as it can lead to infinite retry loops if the error condition is not resolved.
 >
 > Also note that the error callback is only called when an exception occurs during the HTTP request (timeout, connection failure, etc). HTTP error status codes (4xx, 5xx) do not trigger the error callback by default. Instead, they are treated as completed requests and passed to the `on_complete` callback. See the "Handling HTTP Error Responses" section below for how to treat HTTP errors as exceptions.
 

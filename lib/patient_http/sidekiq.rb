@@ -221,7 +221,7 @@ module PatientHttp
           )
         end
 
-        PatientHttp.register_handler(@request_handler)
+        PatientHttp.register_handler!(@request_handler)
       end
 
       # Signal the processor to drain (stop accepting new requests)
@@ -238,14 +238,14 @@ module PatientHttp
       # @param timeout [Float, nil] maximum time to wait for in-flight requests to complete
       # @return [void]
       def stop(timeout: nil)
+        if @request_handler
+          PatientHttp.unregister_handler(@request_handler)
+        end
+
         return unless @processor
 
         timeout ||= configuration.shutdown_timeout
         @processor.stop(timeout: timeout)
-
-        if @request_handler
-          PatientHttp.unregister_handler(@request_handler)
-        end
 
         @processor = nil
       end
@@ -259,6 +259,7 @@ module PatientHttp
         @processor = nil
         @configuration = nil
         @external_storage = nil
+        PatientHttp.unregister_handler(@request_handler) if @request_handler
       end
 
       # Invoke the registered completion callbacks
