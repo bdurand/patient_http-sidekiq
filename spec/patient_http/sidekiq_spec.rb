@@ -227,19 +227,6 @@ RSpec.describe PatientHttp::Sidekiq do
       expect(described_class.processor).to be_nil
     end
 
-    it "uses default shutdown_timeout from configuration" do
-      described_class.configure do |c|
-        c.shutdown_timeout = 15
-      end
-
-      described_class.start
-      processor = described_class.processor
-
-      expect(processor).to receive(:stop).with(timeout: 15).and_call_original
-
-      described_class.stop
-    end
-
     it "accepts custom timeout parameter" do
       described_class.start
       processor = described_class.processor

@@ -71,6 +71,10 @@ module PatientHttp
         @payload_store_threshold = value
       end
 
+      # Set the heartbeat interval for crash recovery.
+      #
+      # @param value [Numeric] interval in seconds (must be positive)
+      # @raise [ArgumentError] if value is not positive or not less than orphan_threshold
       def heartbeat_interval=(value)
         raise ArgumentError.new("heartbeat_interval must be positive, got: #{value.inspect}") unless value.positive?
 
@@ -78,6 +82,10 @@ module PatientHttp
         validate_heartbeat_and_threshold
       end
 
+      # Set the orphan detection threshold for crash recovery.
+      #
+      # @param value [Numeric] threshold in seconds (must be positive and greater than heartbeat_interval)
+      # @raise [ArgumentError] if value is not positive or not greater than heartbeat_interval
       def orphan_threshold=(value)
         raise ArgumentError.new("orphan_threshold must be positive, got: #{value.inspect}") unless value.positive?
 
