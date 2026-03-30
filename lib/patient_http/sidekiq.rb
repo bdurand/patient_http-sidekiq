@@ -232,7 +232,7 @@ module PatientHttp
           )
         end
 
-        PatientHttp.register_handler!(@request_handler)
+        PatientHttp.register_handler(@request_handler)
       end
 
       # Signal the processor to drain (stop accepting new requests)
