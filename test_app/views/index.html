@@ -262,8 +262,8 @@
           zeroActivityCount = 0;
         }
 
-        // Stop polling if no activity 5 times in a row
-        if (zeroActivityCount >= 5 && isPolling) {
+        // Stop polling if no activity 30 times in a row
+        if (zeroActivityCount >= 30 && isPolling) {
           stopPolling();
           statusEl.textContent = 'Polling stopped (no activity)';
           statusEl.className = 'polling-indicator stopped';

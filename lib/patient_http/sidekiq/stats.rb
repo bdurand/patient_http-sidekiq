@@ -20,8 +20,9 @@ module PatientHttp
         @config = config
       end
 
-      # Record a completed request
+      # Record a completed request.
       #
+      # @param status [Integer, nil] HTTP response status code
       # @param duration [Float] request duration in seconds
       # @return [void]
       def record_request(status, duration)

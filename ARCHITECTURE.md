@@ -36,7 +36,7 @@ Registers Sidekiq server lifecycle hooks to automatically:
 - Stop the processor gracefully when Sidekiq shuts down (`:shutdown` event)
 
 ### RequestHelper Handler Registration
-On startup, the integration automatically registers a handler via `PatientHttp.register_handler!` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `PatientHttp::Sidekiq.execute` invocations. The handler is unregistered on shutdown.
+On startup, the integration automatically registers a handler via `PatientHttp.register_handler` so that classes including the `RequestHelper` module can use `async_get`, `async_post`, etc. The handler translates those calls into `PatientHttp::Sidekiq.execute` invocations. The handler is unregistered on shutdown.
 
 ### ProcessorObserver
 Observes processor state changes and updates the TaskMonitor's Redis heartbeats, enabling distributed crash recovery.

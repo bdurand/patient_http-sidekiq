@@ -144,20 +144,31 @@ module PatientHttp
         end
       end
 
-      # Check if the processor is running
+      # Check if the processor is running.
+      #
       # @return [Boolean]
       def running?
         !!@processor&.running?
       end
 
+      # Check if the processor is draining (not accepting new requests
+      # but still processing in-flight ones).
+      #
+      # @return [Boolean]
       def draining?
         !!@processor&.draining?
       end
 
+      # Check if the processor is in the process of stopping.
+      #
+      # @return [Boolean]
       def stopping?
         !!@processor&.stopping?
       end
 
+      # Check if the processor is stopped or has not been started.
+      #
+      # @return [Boolean]
       def stopped?
         @processor.nil? || @processor.stopped?
       end
@@ -221,7 +232,7 @@ module PatientHttp
           )
         end
 
-        PatientHttp.register_handler!(@request_handler)
+        PatientHttp.register_handler(@request_handler)
       end
 
       # Signal the processor to drain (stop accepting new requests)
@@ -244,9 +255,7 @@ module PatientHttp
 
         return unless @processor
 
-        timeout ||= configuration.shutdown_timeout
         @processor.stop(timeout: timeout)
-
         @processor = nil
       end
 
@@ -259,6 +268,8 @@ module PatientHttp
         @processor = nil
         @configuration = nil
         @external_storage = nil
+        @after_completion_callbacks = []
+        @after_error_callbacks = []
         PatientHttp.unregister_handler(@request_handler) if @request_handler
       end
 
