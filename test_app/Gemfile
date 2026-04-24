@@ -4,7 +4,6 @@ gemspec path: ".."
 
 gem "protocol-rack"
 gem "rack-session"
-gem "sidekiq-encrypted_args"
 gem "irb"
 
-gem "patient_http", github: "bdurand/patient_http", branch: "main"
+gem "patient_http", path: "../../patient_http"

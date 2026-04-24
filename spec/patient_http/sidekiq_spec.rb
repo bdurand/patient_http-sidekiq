@@ -543,7 +543,8 @@ RSpec.describe PatientHttp::Sidekiq do
 
         it "encrypts request data before enqueuing" do
           described_class.configure do |c|
-            c.encryption { |data| data.merge("_encrypted" => true) }
+            c.encryption { |bytes| bytes }
+            c.decryption { |bytes| bytes }
           end
 
           request = PatientHttp::Request.new(:get, "https://example.com")
@@ -556,8 +557,8 @@ RSpec.describe PatientHttp::Sidekiq do
           job_args = PatientHttp::Sidekiq::RequestWorker.jobs.first["args"]
           request_data = job_args[0]
 
-          expect(request_data["_encrypted"]).to eq(true)
-          expect(request_data["url"]).to eq("https://example.com")
+          expect(request_data["__encrypted__"]).to eq(true)
+          expect(request_data["value"]).to be_a(String)
         end
       end
 

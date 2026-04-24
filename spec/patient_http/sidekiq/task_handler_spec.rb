@@ -19,7 +19,8 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
 
     it "encrypts the response data before enqueuing" do
       PatientHttp::Sidekiq.configure do |c|
-        c.encryption { |data| data.merge("_encrypted" => true) }
+        c.encryption { |bytes| [bytes].pack("m0") }
+        c.decryption { |bytes| bytes.unpack1("m0") }
       end
 
       response = PatientHttp::Response.new(
@@ -32,13 +33,15 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
         http_method: "get"
       )
 
+      handler = described_class.new(sidekiq_job)
+      handler.encryptor = PatientHttp::Sidekiq.configuration.encryptor
       handler.on_complete(response, TestCallback.name)
 
       job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
       data = job["args"][0]
 
-      expect(data["_encrypted"]).to eq(true)
-      expect(data["status"]).to eq(200)
+      expect(data["__encrypted__"]).to eq(true)
+      expect(data["value"]).to be_a(String)
     end
   end
 
@@ -67,7 +70,8 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
 
     it "encrypts the error data before enqueuing" do
       PatientHttp::Sidekiq.configure do |c|
-        c.encryption { |data| data.merge("_encrypted" => true) }
+        c.encryption { |bytes| bytes }
+        c.decryption { |bytes| bytes }
       end
 
       error = PatientHttp::RequestError.new(
@@ -81,13 +85,15 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
         http_method: "get"
       )
 
+      handler = described_class.new(sidekiq_job)
+      handler.encryptor = PatientHttp::Sidekiq.configuration.encryptor
       handler.on_error(error, TestCallback.name)
 
       job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
       data = job["args"][0]
 
-      expect(data["_encrypted"]).to eq(true)
-      expect(data["message"]).to eq("test error")
+      expect(data["__encrypted__"]).to eq(true)
+      expect(data["value"]).to be_a(String)
     end
   end
 end

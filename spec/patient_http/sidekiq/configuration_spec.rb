@@ -289,46 +289,37 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
   end
 
   describe "#encryption" do
-    it "defaults to identity (returns data unchanged)" do
-      config = described_class.new
-      data = {"key" => "value"}
-      expect(config.encrypt(data)).to equal(data)
-    end
-
-    it "uses Sidekiq::EncryptedArgs when no encryptor is set and Sidekiq::EncryptedArgs is defined" do
-      data = {"key" => "value"}
-      stub_const("Sidekiq::EncryptedArgs", Class.new)
-      allow(Sidekiq::EncryptedArgs).to receive(:encrypt).with("encrypted").and_return(data)
-      config = described_class.new
-      expect(config.encrypt("encrypted")).to eq(data)
-    end
-
     it "sets encryptor via callable argument" do
-      encryptor = ->(data) { data.merge("encrypted" => true) }
+      encryptor = ->(bytes) { bytes }
       config = described_class.new
       config.encryption(encryptor)
 
-      expect(config.encryptor).to eq(encryptor)
-      expect(config.encrypt({"key" => "value"})).to eq({"key" => "value", "encrypted" => true})
+      data = {"key" => "value"}
+      result = config.encryptor.encrypt(data)
+      expect(result["__encrypted__"]).to eq(true)
+      expect(result["value"]).to be_a(String)
     end
 
     it "sets encryptor via block" do
       config = described_class.new
-      config.encryption { |data| data.merge("encrypted" => true) }
+      config.encryption { |bytes| bytes }
 
-      expect(config.encrypt({"key" => "value"})).to eq({"key" => "value", "encrypted" => true})
+      data = {"key" => "value"}
+      result = config.encryptor.encrypt(data)
+      expect(result["__encrypted__"]).to eq(true)
     end
 
     it "accepts any object that responds to #call" do
       encryptor = Object.new
-      def encryptor.call(data)
-        data.merge("encrypted" => true)
+      def encryptor.call(bytes)
+        bytes
       end
 
       config = described_class.new
       config.encryption(encryptor)
 
-      expect(config.encrypt({"key" => "value"})).to eq({"key" => "value", "encrypted" => true})
+      result = config.encryptor.encrypt({"key" => "value"})
+      expect(result["__encrypted__"]).to eq(true)
     end
 
     it "raises ArgumentError when callable does not respond to #call" do
@@ -340,46 +331,28 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       config = described_class.new
       expect { config.encryption(->(_) {}) { |_| } }.to raise_error(ArgumentError, "encryption accepts either a callable argument or a block, not both")
     end
-
-    it "resets to identity when called with no arguments" do
-      config = described_class.new
-      config.encryption { |data| data.merge("encrypted" => true) }
-      config.encryption
-
-      data = {"key" => "value"}
-      expect(config.encrypt(data)).to equal(data)
-    end
   end
 
   describe "#decryption" do
-    it "defaults to identity (returns data unchanged)" do
-      config = described_class.new
-      data = {"key" => "value"}
-      expect(config.decrypt(data)).to equal(data)
-    end
-
-    it "uses Sidekiq::EncryptedArgs when no decryptor is set and Sidekiq::EncryptedArgs is defined" do
-      data = {"key" => "value"}
-      stub_const("Sidekiq::EncryptedArgs", Class.new)
-      allow(Sidekiq::EncryptedArgs).to receive(:decrypt).with("encrypted").and_return(data)
-      config = described_class.new
-      expect(config.decrypt("encrypted")).to eq(data)
-    end
-
     it "sets decryptor via callable argument" do
-      decryptor = ->(data) { data.merge("decrypted" => true) }
+      decryptor = ->(bytes) { bytes }
       config = described_class.new
+      config.encryption { |bytes| bytes }
       config.decryption(decryptor)
 
-      expect(config.decryptor).to eq(decryptor)
-      expect(config.decrypt({"key" => "value"})).to eq({"key" => "value", "decrypted" => true})
+      data = {"key" => "value"}
+      encrypted = config.encryptor.encrypt(data)
+      expect(config.encryptor.decrypt(encrypted)).to eq(data)
     end
 
     it "sets decryptor via block" do
       config = described_class.new
-      config.decryption { |data| data.merge("decrypted" => true) }
+      config.encryption { |bytes| bytes }
+      config.decryption { |bytes| bytes }
 
-      expect(config.decrypt({"key" => "value"})).to eq({"key" => "value", "decrypted" => true})
+      data = {"key" => "value"}
+      encrypted = config.encryptor.encrypt(data)
+      expect(config.encryptor.decrypt(encrypted)).to eq(data)
     end
 
     it "raises ArgumentError when callable does not respond to #call" do
@@ -390,15 +363,6 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
     it "raises ArgumentError when both callable and block are provided" do
       config = described_class.new
       expect { config.decryption(->(_) {}) { |_| } }.to raise_error(ArgumentError, "decryption accepts either a callable argument or a block, not both")
-    end
-
-    it "resets to identity when called with no arguments" do
-      config = described_class.new
-      config.decryption { |data| data.merge("decrypted" => true) }
-      config.decryption
-
-      data = {"key" => "value"}
-      expect(config.decrypt(data)).to equal(data)
     end
   end
 
@@ -429,19 +393,6 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect(hash["connection_timeout"]).to eq(10)
       expect(hash["proxy_url"]).to eq("http://proxy.example.com:8080")
       expect(hash["retries"]).to eq(5)
-      expect(hash["encryptor"]).to eq(false)
-      expect(hash["decryptor"]).to eq(false)
-    end
-
-    it "reports encryption and decryption as true when configured" do
-      config = described_class.new
-      config.encryption { |data| data }
-      config.decryption { |data| data }
-
-      hash = config.to_h
-
-      expect(hash["encryptor"]).to eq(true)
-      expect(hash["decryptor"]).to eq(true)
     end
   end
 end

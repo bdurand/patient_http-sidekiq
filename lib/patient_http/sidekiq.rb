@@ -181,6 +181,24 @@ module PatientHttp
         @external_storage ||= PatientHttp::ExternalStorage.new(configuration)
       end
 
+      # Encrypt data using the configured encryptor.
+      #
+      # @param data [Hash] the data to encrypt
+      # @return [Hash] the encrypted data (or original if no encryption configured)
+      # @api private
+      def encrypt(data)
+        configuration.encryptor.encrypt(data)
+      end
+
+      # Decrypt data using the configured encryptor.
+      #
+      # @param data [Hash] the data to decrypt
+      # @return [Hash] the decrypted data (or original if not encrypted)
+      # @api private
+      def decrypt(data)
+        configuration.encryptor.decrypt(data)
+      end
+
       # Execute an async HTTP request.
       #
       # @param request [PatientHttp::Request] the HTTP request to execute
@@ -200,7 +218,7 @@ module PatientHttp
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
-        encrypted = configuration.encrypt(request.as_json)
+        encrypted = encrypt(request.as_json)
 
         data = if external_storage.enabled?
           external_storage.store(encrypted, max_size: configuration.payload_store_threshold)
