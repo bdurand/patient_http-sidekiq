@@ -34,7 +34,6 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
       )
 
       handler = described_class.new(sidekiq_job)
-      handler.encryptor = PatientHttp::Sidekiq.configuration.encryptor
       handler.on_complete(response, TestCallback.name)
 
       job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
@@ -86,7 +85,6 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
       )
 
       handler = described_class.new(sidekiq_job)
-      handler.encryptor = PatientHttp::Sidekiq.configuration.encryptor
       handler.on_error(error, TestCallback.name)
 
       job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
