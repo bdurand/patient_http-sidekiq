@@ -22,13 +22,8 @@ PatientHttp::Sidekiq.configure do |config|
   config.register_payload_store(:files, adapter: :file, directory: File.join(__dir__, "tmp/payloads"))
   config.payload_store_threshold = 1024
 
-  config.encryption ->(data) {
-    JSON.generate(data).reverse
-  }
-
-  config.decryption ->(data) {
-    JSON.parse(data.reverse)
-  }
+  config.encryption { |bytes| "_#{bytes.reverse}" }
+  config.decryption { |bytes| bytes.reverse.chomp("_") }
 end
 
 PatientHttp::Sidekiq.after_completion do |response|
