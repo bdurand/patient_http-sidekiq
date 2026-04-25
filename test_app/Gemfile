@@ -6,4 +6,4 @@ gem "protocol-rack"
 gem "rack-session"
 gem "irb"
 
-gem "patient_http", path: "../../patient_http"
+gem "patient_http", github: "bdurand/patient_http", branch: "main"
