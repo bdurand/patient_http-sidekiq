@@ -53,7 +53,7 @@ module PatientHttp
         # Fetch from external storage if needed
         ref_data = Sidekiq.external_storage.storage_ref?(data) ? data : nil
         actual_data = ref_data ? Sidekiq.external_storage.fetch(data) : data
-        actual_data = PatientHttp::Sidekiq.configuration.decrypt(actual_data)
+        actual_data = Sidekiq.decrypt(actual_data)
 
         begin
           if result_type == "response"

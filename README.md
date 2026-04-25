@@ -340,34 +340,45 @@ PatientHttp.get(
 
 Requests and responses from asynchronous HTTP requests will be pushed to Redis in order to call the completion job. This can raise security concerns if they contain sensitive data since the data will be stored in plain text.
 
-You can configure encryption and decryption callables to encrypt request and response data when it is serialized:
+You can configure encryption so that all request and response data is automatically encrypted before being stored in Sidekiq and decrypted when retrieved.
+
+#### Using an encryption key
+
+The simplest option is `encryption_key=`, which sets up [ActiveSupport::MessageEncryptor](https://api.rubyonrails.org/classes/ActiveSupport/MessageEncryptor.html) using AES-256-GCM:
 
 ```ruby
 PatientHttp::Sidekiq.configure do |config|
-  config.encryption { |data| MyEncryption.encrypt(data) }
-  config.decryption { |encrypted_value| MyEncryption.decrypt(encrypted_value) }
+  config.encryption_key = ENV["PATIENT_HTTP_ENCRYPTION_KEY"]
 end
 ```
 
-The encryption callable will be given a hash and should return a JSON-safe value. The decryption callable will be given the output from the encryption callable and should return the original value.
+Pass an array to support key rotation (first key encrypts, all keys attempt decryption):
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.encryption_key = [ENV["PATIENT_HTTP_ENCRYPTION_KEY"], ENV["PATIENT_HTTP_OLD_KEY"]]
+end
+```
+
+#### Using custom callables
+
+For custom encryption libraries, provide callables that accept and return raw bytes (String):
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.encryption { |bytes| MyEncryption.encrypt(bytes) }
+  config.decryption { |bytes| MyEncryption.decrypt(bytes) }
+end
+```
 
 You can also pass any object that responds to `call`:
 
 ```ruby
 PatientHttp::Sidekiq.configure do |config|
-  config.encryption(->(data) { MyEncryption.encrypt(data) })
-  config.decryption(->(encrypted_value) { MyEncryption.decrypt(encrypted_value) })
+  config.encryption(->(bytes) { MyEncryption.encrypt(bytes) })
+  config.decryption(->(bytes) { MyEncryption.decrypt(bytes) })
 end
 ```
-
-If the [sidekiq-encrypted_args](https://github.com/bdurand/sidekiq-encrypted_args) gem is installed, it will be used automatically by default.
-
-```ruby
-# No additional configuration needed - encryption is automatic
-Sidekiq::EncryptedArgs.configure!(secret: "YourSecretKey")
-```
-
-See the [documentation](https://github.com/bdurand/sidekiq-encrypted_args) for more details on configuring encryption with that gem.
 
 ## Configuration
 
@@ -431,8 +442,7 @@ PatientHttp::Sidekiq.configure do |config|
   config.logger = Rails.logger
 
   # Encryption for sensitive data (see Sensitive Data Handling)
-  config.encryption { |data| MyEncryption.encrypt(data) }
-  config.decryption { |data| MyEncryption.decrypt(data) }
+  config.encryption_key = ENV["PATIENT_HTTP_ENCRYPTION_KEY"]
 end
 ```
 

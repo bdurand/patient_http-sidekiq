@@ -401,9 +401,8 @@ PatientHttp::Sidekiq.configure do |config|
   # Sidekiq worker options (applied to both RequestWorker and CallbackWorker)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
-  # Encryption (for sensitive data in Sidekiq jobs)
-  config.encryption { |data| MyEncryption.encrypt(data) }
-  config.decryption { |data| MyEncryption.decrypt(data) }
+  # Encryption (for sensitive data in Sidekiq jobs; inherited from PatientHttp::Configuration)
+  config.encryption_key = ENV["PATIENT_HTTP_ENCRYPTION_KEY"]
 
   # External storage threshold (for large payloads)
   config.payload_store_threshold = 100_000   # bytes

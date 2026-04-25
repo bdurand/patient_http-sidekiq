@@ -2,12 +2,9 @@
 
 require "time"
 require "sidekiq"
-require "sidekiq/encrypted_args"
 require_relative "../lib/patient_http-sidekiq"
 
 require_relative "app_config"
-
-Sidekiq::EncryptedArgs.configure!(secret: "A_VERY_SECRET_KEY_FOR_TESTING_PURPOSES_ONLY!")
 
 # Configure Sidekiq to use Valkey from docker-compose
 Sidekiq.configure_server do |config|
@@ -24,6 +21,9 @@ PatientHttp::Sidekiq.configure do |config|
   config.proxy_url = ENV["HTTP_PROXY"]
   config.register_payload_store(:files, adapter: :file, directory: File.join(__dir__, "tmp/payloads"))
   config.payload_store_threshold = 1024
+
+  config.encryption { |bytes| "_#{bytes.reverse}" }
+  config.decryption { |bytes| bytes.reverse.chomp("_") }
 end
 
 PatientHttp::Sidekiq.after_completion do |response|

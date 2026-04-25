@@ -33,11 +33,11 @@ module PatientHttp
       def perform(data, callback_service_name, raise_error_responses, callback_args, request_id)
         # Fetch from external storage if needed
         ref_data = PatientHttp::ExternalStorage.storage_ref?(data) ? data : nil
-        actual_data = ref_data ? PatientHttp::Sidekiq.external_storage.fetch(data) : data
-        actual_data = PatientHttp::Sidekiq.configuration.decrypt(actual_data)
+        actual_data = ref_data ? Sidekiq.external_storage.fetch(data) : data
+        actual_data = Sidekiq.decrypt(actual_data)
 
         request = PatientHttp::Request.load(actual_data)
-        sidekiq_job = PatientHttp::Sidekiq::Context.current_job
+        sidekiq_job = Sidekiq::Context.current_job
 
         begin
           RequestExecutor.execute(
@@ -49,7 +49,7 @@ module PatientHttp
             request_id: request_id
           )
         ensure
-          PatientHttp::Sidekiq.external_storage.delete(ref_data) if ref_data
+          Sidekiq.external_storage.delete(ref_data) if ref_data
         end
       end
     end

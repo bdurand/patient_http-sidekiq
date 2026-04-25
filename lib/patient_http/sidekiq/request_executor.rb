@@ -44,9 +44,8 @@ module PatientHttp
           request_id: nil
         )
           sidekiq_job = validate_sidekiq_job(sidekiq_job)
-          task_handler = TaskHandler.new(sidekiq_job)
-
           config = PatientHttp::Sidekiq.configuration
+          task_handler = TaskHandler.new(sidekiq_job)
 
           task = PatientHttp::RequestTask.new(
             request: request,
