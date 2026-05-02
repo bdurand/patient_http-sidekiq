@@ -41,7 +41,8 @@ module PatientHttp
       end
 
       def request_error(error)
-        @stats.record_error(error.error_type)
+        error_type = error.is_a?(PatientHttp::Error) ? error.error_type : :exception
+        @stats.record_error(error_type)
       end
     end
   end
