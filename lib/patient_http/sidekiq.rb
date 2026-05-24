@@ -239,6 +239,9 @@ module PatientHttp
 
         @processor = PatientHttp::Processor.new(configuration)
         @processor.observe(ProcessorObserver.new(@processor))
+        configuration.observers.each do |observer|
+          @processor.observe(observer)
+        end
         @processor.start
 
         @request_handler ||= lambda do |request:, callback:, raise_error_responses:, callback_args:|

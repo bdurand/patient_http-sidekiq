@@ -24,6 +24,11 @@ module PatientHttp
       # @return [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
       attr_reader :sidekiq_options
 
+      # @return [Array<PatientHttp::ProcessorObserver>] Registered processor observers
+      #   Observers will be registered with the processor when it is started, allowing them to
+      #   receive lifecycle callbacks for PatientHttp requests.
+      attr_reader :observers
+
       # Initializes a new Configuration with the specified options.
       #
       # @param heartbeat_interval [Integer] Interval for updating inflight request heartbeats in seconds
@@ -44,6 +49,7 @@ module PatientHttp
 
         super(**pool_options)
 
+        @observers = []
         self.sidekiq_options = sidekiq_options
         self.heartbeat_interval = heartbeat_interval
         self.orphan_threshold = orphan_threshold
