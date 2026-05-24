@@ -172,7 +172,7 @@ module PatientHttp
       # @return [void]
       def register(task)
         timestamp_ms = (Time.now.to_f * 1000).round
-        job_payload = task.task_handler.sidekiq_job.to_json
+        job_payload = JSON.generate(task.task_handler.sidekiq_job)
         task_id = full_task_id(task.id)
 
         ::Sidekiq.redis do |redis|

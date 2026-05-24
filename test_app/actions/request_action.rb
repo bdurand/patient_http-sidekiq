@@ -14,6 +14,6 @@ class RequestAction
       body: rack_request.body&.read
     )
 
-    [200, {"Content-Type" => "application/json"}, [JSON.dump(request.as_json)]]
+    [200, {"Content-Type" => "application/json"}, [JSON.generate(request.as_json)]]
   end
 end
