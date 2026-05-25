@@ -29,14 +29,34 @@ module PatientHttp
 
       # Clean up externally stored payloads when job exhausts all retries.
       # This prevents orphaned payload files when callbacks fail permanently.
+      # Also invokes the on_retries_exhausted handler if configured.
       sidekiq_retries_exhausted do |job, _exception|
         data = job["args"][0]
+        result_type = job["args"][1]
+
+        begin
+          handler = PatientHttp::Sidekiq.configuration.on_retries_exhausted
+          if handler && result_type == "error"
+            actual_data = if Sidekiq.external_storage.storage_ref?(data)
+              Sidekiq.external_storage.fetch(data)
+            else
+              data
+            end
+            actual_data = Sidekiq.decrypt(actual_data)
+            error = PatientHttp::Error.load(actual_data)
+            handler.call(error)
+          end
+        rescue => e
+          PatientHttp::Sidekiq.configuration.logger&.warn(
+            "[PatientHttp::Sidekiq] on_retries_exhausted handler failed: #{e.class.name} #{e.message}".strip
+          )
+        end
 
         begin
           ExternalStorage.delete(data)
         rescue => e
           PatientHttp::Sidekiq.configuration.logger&.warn(
-            "[PatientHttp::Sidekiq] Failed to delete stored payload for dead job: #{e.message}"
+            "[PatientHttp::Sidekiq] Failed to delete stored payload for dead job: #{e.class.name} #{e.message}".strip
           )
         end
       end

@@ -438,6 +438,9 @@ PatientHttp::Sidekiq.configure do |config|
   # Sidekiq options for RequestWorker and CallbackWorker
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
+  # Handler called when a callback job exhausts all Sidekiq retries
+  config.on_retries_exhausted { |error| MyAlertService.notify(error) }
+
   # Custom logger (defaults to Sidekiq.logger)
   config.logger = Rails.logger
 
@@ -501,6 +504,33 @@ end
 ```
 
 You can register multiple callbacks; they will be called in the order registered.
+
+### Handling Exhausted Retries
+
+When a callback worker job exhausts all of its Sidekiq retries, you can configure an `on_retries_exhausted` handler to be notified. This is useful for alerting or recording when a callback has permanently failed. The handler receives the same error object as the `on_error` callback:
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.on_retries_exhausted do |error|
+    Sentry.capture_message("Callback permanently failed: #{error.message}")
+    DeadLetterRecord.create!(
+      error_message: error.message,
+      callback_args: error.callback_args
+    )
+  end
+end
+```
+
+You can also assign any object that responds to `call`:
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.on_retries_exhausted = ->(error) { MyAlertService.notify(error) }
+end
+```
+
+> [!NOTE]
+> The `on_retries_exhausted` handler is only invoked for jobs with an "error" result type. If the handler itself raises an exception, the error is logged as a warning and does not affect the normal dead job cleanup.
 
 ## Shutdown Behavior
 
