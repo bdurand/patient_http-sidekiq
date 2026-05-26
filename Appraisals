@@ -13,6 +13,6 @@ appraise "sidekiq_7" do
 end
 
 appraise "sidekiq_7.0" do
-  ruby "3.2"
+  ruby "~>3.2.0"
   gem "sidekiq", "~> 7.0.0"
 end
