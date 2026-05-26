@@ -18,7 +18,7 @@ require "console"
 
 require_relative "../lib/patient_http-sidekiq"
 
-if Gem::Version.new(Sidekiq::VERSION) < Gem::Version.new("8.1.0")
+if Gem::Version.new(Sidekiq::VERSION) < Gem::Version.new("8.1.1")
   require "sidekiq/testing"
 else
   Sidekiq.testing!(:fake)
