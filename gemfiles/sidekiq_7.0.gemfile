@@ -2,8 +2,6 @@
 
 source "https://rubygems.org"
 
-ruby "~>3.2.0"
-
 gem "protocol-rack"
 gem "webmock", "~> 3.26"
 gem "async-rspec", "~> 1.17"
@@ -16,5 +14,6 @@ gem "simplecov", "~> 0.22"
 gem "yard"
 gem "patient_http", github: "bdurand/patient_http", branch: "main"
 gem "sidekiq", "~> 7.0.0"
+gem "async-http", "=0.94.2"
 
 gemspec path: "../"
