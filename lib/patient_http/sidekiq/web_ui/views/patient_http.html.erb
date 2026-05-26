@@ -1,11 +1,11 @@
 <div class="patient-http-dashboard">
   <div class="section">
     <div class="header-with-button">
-      <h2><%= t('patient_http.title') %></h2>
+      <h2><%= t('patient_http_title') %></h2>
       <form action="<%= root_path %>patient-http/clear" method="post" class="clear-stats-form">
         <%= csrf_tag %>
-        <button type="submit" class="btn btn-danger" onclick="return confirm('<%= t('patient_http.clear_confirm') %>');">
-          <%= t('patient_http.clear_stats') %>
+        <button type="submit" class="btn btn-danger" onclick="return confirm('<%= t('patient_http_clear_confirm') %>');">
+          <%= t('patient_http_clear_stats') %>
         </button>
       </form>
     </div>
@@ -14,19 +14,19 @@
       <!-- Summary Cards -->
       <div class="stats-grid">
         <div class="stat-card">
-          <div class="stat-label"><%= t('patient_http.total_requests') %></div>
+          <div class="stat-label"><%= t('patient_http_total_requests') %></div>
           <div class="stat-value"><%= number_with_delimiter(total_requests) %></div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><%= t('patient_http.total_errors') %></div>
+          <div class="stat-label"><%= t('patient_http_total_errors') %></div>
           <div class="stat-value error"><%= number_with_delimiter(totals['errors'] || 0) %></div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><%= t('patient_http.max_capacity_exceeded') %></div>
+          <div class="stat-label"><%= t('patient_http_max_capacity_exceeded') %></div>
           <div class="stat-value"><%= number_with_delimiter(totals['max_capacity_exceeded'] || 0) %></div>
         </div>
         <div class="stat-card">
-          <div class="stat-label"><%= t('patient_http.average_duration') %></div>
+          <div class="stat-label"><%= t('patient_http_average_duration') %></div>
           <div class="stat-value">
             <span><%= avg_duration %></span>
           </div>
@@ -35,41 +35,41 @@
 
       <!-- Capacity Information -->
       <div class="capacity-section">
-        <h3><%= t('patient_http.connection_capacity') %></h3>
+        <h3><%= t('patient_http_connection_capacity') %></h3>
         <div class="capacity-cards">
           <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http.max_capacity') %></div>
+            <div class="capacity-label"><%= t('patient_http_max_capacity') %></div>
             <div class="capacity-value"><%= number_with_delimiter(max_capacity) %></div>
-            <div class="capacity-unit"><%= t('patient_http.connections') %></div>
+            <div class="capacity-unit"><%= t('patient_http_connections') %></div>
           </div>
           <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http.currently_inflight') %></div>
+            <div class="capacity-label"><%= t('patient_http_currently_inflight') %></div>
             <div class="capacity-value"><%= number_with_delimiter(current_inflight) %></div>
-            <div class="capacity-unit"><%= t('patient_http.requests') %></div>
+            <div class="capacity-unit"><%= t('patient_http_requests') %></div>
           </div>
           <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http.capacity_utilization') %></div>
+            <div class="capacity-label"><%= t('patient_http_capacity_utilization') %></div>
             <div class="capacity-value"><%= utilization %>%</div>
-            <div class="capacity-unit"><%= t('patient_http.used') %></div>
+            <div class="capacity-unit"><%= t('patient_http_used') %></div>
           </div>
         </div>
 
         <!-- Process Breakdown -->
         <div class="process-breakdown">
-          <h4><%= t('patient_http.per_process_details') %></h4>
+          <h4><%= t('patient_http_per_process_details') %></h4>
           <table class="table">
             <thead>
               <tr>
-                <th><%= t('patient_http.process') %></th>
-                <th><%= t('patient_http.inflight') %></th>
-                <th><%= t('patient_http.max_capacity') %></th>
-                <th><%= t('patient_http.utilization') %></th>
+                <th><%= t('patient_http_process') %></th>
+                <th><%= t('patient_http_inflight') %></th>
+                <th><%= t('patient_http_max_capacity') %></th>
+                <th><%= t('patient_http_utilization') %></th>
               </tr>
             </thead>
             <tbody>
               <% if processes.empty? %>
                 <tr class="empty-state">
-                  <td colspan="4"><%= t('patient_http.no_active_processes') %></td>
+                  <td colspan="4"><%= t('patient_http_no_active_processes') %></td>
                 </tr>
               <% else %>
                 <% processes.each do |process_id, info| %>
@@ -91,12 +91,12 @@
       <% http_status_counts = totals['http_status_counts'] || {} %>
       <% unless http_status_counts.empty? %>
         <div class="breakdown-section">
-          <h3><%= t('patient_http.http_status_codes') %></h3>
+          <h3><%= t('patient_http_http_status_codes') %></h3>
           <table class="table">
             <thead>
               <tr>
-                <th><%= t('patient_http.status_code') %></th>
-                <th><%= t('patient_http.count') %></th>
+                <th><%= t('patient_http_status_code') %></th>
+                <th><%= t('patient_http_count') %></th>
               </tr>
             </thead>
             <tbody>
@@ -115,12 +115,12 @@
       <% error_type_counts = totals['error_type_counts'] || {} %>
       <% unless error_type_counts.empty? %>
         <div class="breakdown-section">
-          <h3><%= t('patient_http.error_types') %></h3>
+          <h3><%= t('patient_http_error_types') %></h3>
           <table class="table">
             <thead>
               <tr>
-                <th><%= t('patient_http.error_type') %></th>
-                <th><%= t('patient_http.count') %></th>
+                <th><%= t('patient_http_error_type') %></th>
+                <th><%= t('patient_http_count') %></th>
               </tr>
             </thead>
             <tbody>
@@ -138,4 +138,5 @@
   </div>
 </div>
 
+<%# Note: style tag does not use the "=" to send output %>
 <% style_tag("patient-http/css/patient_http.css") %>

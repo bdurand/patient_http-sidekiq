@@ -24,6 +24,11 @@ PatientHttp::Sidekiq.configure do |config|
 
   config.encryption { |bytes| "_#{bytes.reverse}" }
   config.decryption { |bytes| bytes.reverse.chomp("_") }
+
+  config.sidekiq_options = {retry: 1}
+  config.on_retries_exhausted do |error|
+    Sidekiq.logger.error("Callback job exhausted retries for #{error.http_method.to_s.upcase} #{error.url}: #{error.error_class.name} #{error.message}")
+  end
 end
 
 PatientHttp::Sidekiq.after_completion do |response|

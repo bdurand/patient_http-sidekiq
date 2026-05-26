@@ -59,7 +59,7 @@ module PatientHttp
       config.register_extension(
         PatientHttp::Sidekiq::WebUI,
         name: "patient-http",
-        tab: "patient_http.tab",
+        tab: "patient_http_tab",
         index: "patient-http",
         root_dir: PatientHttp::Sidekiq::WebUI::ROOT,
         asset_paths: ["css", "js"]
