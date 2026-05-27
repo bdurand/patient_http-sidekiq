@@ -13,5 +13,3 @@ gem "appraisal"
 gem "standard", "~>1.0"
 gem "simplecov", "~> 0.22"
 gem "yard"
-
-gem "patient_http", github: "bdurand/patient_http", branch: "main"
