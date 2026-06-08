@@ -25,10 +25,11 @@ class RunInspectAction
       name, value = header_line.split(":", 2).map(&:strip)
       headers << [name, value] if name && value
     end
+    headers << ["api-key", PatientHttp.secret(:api_key)]
 
     body = request.params["body"]
 
-    PatientHttp::Sidekiq.request(
+    PatientHttp.request(
       http_method,
       url,
       callback: "InspectCallback",

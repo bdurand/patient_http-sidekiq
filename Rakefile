@@ -79,4 +79,13 @@ namespace :test_app do
       exec("bundle", "install", chdir: File.expand_path("test_app", __dir__))
     end
   end
+
+  namespace :bundle do
+    desc "Update bundle for the test application"
+    task :update do
+      Bundler.with_unbundled_env do
+        exec("bundle", "update", chdir: File.expand_path("test_app", __dir__))
+      end
+    end
+  end
 end

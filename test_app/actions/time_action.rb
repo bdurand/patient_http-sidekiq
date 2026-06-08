@@ -4,17 +4,18 @@
 class TimeAction
   def call(env)
     time = Time.now.utc.iso8601
+    headers = {"Api-Key" => env["HTTP_API_KEY"]}
 
     if env["HTTP_CONTENT_TYPE"]&.start_with?("application/json")
       [
         200,
-        {"Content-Type" => "application/json; charset=utf-8"},
+        headers.merge("Content-Type" => "application/json; charset=utf-8"),
         [JSON.generate({time: time})]
       ]
     else
       [
         200,
-        {"Content-Type" => "text/plain; charset=utf-8"},
+        headers.merge("Content-Type" => "text/plain; charset=utf-8"),
         [time]
       ]
     end
