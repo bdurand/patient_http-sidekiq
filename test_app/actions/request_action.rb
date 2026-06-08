@@ -6,6 +6,7 @@ class RequestAction
     headers = rack_request.env.select { |k, _| k.start_with?("HTTP_") }.transform_keys do |k|
       k.sub(/^HTTP_/, "").split("_").map(&:downcase).join("-")
     end
+    headers["api-key"] = PatientHttp.secret(:api_key)
 
     request = PatientHttp::Request.new(
       rack_request.request_method.downcase.to_sym,

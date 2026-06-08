@@ -24,6 +24,7 @@ PatientHttp::Sidekiq.configure do |config|
 
   config.encryption { |bytes| "_#{bytes.reverse}" }
   config.decryption { |bytes| bytes.reverse.chomp("_") }
+  config.register_secret(:api_key) { "super_secret_api_key" }
 
   config.sidekiq_options = {retry: 1}
   config.on_retries_exhausted do |error|
