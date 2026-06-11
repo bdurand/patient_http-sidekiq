@@ -234,6 +234,8 @@ module PatientHttp
 
       # Register Sidekiq as the request handler for processing HTTP requests. This is called
       # automatically when the processor starts or you call PatientHttp::Sidekiq.configure.
+      #
+      # @return [void]
       def register_handler
         @request_handler ||= lambda do |request:, callback:, raise_error_responses:, callback_args:|
           execute(
