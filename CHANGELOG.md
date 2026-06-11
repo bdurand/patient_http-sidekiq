@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.1
+
+### Fixed
+
+- Ensure `PatientHttp::Sidekiq` is automatically registered as the HTTP processor on a process not running the Sidekiq server. This gem will now auto register itself on a client process either by calling `PatientHttp::Sidekiq.configure` or `PatientHttp::Sidekiq.register_handler` directly.
+
 ## 1.0.0
 
 ### Added

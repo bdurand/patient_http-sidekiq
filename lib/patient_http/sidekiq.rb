@@ -97,6 +97,7 @@ module PatientHttp
       def configure
         configuration = Configuration.new
         yield(configuration) if block_given?
+        register_handler
         @configuration = configuration
       end
 
@@ -231,6 +232,21 @@ module PatientHttp
         request_id
       end
 
+      # Register Sidekiq as the request handler for processing HTTP requests. This is called
+      # automatically when the processor starts or you call PatientHttp::Sidekiq.configure.
+      def register_handler
+        @request_handler ||= lambda do |request:, callback:, raise_error_responses:, callback_args:|
+          execute(
+            request,
+            callback: callback,
+            raise_error_responses: raise_error_responses,
+            callback_args: callback_args
+          )
+        end
+
+        PatientHttp.register_handler(@request_handler)
+      end
+
       # Start the processor
       #
       # @return [void]
@@ -244,16 +260,7 @@ module PatientHttp
         end
         @processor.start
 
-        @request_handler ||= lambda do |request:, callback:, raise_error_responses:, callback_args:|
-          execute(
-            request,
-            callback: callback,
-            raise_error_responses: raise_error_responses,
-            callback_args: callback_args
-          )
-        end
-
-        PatientHttp.register_handler(@request_handler)
+        register_handler
       end
 
       # Signal the processor to drain (stop accepting new requests)
