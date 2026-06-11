@@ -46,7 +46,17 @@ The async processor runs in a dedicated thread within your Sidekiq process, usin
 
 ## Quick Start
 
-### 1. Create a Callback Service
+### 1. Configure The Gem
+
+Configure the gem in an initializer (see the Configuration section below for all available options):
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.max_connections = 256
+end
+```
+
+### 2. Create a Callback Service
 
 Define a callback service class with `on_complete` and `on_error` methods:
 
@@ -69,7 +79,7 @@ class FetchDataCallback
 end
 ```
 
-### 2. Make HTTP Requests
+### 3. Make HTTP Requests
 
 Make HTTP requests from anywhere in your code using `PatientHttp`:
 
@@ -82,7 +92,7 @@ PatientHttp.get(
 )
 ```
 
-### 3. That's It!
+### 4. That's It!
 
 The request will be enqueued as a Sidekiq job and passed to a [PatientHttp](https://github.com/bdurand/patient_http) processor to execute asynchronously. When the HTTP request completes, your callback's `on_complete` method is executed in another Sidekiq job.
 
@@ -450,6 +460,9 @@ end
 ```
 
 See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all available options.
+
+> [!NOTE]
+> You **must** call `PatientHttp::Sidekiq.configure` or `PatientHttp::Sidekiq.register_handler` in order to register the request handler and start processing requests. If you do not call either method, you will get errors making HTTP requests with `PatientHttp.execute`.
 
 ### Tuning Tips
 
