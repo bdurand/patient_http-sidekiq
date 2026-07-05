@@ -53,7 +53,7 @@ module PatientHttp
         end
 
         begin
-          ExternalStorage.delete(data)
+          Sidekiq.external_storage.delete(data)
         rescue => e
           PatientHttp::Sidekiq.configuration.logger&.warn(
             "[PatientHttp::Sidekiq] Failed to delete stored payload for dead job: #{e.class.name} #{e.message}".strip
@@ -75,21 +75,22 @@ module PatientHttp
         actual_data = ref_data ? Sidekiq.external_storage.fetch(data) : data
         actual_data = Sidekiq.decrypt(actual_data)
 
-        begin
-          if result_type == "response"
-            response = PatientHttp::Response.load(actual_data)
-            PatientHttp::Sidekiq.invoke_completion_callbacks(response)
-            callback_service.on_complete(response)
-          elsif result_type == "error"
-            error = PatientHttp::Error.load(actual_data)
-            PatientHttp::Sidekiq.invoke_error_callbacks(error)
-            callback_service.on_error(error)
-          else
-            raise ArgumentError, "Unknown result_type: #{result_type}"
-          end
-        ensure
-          Sidekiq.external_storage.delete(ref_data) if ref_data
+        if result_type == "response"
+          response = PatientHttp::Response.load(actual_data)
+          PatientHttp::Sidekiq.invoke_completion_callbacks(response)
+          callback_service.on_complete(response)
+        elsif result_type == "error"
+          error = PatientHttp::Error.load(actual_data)
+          PatientHttp::Sidekiq.invoke_error_callbacks(error)
+          callback_service.on_error(error)
+        else
+          raise ArgumentError, "Unknown result_type: #{result_type}"
         end
+
+        # Only delete the stored payload after the callback succeeds so that
+        # Sidekiq retries can still fetch it. Failed jobs are cleaned up by
+        # the sidekiq_retries_exhausted hook.
+        Sidekiq.external_storage.delete(ref_data) if ref_data
       end
     end
   end

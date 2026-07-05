@@ -29,6 +29,7 @@ module PatientHttp
       def on_complete(response, callback)
         data = store_if_needed(response.as_json)
         CallbackWorker.perform_async(data, "response", callback)
+        delete_stored_request_payload
       end
 
       # Trigger the error callback with the error.
@@ -42,6 +43,7 @@ module PatientHttp
       def on_error(error, callback)
         data = store_if_needed(error.as_json)
         CallbackWorker.perform_async(data, "error", callback)
+        delete_stored_request_payload
       end
 
       # Re-enqueue the original Sidekiq job for retry.
@@ -66,6 +68,24 @@ module PatientHttp
       end
 
       private
+
+      # Delete the externally stored request payload once the request has
+      # completed. Until then the payload must remain fetchable because the
+      # Sidekiq job hash referencing it can be re-pushed by Sidekiq retries,
+      # processor shutdown retries, and crash recovery. Only applies to
+      # RequestWorker jobs; other job types own their own arguments.
+      def delete_stored_request_payload
+        return unless @sidekiq_job["class"] == RequestWorker.name
+
+        data = @sidekiq_job["args"]&.first
+        return unless PatientHttp::ExternalStorage.storage_ref?(data)
+
+        PatientHttp::Sidekiq.external_storage.delete(data)
+      rescue => e
+        PatientHttp::Sidekiq.configuration.logger&.warn(
+          "[PatientHttp::Sidekiq] Failed to delete stored request payload: #{e.class.name} #{e.message}".strip
+        )
+      end
 
       def store_if_needed(data)
         encrypted = Sidekiq.encrypt(data)

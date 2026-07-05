@@ -35,6 +35,14 @@ RSpec.describe PatientHttp::Sidekiq do
       expect(described_class.configuration).to eq(config)
     end
 
+    it "resets the memoized external storage so it picks up the new configuration" do
+      original_storage = described_class.external_storage
+
+      described_class.configure { |c| }
+
+      expect(described_class.external_storage).not_to be(original_storage)
+    end
+
     it "validates configuration during build" do
       expect do
         described_class.configure do |c|
@@ -181,6 +189,16 @@ RSpec.describe PatientHttp::Sidekiq do
       second_processor = described_class.processor
 
       expect(second_processor).to be(first_processor)
+    end
+
+    it "does not replace a draining processor" do
+      described_class.start
+      first_processor = described_class.processor
+
+      described_class.quiet
+      described_class.start
+
+      expect(described_class.processor).to be(first_processor)
     end
   end
 

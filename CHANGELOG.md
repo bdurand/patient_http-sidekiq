@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.2
+
+### Fixed
+
+- Crash recovery now recovers requests from crashed processes. Previously a crashed process's ID remained in the process registry indefinitely, permanently excluding its in-flight requests from orphan detection unless the Sidekiq Web UI happened to prune it.
+- Fixed calls to nonexistent `Sidekiq.testing?` in error handlers, which would raise `NoMethodError` and permanently kill the task monitor thread on the first transient Redis error.
+- Externally stored request payloads are no longer deleted as soon as the request is submitted to the processor. They are now retained until the request completes so that Sidekiq retries, shutdown re-enqueues, and crash recovery can still fetch them. Dead `RequestWorker` jobs clean up their stored payloads when retries are exhausted.
+- `CallbackWorker` no longer deletes externally stored payloads when the callback raises, so Sidekiq retries can fetch the payload and re-run the callback.
+- Fixed dead job payload cleanup in `CallbackWorker`, which silently failed by calling a nonexistent method.
+- `PatientHttp::Sidekiq.configure` and `reset_configuration!` now reset the memoized external storage so it picks up the new configuration.
+- Heartbeat updates now refresh the TTL on the inflight tracking keys so they cannot expire while long-running requests are still in flight.
+- Fixed race conditions that could create duplicate processors or task monitor threads from concurrent lifecycle calls; starting while the processor is draining no longer replaces it.
+
 ## 1.0.1
 
 ### Fixed

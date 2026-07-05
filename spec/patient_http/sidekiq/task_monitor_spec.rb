@@ -99,6 +99,20 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitor do
     it "handles empty array" do
       expect { registry.update_heartbeats([]) }.not_to raise_error
     end
+
+    it "refreshes the TTL on the inflight keys" do
+      ::Sidekiq.redis do |redis|
+        redis.expire(described_class::INFLIGHT_INDEX_KEY, 10)
+        redis.expire(described_class::INFLIGHT_JOBS_KEY, 10)
+      end
+
+      registry.update_heartbeats([task.id])
+
+      ::Sidekiq.redis do |redis|
+        expect(redis.ttl(described_class::INFLIGHT_INDEX_KEY)).to be > 10
+        expect(redis.ttl(described_class::INFLIGHT_JOBS_KEY)).to be > 10
+      end
+    end
   end
 
   describe "#acquire_gc_lock" do
@@ -187,6 +201,60 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitor do
       # Request should still be in registry
       expect(registry.registered?(task)).to be true
       expect(described_class.inflight_count).to eq(1)
+    end
+
+    it "re-enqueues orphans from a crashed process that is still in the process set" do
+      crashed_process_id = "crashed-host:999:deadbeef"
+      old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
+      job_payload = {"class" => "TestWorker", "jid" => "crashed-jid", "args" => []}
+
+      add_fake_orphaned_request(
+        process_id: crashed_process_id,
+        request_id: "orphan-1",
+        job_payload: job_payload,
+        timestamp_ms: old_timestamp_ms
+      )
+
+      # Simulate a crash: the process ID remains in the process set but its
+      # max_connections key (refreshed by heartbeats) has expired.
+      ::Sidekiq.redis do |redis|
+        redis.sadd(described_class::PROCESS_SET_KEY, crashed_process_id)
+      end
+
+      expect(Sidekiq::Client).to receive(:push).with(hash_including("jid" => "crashed-jid"))
+
+      count = registry.cleanup_orphaned_requests(300, logger)
+
+      expect(count).to eq(1)
+      expect(described_class.inflight_count).to eq(0)
+      expect(described_class.registered_process_ids).not_to include(crashed_process_id)
+    end
+
+    it "does not re-enqueue orphans belonging to a live process" do
+      live_process_id = "live-host:123:cafef00d"
+      old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
+      job_payload = {"class" => "TestWorker", "jid" => "live-jid", "args" => []}
+
+      add_fake_orphaned_request(
+        process_id: live_process_id,
+        request_id: "slow-1",
+        job_payload: job_payload,
+        timestamp_ms: old_timestamp_ms
+      )
+
+      # A live process is in the process set and has an unexpired max_connections key.
+      ::Sidekiq.redis do |redis|
+        redis.sadd(described_class::PROCESS_SET_KEY, live_process_id)
+        redis.set("#{described_class::PROCESS_SET_KEY}:#{live_process_id}:max_connections", 100)
+      end
+
+      expect(Sidekiq::Client).not_to receive(:push)
+
+      count = registry.cleanup_orphaned_requests(300, logger)
+
+      expect(count).to eq(0)
+      expect(described_class.inflight_count).to eq(1)
+      expect(described_class.registered_process_ids).to include(live_process_id)
     end
 
     it "handles race condition atomically with Lua script" do

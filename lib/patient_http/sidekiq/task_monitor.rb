@@ -226,6 +226,11 @@ module PatientHttp
             task_ids.each do |task_id|
               pipeline.call("ZADD", INFLIGHT_INDEX_KEY, "XX", timestamp_ms, full_task_id(task_id))
             end
+            # Keep the inflight keys alive while requests are still in flight;
+            # otherwise they only get their TTL refreshed when new requests
+            # are registered.
+            pipeline.call("EXPIRE", INFLIGHT_INDEX_KEY, inflight_ttl)
+            pipeline.call("EXPIRE", INFLIGHT_JOBS_KEY, inflight_ttl)
           end
         end
       end
@@ -401,10 +406,8 @@ module PatientHttp
         orphaned_request_ids_by_process = all_orphaned_request_ids.group_by do |request_id|
           request_id.split("/", 2).first
         end
-        all_process_ids = ::Sidekiq.redis do |redis|
-          redis.smembers(PROCESS_SET_KEY)
-        end
-        orphaned_request_ids = orphaned_request_ids_by_process.except(*all_process_ids).values.flatten
+        live_process_ids = prune_stale_processes(orphaned_request_ids_by_process.keys)
+        orphaned_request_ids = orphaned_request_ids_by_process.except(*live_process_ids).values.flatten
 
         return [] if orphaned_request_ids.empty?
 
@@ -414,6 +417,42 @@ module PatientHttp
         end
 
         orphaned_request_ids.zip(job_payloads).reject { |_id, payload| payload.nil? }
+      end
+
+      # Determine which of the given process IDs belong to live processes,
+      # removing dead ones from the process set.
+      #
+      # Membership in the process set alone doesn't prove liveness: a crashed
+      # process never removes itself from the set. A process is only considered
+      # live if its max_connections key (refreshed on every heartbeat with a
+      # short TTL) still exists. Stale members are removed from the set so
+      # their inflight requests can be recovered.
+      #
+      # @param process_ids [Array<String>] candidate process IDs
+      #
+      # @return [Array<String>] the subset of process IDs that are live
+      def prune_stale_processes(process_ids)
+        registered_ids = ::Sidekiq.redis do |redis|
+          redis.smembers(PROCESS_SET_KEY)
+        end
+        candidates = process_ids & registered_ids
+        return [] if candidates.empty?
+
+        max_connection_values = ::Sidekiq.redis do |redis|
+          redis.mget(*candidates.map { |process_id| max_connections_key_for(process_id) })
+        end
+
+        stale_process_ids, live_process_ids = candidates.zip(max_connection_values)
+          .partition { |_process_id, max_conn| max_conn.nil? }
+          .map { |pairs| pairs.map(&:first) }
+
+        unless stale_process_ids.empty?
+          ::Sidekiq.redis do |redis|
+            redis.srem(PROCESS_SET_KEY, stale_process_ids)
+          end
+        end
+
+        live_process_ids
       end
 
       # Re-enqueue all orphaned jobs.
@@ -503,7 +542,7 @@ module PatientHttp
       # @return [Integer] TTL in seconds
       def inflight_ttl
         # Set to 3x the orphan threshold, with a minimum of 1 hour
-        [config.orphan_threshold * 3, 3600].max
+        [config.orphan_threshold * 3, 3600].max.round
       end
 
       # Calculate the TTL for the garbage collection lock.
@@ -535,7 +574,11 @@ module PatientHttp
       end
 
       def max_connections_key
-        "#{PROCESS_SET_KEY}:#{@lock_identifier}:max_connections"
+        max_connections_key_for(@lock_identifier)
+      end
+
+      def max_connections_key_for(process_id)
+        "#{PROCESS_SET_KEY}:#{process_id}:max_connections"
       end
     end
   end
