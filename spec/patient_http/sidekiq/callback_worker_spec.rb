@@ -57,6 +57,64 @@ RSpec.describe PatientHttp::Sidekiq::CallbackWorker do
       end
     end
 
+    context "with external storage" do
+      let(:response_data) do
+        {
+          "status" => 200,
+          "headers" => {"Content-Type" => "application/json"},
+          "body" => '{"message":"success"}',
+          "callback_args" => {}
+        }
+      end
+
+      before do
+        TestPayloadStore.clear!
+        PatientHttp::Sidekiq.configure do |c|
+          c.register_payload_store(:test_store, adapter: :test_store)
+        end
+      end
+
+      after { PatientHttp::Sidekiq.reset_configuration! }
+
+      it "deletes the stored payload after the callback succeeds" do
+        stored_ref = PatientHttp::Sidekiq.external_storage.store(response_data)
+
+        PatientHttp::Sidekiq::CallbackWorker.new.perform(
+          stored_ref,
+          "response",
+          TestCallback.name
+        )
+
+        expect(TestCallback.completion_calls.size).to eq(1)
+        expect(TestPayloadStore.payloads).to be_empty
+      end
+
+      it "keeps the stored payload when the callback raises so retries can fetch it" do
+        failing_callback = Class.new do
+          def on_complete(response)
+            raise "callback failed"
+          end
+
+          def on_error(error)
+            raise "callback failed"
+          end
+        end
+        stub_const("FailingCallback", failing_callback)
+
+        stored_ref = PatientHttp::Sidekiq.external_storage.store(response_data)
+
+        expect {
+          PatientHttp::Sidekiq::CallbackWorker.new.perform(
+            stored_ref,
+            "response",
+            "FailingCallback"
+          )
+        }.to raise_error("callback failed")
+
+        expect(TestPayloadStore.payloads).not_to be_empty
+      end
+    end
+
     it "invokes on_error for an error response" do
       error_data = {
         "message" => "Network error",
@@ -129,13 +187,25 @@ RSpec.describe PatientHttp::Sidekiq::CallbackWorker do
         c.on_retries_exhausted = ->(_error) { raise "handler error" }
       end
 
-      allow(PatientHttp::ExternalStorage).to receive(:delete)
-
       expect(PatientHttp::Sidekiq.configuration.logger).to receive(:warn).with(
         /on_retries_exhausted handler failed/
       )
 
       described_class.sidekiq_retries_exhausted_block.call(job, RuntimeError.new("exhausted"))
+    end
+
+    it "deletes the stored payload for dead jobs" do
+      TestPayloadStore.clear!
+      PatientHttp::Sidekiq.configure do |c|
+        c.register_payload_store(:test_store, adapter: :test_store)
+      end
+
+      stored_ref = PatientHttp::Sidekiq.external_storage.store(error_data)
+      dead_job = {"args" => [stored_ref, "error", "TestCallback"]}
+
+      described_class.sidekiq_retries_exhausted_block.call(dead_job, RuntimeError.new("exhausted"))
+
+      expect(TestPayloadStore.payloads).to be_empty
     end
   end
 end

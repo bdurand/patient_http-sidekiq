@@ -47,6 +47,41 @@ RSpec.describe PatientHttp::Sidekiq::RequestWorker do
       expect(TestCallback.completion_calls).not_to be_empty
     end
 
+    context "with external storage" do
+      let(:stored_ref) do
+        request = PatientHttp::RequestTemplate.new(base_url: "http://example.com").get("/test")
+        PatientHttp::Sidekiq.external_storage.store(request.as_json)
+      end
+
+      before do
+        TestPayloadStore.clear!
+        PatientHttp::Sidekiq.configure do |c|
+          c.register_payload_store(:test_store, adapter: :test_store)
+        end
+      end
+
+      after { PatientHttp::Sidekiq.reset_configuration! }
+
+      it "keeps the stored payload after submitting the request" do
+        allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+        described_class.new.perform(stored_ref, TestCallback.name, false, nil, SecureRandom.uuid)
+
+        expect(TestPayloadStore.payloads).not_to be_empty
+      end
+
+      it "keeps the stored payload when the request cannot be enqueued so Sidekiq retries can fetch it" do
+        allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+          .and_raise(PatientHttp::MaxCapacityError.new("at max capacity"))
+
+        expect {
+          described_class.new.perform(stored_ref, TestCallback.name, false, nil, SecureRandom.uuid)
+        }.to raise_error(PatientHttp::MaxCapacityError)
+
+        expect(TestPayloadStore.payloads).not_to be_empty
+      end
+    end
+
     context "with decryption configured" do
       after { PatientHttp::Sidekiq.reset_configuration! }
 
@@ -77,6 +112,34 @@ RSpec.describe PatientHttp::Sidekiq::RequestWorker do
 
         expect(TestCallback.completion_calls).not_to be_empty
       end
+    end
+  end
+
+  describe "sidekiq_retries_exhausted" do
+    before do
+      TestPayloadStore.clear!
+      PatientHttp::Sidekiq.configure do |c|
+        c.register_payload_store(:test_store, adapter: :test_store)
+      end
+    end
+
+    after { PatientHttp::Sidekiq.reset_configuration! }
+
+    it "deletes the stored payload for dead jobs" do
+      stored_ref = PatientHttp::Sidekiq.external_storage.store({"http_method" => "get", "url" => "http://example.com/test"})
+      dead_job = {"args" => [stored_ref, TestCallback.name, false, nil, "req-1"]}
+
+      described_class.sidekiq_retries_exhausted_block.call(dead_job, RuntimeError.new("exhausted"))
+
+      expect(TestPayloadStore.payloads).to be_empty
+    end
+
+    it "does not raise for jobs without stored payloads" do
+      dead_job = {"args" => [{"http_method" => "get", "url" => "http://example.com/test"}, TestCallback.name, false, nil, "req-1"]}
+
+      expect {
+        described_class.sidekiq_retries_exhausted_block.call(dead_job, RuntimeError.new("exhausted"))
+      }.not_to raise_error
     end
   end
 end

@@ -94,4 +94,85 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
       expect(data["value"]).to be_a(String)
     end
   end
+
+  describe "stored request payload cleanup" do
+    let(:response) do
+      PatientHttp::Response.new(
+        status: 200,
+        headers: {"Content-Type" => "text/plain"},
+        body: "OK",
+        duration: 0.1,
+        request_id: "req-123",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+    end
+
+    let(:error) do
+      PatientHttp::RequestError.new(
+        class_name: "StandardError",
+        message: "test error",
+        backtrace: ["line 1"],
+        error_type: "runtime",
+        duration: 0.1,
+        request_id: "req-456",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+    end
+
+    before do
+      TestPayloadStore.clear!
+      PatientHttp::Sidekiq.configure do |c|
+        c.register_payload_store(:test_store, adapter: :test_store)
+      end
+    end
+
+    after { PatientHttp::Sidekiq.reset_configuration! }
+
+    def request_worker_job_with_stored_payload
+      stored_ref = PatientHttp::Sidekiq.external_storage.store(
+        {"http_method" => "get", "url" => "http://example.com/test"}
+      )
+      {
+        "class" => PatientHttp::Sidekiq::RequestWorker.name,
+        "jid" => "request-jid",
+        "args" => [stored_ref, TestCallback.name, false, nil, "req-1"]
+      }
+    end
+
+    it "deletes the stored request payload when the request completes" do
+      handler = described_class.new(request_worker_job_with_stored_payload)
+      handler.on_complete(response, TestCallback.name)
+
+      expect(TestPayloadStore.payloads).to be_empty
+    end
+
+    it "deletes the stored request payload when the request errors" do
+      handler = described_class.new(request_worker_job_with_stored_payload)
+      handler.on_error(error, TestCallback.name)
+
+      expect(TestPayloadStore.payloads).to be_empty
+    end
+
+    it "does not delete the stored request payload when the job is retried" do
+      handler = described_class.new(request_worker_job_with_stored_payload)
+      allow(Sidekiq::Client).to receive(:push)
+      handler.retry
+
+      expect(TestPayloadStore.payloads).not_to be_empty
+    end
+
+    it "does not delete arguments of other job classes" do
+      stored_ref = PatientHttp::Sidekiq.external_storage.store({"some" => "data"})
+      handler = described_class.new(
+        "class" => "TestWorker",
+        "jid" => "other-jid",
+        "args" => [stored_ref]
+      )
+      handler.on_complete(response, TestCallback.name)
+
+      expect(TestPayloadStore.payloads).not_to be_empty
+    end
+  end
 end

@@ -112,7 +112,7 @@ module PatientHttp
 
       def handle_error(error)
         @config&.logger&.error("[PatientHttp::Sidekiq] Stats error: #{error.inspect}")
-        raise error if ::Sidekiq.testing?
+        raise error if PatientHttp.testing?
       end
     end
   end

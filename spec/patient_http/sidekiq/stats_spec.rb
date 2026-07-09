@@ -6,6 +6,12 @@ RSpec.describe PatientHttp::Sidekiq::Stats do
   let(:stats) { described_class.new }
 
   describe "#record_request" do
+    it "logs and swallows Redis errors outside of testing mode", :disable_testing_mode do
+      allow(::Sidekiq).to receive(:redis).and_raise(RedisClient::CannotConnectError.new("redis down"))
+
+      expect { stats.record_request(200, 0.5) }.not_to raise_error
+    end
+
     it "records request with duration" do
       stats.record_request(200, 0.5)
       stats.record_request(200, 1.5)

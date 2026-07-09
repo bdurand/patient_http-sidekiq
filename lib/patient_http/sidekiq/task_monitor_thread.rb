@@ -35,8 +35,7 @@ module PatientHttp
       #
       # @return [void]
       def start
-        return if @running.true?
-        @running.make_true
+        return unless @running.make_true
         @stop_signal.reset
 
         @task_monitor.ping_process
@@ -46,7 +45,7 @@ module PatientHttp
         rescue => e
           # Log error but don't crash
           @config.logger&.error("[PatientHttp::Sidekiq] Monitor error: #{e.message}\n#{e.backtrace.join("\n")}")
-          raise if ::Sidekiq.testing?
+          raise if PatientHttp.testing?
         end
 
         @thread.name = "patient-http-monitor"
@@ -120,7 +119,7 @@ module PatientHttp
         @config.logger&.debug("[PatientHttp::Sidekiq] Updated heartbeats for #{request_ids.size} inflight requests")
       rescue => e
         @config.logger&.error("[PatientHttp::Sidekiq] Failed to update heartbeats: #{e.class} - #{e.message}")
-        raise if ::Sidekiq.testing?
+        raise if PatientHttp.testing?
       end
 
       # Attempt to acquire GC lock and clean up orphaned requests.
@@ -147,7 +146,7 @@ module PatientHttp
         end
       rescue => e
         @config.logger&.error("[PatientHttp::Sidekiq] Garbage collection failed: #{e.class} - #{e.message}")
-        raise if ::Sidekiq.testing?
+        raise if PatientHttp.testing?
       end
     end
   end
