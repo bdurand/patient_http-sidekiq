@@ -2,7 +2,7 @@
 
 module PatientHttp
   module Sidekiq
-    # Configuration for the Sidekiq Async HTTP gem.
+    # Configuration for the Sidekiq integration.
     #
     # Wraps PatientHttp::Configuration with Sidekiq-aware defaults and adds
     # Sidekiq-specific options like worker queue/retry settings.
