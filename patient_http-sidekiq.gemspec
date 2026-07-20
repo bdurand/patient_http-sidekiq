@@ -41,6 +41,4 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "sidekiq", ">= 7.0"
   spec.add_dependency "patient_http", ">= 1.3.0"
-
-  spec.add_development_dependency "bundler"
 end
