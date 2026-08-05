@@ -16,3 +16,8 @@ appraise "sidekiq_7.0" do
   gem "sidekiq", "~> 7.0.0"
   gem "async-http", "=0.94.2"
 end
+
+appraise "sidekiq_7.3.4" do
+  gem "sidekiq", "= 7.3.4"
+  gem "async-http", "=0.94.2"
+end
