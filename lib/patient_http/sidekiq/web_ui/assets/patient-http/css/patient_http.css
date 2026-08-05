@@ -1,14 +1,20 @@
 /* PatientHttp Dashboard Stylesheet */
 
 .patient-http-dashboard {
-  --patient-http-primary: var(--color-brand);
-  --patient-http-success: var(--color-ok);
-  --patient-http-error: var(--color-err);
-  --patient-http-warning: var(--color-warn);
-  --patient-http-bg: var(--color-bg);
-  --patient-http-text: var(--color-fg);
-  --patient-http-border: var(--color-border);
-  --patient-http-subtle: var(--color-subtle);
+  /* The --color-* variables come from the Sidekiq 8 web UI stylesheet. The
+     fallback values are for Sidekiq 7.x, which defines no CSS variables.
+     Status colors are static because Sidekiq 8 only defines pastel label
+     backgrounds, which are unreadable as text colors. */
+  --patient-http-primary: var(--color-primary, #b91d47);
+  --patient-http-success: #28a745;
+  --patient-http-error: #dc3545;
+  --patient-http-warning: #b45309;
+  --patient-http-bg: var(--color-bg, transparent);
+  --patient-http-text: var(--color-text, inherit);
+  --patient-http-border: var(--color-border, #dee2e6);
+  --patient-http-subtle: var(--color-text-light, #757575);
+  --patient-http-card-bg: var(--color-elevated, transparent);
+  --patient-http-card-hover: var(--color-selected, transparent);
 }
 
 .patient-http-dashboard .section {
@@ -69,7 +75,7 @@
 
 .stat-card {
   padding: var(--space-lg, 1.5rem);
-  background: var(--color-card-bg, rgb(255 255 255));
+  background: var(--patient-http-card-bg);
   border: 1px solid var(--patient-http-border);
   border-radius: 0.375rem;
   display: flex;
@@ -79,7 +85,7 @@
 
 .stat-label {
   font-size: 0.875rem;
-  color: var(--color-subtle, rgb(128 128 128));
+  color: var(--patient-http-subtle);
   font-weight: 500;
   margin-bottom: var(--space-sm, 0.75rem);
   letter-spacing: 0.02em;
@@ -101,7 +107,7 @@
 .capacity-section {
   margin: var(--space-xl, 2rem) 0;
   padding: var(--space-lg, 1.5rem);
-  background: var(--color-card-bg, rgb(255 255 255));
+  background: var(--patient-http-card-bg);
   border: 1px solid var(--patient-http-border);
   border-radius: 0.375rem;
 }
@@ -115,7 +121,7 @@
 
 .capacity-card {
   padding: var(--space-md, 1rem);
-  background: var(--patient-http-bg, rgb(255 255 255));
+  background: var(--patient-http-card-bg);
   border: 1px solid var(--patient-http-border);
   border-radius: 0.25rem;
   text-align: center;
@@ -123,7 +129,7 @@
 
 .capacity-label {
   font-size: 0.875rem;
-  color: var(--color-subtle, rgb(128 128 128));
+  color: var(--patient-http-subtle);
   font-weight: 500;
   margin-bottom: 0.5rem;
   display: block;
@@ -140,7 +146,7 @@
 
 .capacity-unit {
   font-size: 0.75rem;
-  color: var(--color-subtle, rgb(128 128 128));
+  color: var(--patient-http-subtle);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -154,7 +160,7 @@
 .breakdown-section {
   margin: var(--space-xl, 2rem) 0;
   padding: var(--space-lg, 1.5rem);
-  background: var(--color-card-bg, rgb(255 255 255));
+  background: var(--patient-http-card-bg);
   border: 1px solid var(--patient-http-border);
   border-radius: 0.375rem;
 }
@@ -196,7 +202,7 @@
 
 .patient-http-dashboard .table .empty-state {
   text-align: center;
-  color: var(--color-subtle, rgb(128 128 128));
+  color: var(--patient-http-subtle);
   font-style: italic;
 }
 
@@ -237,13 +243,6 @@
   }
 }
 
-/* Dark Mode Support (via CSS variables) */
-@media (prefers-color-scheme: dark) {
-  .stat-card {
-    background: var(--color-card-bg);
-  }
-
-  .stat-card:hover {
-    background: var(--color-card-hover);
-  }
+.stat-card:hover {
+  background: var(--patient-http-card-hover);
 }

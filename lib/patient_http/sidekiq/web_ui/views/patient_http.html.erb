@@ -138,5 +138,7 @@
   </div>
 </div>
 
-<%# Note: style tag does not use the "=" to send output %>
-<% style_tag("patient-http/css/patient_http.css") %>
+<%# Sidekiq 8 adds the link tag to the page head and returns an Array;
+    Sidekiq 7 returns the link tag as a String that must be output in place. %>
+<% stylesheet = style_tag("patient-http/css/patient_http.css") %>
+<%= stylesheet if stylesheet.is_a?(String) %>

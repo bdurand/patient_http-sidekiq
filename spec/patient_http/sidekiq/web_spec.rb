@@ -17,11 +17,19 @@ if Gem::Version.new(::Sidekiq::VERSION) >= Gem::Version.new("7.3")
       expect(::Sidekiq::Web.tabs).to include("patient_http_tab" => "patient-http")
     end
 
-    it "mounts the Async HTTP dashboard page" do
+    it "mounts the Async HTTP dashboard page with a link to the extension stylesheet" do
       get "/patient-http", {}, {"rack.session" => {}}
 
       expect(last_response.status).to eq(200)
       expect(last_response.body).to include("Async HTTP Statistics")
+      expect(last_response.body).to include("patient-http/css/patient_http.css")
+    end
+
+    it "serves the extension stylesheet" do
+      get "/patient-http/css/patient_http.css", {}, {"rack.session" => {}}
+
+      expect(last_response.status).to eq(200)
+      expect(last_response.body).to include(".stat-label")
     end
   end
 else
