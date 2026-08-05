@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.2
+
+### Fixed
+
+- The Web UI stylesheet now loads on Sidekiq 7.x. The `style_tag` helper returns the link tag on Sidekiq 7 but adds it to the page head on Sidekiq 8; the view now handles both.
+- The Web UI stylesheet now uses CSS variables that the Sidekiq 8 web UI actually defines (`--color-primary`, `--color-text`, ...), with static fallback values for Sidekiq 7.x.
+
 ## 1.1.1
 
 ### Fixed
