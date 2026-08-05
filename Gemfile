@@ -7,6 +7,7 @@ unless ENV["DEPENDABOT"]
   gem "protocol-rack"
   gem "webmock", "~> 3.26"
   gem "async-rspec", "~> 1.17"
+  gem "rack-test", "~> 2.1", require: false
   gem "irb"
 
   gem "rake"

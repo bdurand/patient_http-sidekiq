@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.1
+
+### Fixed
+
+- The Sidekiq Web UI extension now registers correctly on Sidekiq 7.3. It previously raised `NoMethodError: undefined method 'register_extension' for class Sidekiq::Web` because that method only exists in Sidekiq 8.
+- The Web UI dashboard page now renders on Sidekiq versions before 8.1. Those versions resolve view files as `*.erb` instead of `*.html.erb`, so the template is now rendered from a string.
+- Requiring the Web UI on Sidekiq versions before 7.3 now raises a `LoadError` with a clear message instead of an obscure error.
+
+### Added
+
+- `require "patient_http/sidekiq/web"` can now be used to load the Web UI extension, matching the `require "sidekiq/web"` convention. The previous `patient_http/sidekiq/web_ui` path still works.
+
 ## 1.1.0
 
 ### Changed

@@ -1,5 +1,14 @@
 # frozen_string_literal: true
 
+require "sidekiq/version"
+
+# Sidekiq 7.3 introduced the web extension API used here (register with
+# keyword arguments); older versions cannot mount the tab or assets. Check
+# before loading sidekiq/web, which can itself fail to load on old versions.
+if Gem::Version.new(::Sidekiq::VERSION) < Gem::Version.new("7.3")
+  raise LoadError, "patient_http/sidekiq/web_ui requires sidekiq >= 7.3 (you have #{::Sidekiq::VERSION})"
+end
+
 require "sidekiq/web"
 
 module PatientHttp
@@ -12,6 +21,13 @@ module PatientHttp
       VIEWS = File.join(ROOT, "views")
 
       class << self
+        # Sidekiq resolves symbol view names to different file names depending
+        # on the version (*.erb before 8.1, *.html.erb from 8.1 on), so the
+        # template is rendered from a string instead.
+        def template
+          @template ||= File.read(File.join(VIEWS, "patient_http.html.erb"))
+        end
+
         # This method is called by Sidekiq::Web when registering the extension
         def registered(app)
           # GET route for the main PatientHttp dashboard page
@@ -31,7 +47,7 @@ module PatientHttp
             current_inflight = processes.values.sum { |data| data[:inflight] }
             utilization = (max_capacity > 0) ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
 
-            erb(:patient_http, views: PatientHttp::Sidekiq::WebUI::VIEWS, locals: {
+            erb(PatientHttp::Sidekiq::WebUI.template, locals: {
               totals: totals,
               total_requests: total_requests,
               avg_duration: avg_duration,
@@ -52,18 +68,26 @@ module PatientHttp
     end
   end
 
-  # Auto-register the web UI extension if Sidekiq::Web is available
-  # This is called after require "sidekiq/web" in the application
-  if defined?(::Sidekiq::Web)
+  register_options = {
+    name: "patient-http",
+    tab: "patient_http_tab",
+    index: "patient-http",
+    root_dir: PatientHttp::Sidekiq::WebUI::ROOT,
+    asset_paths: ["css", "js"]
+  }
+
+  if ::Sidekiq::Web.respond_to?(:configure)
     ::Sidekiq::Web.configure do |config|
-      config.register_extension(
-        PatientHttp::Sidekiq::WebUI,
-        name: "patient-http",
-        tab: "patient_http_tab",
-        index: "patient-http",
-        root_dir: PatientHttp::Sidekiq::WebUI::ROOT,
-        asset_paths: ["css", "js"]
-      )
+      if config.respond_to?(:register_extension)
+        # Sidekiq 8.x yields a Sidekiq::Web::Config object
+        config.register_extension(PatientHttp::Sidekiq::WebUI, **register_options)
+      else
+        # Sidekiq 7.3.5+ yields the Sidekiq::Web class, which only has register
+        config.register(PatientHttp::Sidekiq::WebUI, **register_options)
+      end
     end
+  else
+    # Sidekiq 7.3.0 - 7.3.4 has no Sidekiq::Web.configure
+    ::Sidekiq::Web.register(PatientHttp::Sidekiq::WebUI, **register_options)
   end
 end

@@ -485,11 +485,11 @@ See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all
 
 ### Web UI
 
-If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics.
+If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics. The Web UI tab requires Sidekiq 7.3 or later.
 
 ```ruby
 # config/routes.rb (Rails)
-require "patient_http/sidekiq/web_ui"
+require "patient_http/sidekiq/web"
 
 mount Sidekiq::Web => "/sidekiq"
 ```
