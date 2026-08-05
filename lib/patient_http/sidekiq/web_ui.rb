@@ -6,7 +6,7 @@ require "sidekiq/version"
 # keyword arguments); older versions cannot mount the tab or assets. Check
 # before loading sidekiq/web, which can itself fail to load on old versions.
 if Gem::Version.new(::Sidekiq::VERSION) < Gem::Version.new("7.3")
-  raise LoadError, "patient_http/sidekiq/web_ui requires sidekiq >= 7.3 (you have #{::Sidekiq::VERSION})"
+  raise LoadError.new("patient_http/sidekiq/web requires sidekiq >= 7.3 (you have #{::Sidekiq::VERSION})")
 end
 
 require "sidekiq/web"
