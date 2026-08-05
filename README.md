@@ -485,12 +485,11 @@ See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all
 
 ### Web UI
 
-If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics. The extension auto-registers when `Sidekiq::Web` is defined:
+If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processor statistics.
 
 ```ruby
 # config/routes.rb (Rails)
-require "sidekiq/web"
-require "patient_http-sidekiq"
+require "patient_http-sidekiq/web_ui"
 
 mount Sidekiq::Web => "/sidekiq"
 ```
