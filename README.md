@@ -489,7 +489,7 @@ If you're using Sidekiq's Web UI, you can add a tab with the async HTTP processo
 
 ```ruby
 # config/routes.rb (Rails)
-require "patient_http-sidekiq/web_ui"
+require "patient_http/sidekiq/web_ui"
 
 mount Sidekiq::Web => "/sidekiq"
 ```
