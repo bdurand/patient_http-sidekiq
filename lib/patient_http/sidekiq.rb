@@ -18,6 +18,12 @@ require "patient_http"
 #     callback_args: {user_id: 123}
 #   )
 #
+# Set Sidekiq job options at runtime for the requests enqueued within a block:
+#
+#   PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
+#     PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+#   end
+#
 # Define a callback service class with +on_complete+ and +on_error+ methods:
 #
 #   class MyCallback
@@ -209,6 +215,40 @@ module PatientHttp
         configuration.encryptor.decrypt(data)
       end
 
+      # Set Sidekiq job options for HTTP requests enqueued within the block.
+      # Options are applied with Sidekiq's `set` method (queue, retry, etc.).
+      # Nested calls merge options with the innermost values taking precedence.
+      # If the options include a queue, the callback job for the request is
+      # enqueued on that queue as well. Options only apply to requests enqueued
+      # in the same thread (or fiber) as the block. This method has no effect
+      # when jobs run inline with Sidekiq::Testing.inline!.
+      #
+      # @param options [Hash] Sidekiq job options (symbol or string keys)
+      # @yield block within which enqueued requests use the options
+      # @return [Object] the return value of the block
+      def with_sidekiq_options(options)
+        unless options.is_a?(Hash)
+          raise ArgumentError.new("options must be a Hash, got: #{options.class}")
+        end
+        raise ArgumentError.new("with_sidekiq_options requires a block") unless block_given?
+
+        previous = Thread.current[:patient_http_sidekiq_options]
+        begin
+          Thread.current[:patient_http_sidekiq_options] = (previous || {}).merge(options.transform_keys(&:to_s))
+          yield
+        ensure
+          Thread.current[:patient_http_sidekiq_options] = previous
+        end
+      end
+
+      # Current scoped Sidekiq options, if any.
+      #
+      # @return [Hash, nil]
+      # @api private
+      def current_sidekiq_options
+        Thread.current[:patient_http_sidekiq_options]
+      end
+
       # Execute an async HTTP request.
       #
       # @param request [PatientHttp::Request] the HTTP request to execute
@@ -236,7 +276,14 @@ module PatientHttp
           encrypted
         end
 
-        RequestWorker.perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+        options = current_sidekiq_options
+        if options&.any?
+          queue = options["queue"]
+          options = options.merge("patient_http_callback_queue" => queue.to_s) if queue
+          RequestWorker.set(options).perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+        else
+          RequestWorker.perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+        end
 
         request_id
       end

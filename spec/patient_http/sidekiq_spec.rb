@@ -616,5 +616,162 @@ RSpec.describe PatientHttp::Sidekiq do
         end.to raise_error(ArgumentError, /callback_args must respond to to_h/)
       end
     end
+
+    describe ".with_sidekiq_options" do
+      it "sets the options on the enqueued RequestWorker job" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority", retry: 3) do
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("high_priority")
+        expect(job["retry"]).to eq(3)
+      end
+
+      it "marks the job with the callback queue when the options include a queue" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority") do
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["patient_http_callback_queue"]).to eq("high_priority")
+      end
+
+      it "does not mark the job with a callback queue when the options do not include a queue" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(retry: 3) do
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job).not_to have_key("patient_http_callback_queue")
+        expect(job["queue"]).to eq("default")
+      end
+
+      it "accepts string keys" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options("queue" => "high_priority") do
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("high_priority")
+      end
+
+      it "returns the value of the block" do
+        result = described_class.with_sidekiq_options(queue: "high_priority") { :block_value }
+
+        expect(result).to eq(:block_value)
+      end
+
+      it "enqueues normally with an empty options hash" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options({}) do
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("default")
+      end
+
+      it "restores the previous options after the block" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority") { nil }
+        described_class.execute(request, callback: TestCallback)
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("default")
+      end
+
+      it "restores the previous options when the block raises an error" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        expect do
+          described_class.with_sidekiq_options(queue: "high_priority") { raise "boom" }
+        end.to raise_error("boom")
+
+        described_class.execute(request, callback: TestCallback)
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("default")
+      end
+
+      it "merges nested options with the innermost values taking precedence" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority") do
+          described_class.with_sidekiq_options(queue: "low_priority", retry: 3) do
+            described_class.execute(request, callback: TestCallback)
+          end
+
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        inner_job, outer_job = PatientHttp::Sidekiq::RequestWorker.jobs
+        expect(inner_job["queue"]).to eq("low_priority")
+        expect(inner_job["retry"]).to eq(3)
+        expect(outer_job["queue"]).to eq("high_priority")
+        expect(outer_job["retry"]).to eq(true)
+      end
+
+      it "does not apply options to requests enqueued from other threads" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority") do
+          Thread.new do
+            described_class.execute(request, callback: TestCallback)
+          end.join
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("default")
+      end
+
+      it "raises ArgumentError when options is not a Hash" do
+        expect do
+          described_class.with_sidekiq_options(nil) { nil }
+        end.to raise_error(ArgumentError, "options must be a Hash, got: NilClass")
+      end
+
+      it "raises ArgumentError when no block is given" do
+        expect do
+          described_class.with_sidekiq_options(queue: "high_priority")
+        end.to raise_error(ArgumentError, "with_sidekiq_options requires a block")
+      end
+
+      it "does not clear enclosing options when called with invalid arguments" do
+        request = PatientHttp::Request.new(:get, "https://example.com")
+
+        described_class.with_sidekiq_options(queue: "high_priority") do
+          expect do
+            described_class.with_sidekiq_options("not a hash") { nil }
+          end.to raise_error(ArgumentError)
+
+          described_class.execute(request, callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("high_priority")
+      end
+
+      it "applies options to requests made through PatientHttp request methods" do
+        described_class.register_handler
+
+        described_class.with_sidekiq_options(queue: "high_priority") do
+          PatientHttp.get("https://example.com", callback: TestCallback)
+        end
+
+        job = PatientHttp::Sidekiq::RequestWorker.jobs.first
+        expect(job["queue"]).to eq("high_priority")
+      end
+    end
   end
 end

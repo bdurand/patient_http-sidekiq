@@ -160,6 +160,27 @@ RSpec.describe "Sidekiq::Testing.inline! mode" do
     end
   end
 
+  describe "with runtime Sidekiq options" do
+    it "executes the request inline and enqueues no jobs" do
+      stub_request(:get, "https://api.example.com/users")
+        .to_return(status: 200, body: "OK")
+
+      request = PatientHttp::Request.new(:get, "https://api.example.com/users")
+
+      PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
+        PatientHttp::Sidekiq::RequestExecutor.execute(
+          request,
+          sidekiq_job: {"class" => "TestWorker", "jid" => "test-options", "args" => []},
+          callback: TestCallback
+        )
+      end
+
+      expect(TestCallback.completion_calls.size).to eq(1)
+      expect(PatientHttp::Sidekiq::RequestWorker.jobs.size).to eq(0)
+      expect(PatientHttp::Sidekiq::CallbackWorker.jobs.size).to eq(0)
+    end
+  end
+
   describe "with custom headers" do
     it "includes custom headers in the inline request" do
       stub_request(:get, "https://api.example.com/secure")

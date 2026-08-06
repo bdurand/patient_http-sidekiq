@@ -232,6 +232,21 @@ PatientHttp.execute(request: request, callback: MyCallback, callback_args: {user
 
 See the [patient_http docs](https://github.com/bdurand/patient_http) for the full `Request` and `Response` API reference.
 
+### Setting Sidekiq Options At Runtime
+
+You can set Sidekiq job options for individual requests with `PatientHttp::Sidekiq.with_sidekiq_options`. The options apply to all requests enqueued within the block. Use this, for example, to route urgent requests to a higher priority queue:
+
+```ruby
+PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
+  PatientHttp.get("https://api.example.com/users/123", callback: MyCallback)
+end
+```
+
+The options are applied with Sidekiq's `set` method, so any Sidekiq job option (`queue`, `retry`, etc.) is allowed. Notes on the behavior:
+
+- If the options include a `queue`, the callback job that invokes your `on_complete`/`on_error` methods is enqueued on that queue as well, so the whole request keeps one priority end to end.
+- Nested blocks merge their options, and the innermost values take precedence. The previous options are restored when the block exits, even if the block raises an error.
+
 ### Using Request Templates
 
 For repeated requests to the same API, use `PatientHttp::RequestTemplate` to share configuration:
@@ -446,6 +461,7 @@ PatientHttp::Sidekiq.configure do |config|
   config.payload_store_threshold = 64 * 1024
 
   # Sidekiq options for RequestWorker and CallbackWorker
+  # (use PatientHttp::Sidekiq.with_sidekiq_options to override per request)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
   # Handler called when a callback job exhausts all Sidekiq retries
