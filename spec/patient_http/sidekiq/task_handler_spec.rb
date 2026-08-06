@@ -52,14 +52,72 @@ RSpec.describe PatientHttp::Sidekiq::TaskHandler do
     end
 
     it "preserves all job attributes" do
-      job_with_metadata = sidekiq_job.merge("retry_count" => 2, "custom_field" => "value")
+      job_with_metadata = sidekiq_job.merge(
+        "retry_count" => 2,
+        "custom_field" => "value",
+        "queue" => "high_priority",
+        "patient_http_callback_queue" => "high_priority"
+      )
       handler_with_metadata = described_class.new(job_with_metadata)
       expect(Sidekiq::Client).to receive(:push) do |job|
         expect(job["retry_count"]).to eq(2)
         expect(job["custom_field"]).to eq("value")
+        expect(job["queue"]).to eq("high_priority")
+        expect(job["patient_http_callback_queue"]).to eq("high_priority")
         "new-jid"
       end
       handler_with_metadata.retry
+    end
+  end
+
+  describe "callback queue inheritance" do
+    let(:response) do
+      PatientHttp::Response.new(
+        status: 200,
+        headers: {"Content-Type" => "text/plain"},
+        body: "OK",
+        duration: 0.1,
+        request_id: "req-123",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+    end
+
+    let(:error) do
+      PatientHttp::RequestError.new(
+        class_name: "StandardError",
+        message: "test error",
+        backtrace: ["line 1"],
+        error_type: "runtime",
+        duration: 0.1,
+        request_id: "req-456",
+        url: "http://example.com/test",
+        http_method: "get"
+      )
+    end
+
+    it "enqueues the completion callback on the runtime queue from the job hash" do
+      handler = described_class.new(sidekiq_job.merge("patient_http_callback_queue" => "high_priority"))
+      handler.on_complete(response, TestCallback.name)
+
+      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
+      expect(job["queue"]).to eq("high_priority")
+    end
+
+    it "enqueues the error callback on the runtime queue from the job hash" do
+      handler = described_class.new(sidekiq_job.merge("patient_http_callback_queue" => "high_priority"))
+      handler.on_error(error, TestCallback.name)
+
+      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
+      expect(job["queue"]).to eq("high_priority")
+    end
+
+    it "enqueues the callback on the default queue when the job hash has no runtime queue" do
+      handler = described_class.new(sidekiq_job)
+      handler.on_complete(response, TestCallback.name)
+
+      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
+      expect(job["queue"]).to eq("default")
     end
   end
 

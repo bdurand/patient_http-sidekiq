@@ -28,7 +28,7 @@ module PatientHttp
       # @return [void]
       def on_complete(response, callback)
         data = store_if_needed(response.as_json)
-        CallbackWorker.perform_async(data, "response", callback)
+        callback_worker.perform_async(data, "response", callback)
         delete_stored_request_payload
       end
 
@@ -42,7 +42,7 @@ module PatientHttp
       # @return [void]
       def on_error(error, callback)
         data = store_if_needed(error.as_json)
-        CallbackWorker.perform_async(data, "error", callback)
+        callback_worker.perform_async(data, "error", callback)
         delete_stored_request_payload
       end
 
@@ -68,6 +68,18 @@ module PatientHttp
       end
 
       private
+
+      # Returns CallbackWorker or a Sidekiq job setter that routes the callback
+      # job to the same queue as the request job when a runtime queue was set
+      # at enqueue time.
+      def callback_worker
+        queue = @sidekiq_job["patient_http_callback_queue"]
+        if queue
+          CallbackWorker.set(queue: queue)
+        else
+          CallbackWorker
+        end
+      end
 
       # Delete the externally stored request payload once the request has
       # completed. Until then the payload must remain fetchable because the
