@@ -220,7 +220,7 @@ module PatientHttp
       # Nested calls merge options with the innermost values taking precedence.
       # If the options include a queue, the callback job for the request is
       # enqueued on that queue as well. Options only apply to requests enqueued
-      # in the same thread (or fiber) as the block. This method has no effect
+      # in the same fiber as the block. This method has no effect
       # when jobs run inline with Sidekiq::Testing.inline!.
       #
       # @param options [Hash] Sidekiq job options (symbol or string keys)
@@ -239,14 +239,6 @@ module PatientHttp
         ensure
           Thread.current[:patient_http_sidekiq_options] = previous
         end
-      end
-
-      # Current scoped Sidekiq options, if any.
-      #
-      # @return [Hash, nil]
-      # @api private
-      def current_sidekiq_options
-        Thread.current[:patient_http_sidekiq_options]
       end
 
       # Execute an async HTTP request.
@@ -394,6 +386,15 @@ module PatientHttp
       # @return [PatientHttp::Processor, nil]
       # @api private
       attr_accessor :processor
+
+      private
+
+      # Current scoped Sidekiq options, if any.
+      #
+      # @return [Hash, nil]
+      def current_sidekiq_options
+        Thread.current[:patient_http_sidekiq_options]
+      end
     end
   end
 
