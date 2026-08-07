@@ -77,6 +77,7 @@ module PatientHttp
     autoload :CallbackWorker, File.join(__dir__, "sidekiq/callback_worker")
     autoload :Configuration, File.join(__dir__, "sidekiq/configuration")
     autoload :Context, File.join(__dir__, "sidekiq/context")
+    autoload :DirectTaskHandler, File.join(__dir__, "sidekiq/direct_task_handler")
     autoload :ProcessorObserver, File.join(__dir__, "sidekiq/processor_observer")
     autoload :RequestExecutor, File.join(__dir__, "sidekiq/request_executor")
     autoload :RequestWorker, File.join(__dir__, "sidekiq/request_worker")
@@ -260,7 +261,8 @@ module PatientHttp
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
-        encrypted = encrypt(request.as_json)
+        request_json = request.as_json
+        encrypted = encrypt(request_json)
 
         data = if external_storage.enabled?
           external_storage.store(encrypted, max_size: configuration.payload_store_threshold)
@@ -272,9 +274,15 @@ module PatientHttp
         if options&.any?
           queue = options["queue"]
           options = options.merge("patient_http_callback_queue" => queue.to_s) if queue
-          RequestWorker.set(options).perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+        end
+        args = [data, callback_name, raise_error_responses, callback_args, request_id]
+
+        if direct_execution?(options)
+          execute_on_local_processor(request_json, args, options)
+        elsif options&.any?
+          RequestWorker.set(options).perform_async(*args)
         else
-          RequestWorker.perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+          RequestWorker.perform_async(*args)
         end
 
         request_id
@@ -394,6 +402,50 @@ module PatientHttp
       # @return [Hash, nil]
       def current_sidekiq_options
         Thread.current[:patient_http_sidekiq_options]
+      end
+
+      # Check if the request can go directly to a processor running in the current
+      # process. Scheduled requests must go through Redis, and Sidekiq testing modes
+      # must keep their normal enqueue semantics.
+      #
+      # @param options [Hash, nil] scoped Sidekiq options for the request
+      # @return [Boolean]
+      def direct_execution?(options)
+        return false unless configuration.direct_execution?
+        return false unless running?
+        return false if options&.key?("at")
+        return false if defined?(::Sidekiq::Testing) && ::Sidekiq::Testing.enabled?
+
+        true
+      end
+
+      # Hand the request to the processor running in the current process. If the
+      # processor cannot accept the request (at capacity or shutting down), the
+      # request is enqueued as a normal RequestWorker job instead through the
+      # same retry path the processor uses when it drains.
+      #
+      # @param request_json [Hash] the serialized request
+      # @param args [Array] the RequestWorker job arguments
+      # @param options [Hash, nil] scoped Sidekiq options for the request
+      # @return [void]
+      def execute_on_local_processor(request_json, args, options)
+        task_handler = DirectTaskHandler.new(args, options)
+
+        begin
+          RequestExecutor.execute(
+            PatientHttp::Request.load(request_json),
+            callback: args[1],
+            raise_error_responses: args[2],
+            callback_args: args[3],
+            task_handler: task_handler,
+            request_id: args[4]
+          )
+        rescue PatientHttp::NotRunningError, PatientHttp::MaxCapacityError => e
+          configuration.logger&.info(
+            "[PatientHttp::Sidekiq] Falling back to enqueuing request: #{e.message}"
+          )
+          task_handler.retry
+        end
       end
     end
   end

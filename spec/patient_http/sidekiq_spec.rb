@@ -615,6 +615,197 @@ RSpec.describe PatientHttp::Sidekiq do
           )
         end.to raise_error(ArgumentError, /callback_args must respond to to_h/)
       end
+
+      context "with a processor running in the current process" do
+        let(:config) { PatientHttp::Sidekiq::Configuration.new }
+        let(:processor) { PatientHttp::Processor.new(config) }
+
+        around do |example|
+          Sidekiq::Testing.disable! do
+            processor.run do
+              example.run
+            end
+          end
+        end
+
+        before do
+          described_class.processor = processor
+        end
+
+        after do
+          described_class.processor = nil
+        end
+
+        def enqueued_jobs(queue = "default")
+          payloads = ::Sidekiq.redis { |redis| redis.lrange("queue:#{queue}", 0, -1) }
+          payloads.map { |json| JSON.parse(json) }
+        end
+
+        def scheduled_count
+          ::Sidekiq.redis { |redis| redis.zcard("schedule") }
+        end
+
+        it "hands the request to the local processor without enqueuing a job" do
+          captured_request = nil
+          captured_options = nil
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute) do |req, **options|
+            captured_request = req
+            captured_options = options
+            options[:request_id]
+          end
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          request_id = described_class.execute(
+            request,
+            callback: TestCallback,
+            callback_args: {info: "data"}
+          )
+
+          expect(captured_request).to be_a(PatientHttp::Request)
+          expect(captured_request).not_to be(request)
+          expect(captured_request.url).to eq("https://example.com")
+          expect(captured_options[:callback]).to eq("TestCallback")
+          expect(captured_options[:raise_error_responses]).to eq(false)
+          expect(captured_options[:callback_args]).to eq({"info" => "data"})
+          expect(captured_options[:request_id]).to eq(request_id)
+
+          task_handler = captured_options[:task_handler]
+          expect(task_handler).to be_a(PatientHttp::Sidekiq::DirectTaskHandler)
+
+          job = task_handler.sidekiq_job
+          expect(job["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
+          expect(job["args"]).to eq([request.as_json, "TestCallback", false, {"info" => "data"}, request_id])
+          expect(job["queue"]).to eq("default")
+          expect(job["retry"]).to eq(true)
+          expect(job).not_to have_key("jid")
+          expect(job).not_to have_key("created_at")
+
+          expect(enqueued_jobs.size).to eq(0)
+        end
+
+        it "applies the scoped Sidekiq options to the task handler" do
+          captured_options = nil
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute) do |_req, **options|
+            captured_options = options
+            options[:request_id]
+          end
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.with_sidekiq_options(queue: "high_priority", retry: 3) do
+            described_class.execute(request, callback: TestCallback)
+          end
+
+          job = captured_options[:task_handler].sidekiq_job
+          expect(job["queue"]).to eq("high_priority")
+          expect(job["retry"]).to eq(3)
+          expect(job["patient_http_callback_queue"]).to eq("high_priority")
+        end
+
+        it "enqueues the job through Sidekiq when the processor is at max capacity" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+            .and_raise(PatientHttp::MaxCapacityError.new("at max capacity"))
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          request_id = described_class.execute(request, callback: TestCallback)
+
+          jobs = enqueued_jobs
+          expect(jobs.size).to eq(1)
+
+          job = jobs.first
+          expect(job["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
+          expect(job["args"][1]).to eq("TestCallback")
+          expect(job["args"][4]).to eq(request_id)
+        end
+
+        it "enqueues the job through Sidekiq when the processor stops accepting requests" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+            .and_raise(PatientHttp::NotRunningError.new("processor is stopping"))
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          request_id = described_class.execute(request, callback: TestCallback)
+
+          jobs = enqueued_jobs
+          expect(jobs.size).to eq(1)
+
+          job = jobs.first
+          expect(job["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
+          expect(job["args"][4]).to eq(request_id)
+        end
+
+        it "enqueues the job through Sidekiq when the processor is draining" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+          processor.drain
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.execute(request, callback: TestCallback)
+
+          expect(enqueued_jobs.size).to eq(1)
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+        end
+
+        it "schedules the job through Sidekiq when the options include a scheduled time" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.with_sidekiq_options(at: Time.now.to_f + 60) do
+            described_class.execute(request, callback: TestCallback)
+          end
+
+          expect(scheduled_count).to eq(1)
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+        end
+
+        context "when direct execution is disabled" do
+          before do
+            described_class.configuration.direct_execution = false
+          end
+
+          after do
+            described_class.reset_configuration!
+          end
+
+          it "enqueues the job through Sidekiq" do
+            allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+            request = PatientHttp::Request.new(:get, "https://example.com")
+            described_class.execute(request, callback: TestCallback)
+
+            jobs = enqueued_jobs
+            expect(jobs.size).to eq(1)
+            expect(jobs.first["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
+            expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+          end
+        end
+      end
+
+      context "with a processor running in Sidekiq testing mode" do
+        let(:config) { PatientHttp::Sidekiq::Configuration.new }
+        let(:processor) { PatientHttp::Processor.new(config) }
+
+        around do |example|
+          processor.run do
+            example.run
+          end
+        end
+
+        before do
+          described_class.processor = processor
+        end
+
+        after do
+          described_class.processor = nil
+        end
+
+        it "enqueues the job so tests can observe it" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.execute(request, callback: TestCallback)
+
+          expect(PatientHttp::Sidekiq::RequestWorker.jobs.size).to eq(1)
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+        end
+      end
     end
 
     describe ".with_sidekiq_options" do

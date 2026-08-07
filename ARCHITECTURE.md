@@ -112,14 +112,21 @@ sequenceDiagram
     participant Callback as Callback Service
 
     App->>Module: get(url, callback: MyCallback)
-    Module->>Sidekiq: Enqueue RequestWorker
-    Sidekiq->>ReqWorker: Execute job
-    ReqWorker->>Processor: submit(request, handler)
-    activate Processor
-    Note over Processor: Request queued<br/>in memory
-    Processor-->>ReqWorker: Returns immediately
-    ReqWorker-->>Sidekiq: Job completes
-    deactivate Processor
+
+    alt Processor running in this process (direct execution)
+        Module->>Processor: submit(request, handler)
+        Note over Module: DirectTaskHandler keeps the<br/>RequestWorker args for re-enqueue
+        Processor-->>Module: Returns immediately
+    else Processor not in this process
+        Module->>Sidekiq: Enqueue RequestWorker
+        Sidekiq->>ReqWorker: Execute job
+        ReqWorker->>Processor: submit(request, handler)
+        activate Processor
+        Note over Processor: Request queued<br/>in memory
+        Processor-->>ReqWorker: Returns immediately
+        ReqWorker-->>Sidekiq: Job completes
+        deactivate Processor
+    end
 
     Note over Sidekiq: Worker thread free<br/>to process other jobs
 
@@ -148,6 +155,8 @@ Key integration points:
 2. **TaskHandler** converts processor callbacks into Sidekiq jobs
 3. **CallbackWorker** invokes the user's callback service methods
 4. **ExternalStorage** handles large payloads transparently at each step
+
+Direct execution (enabled by default with `config.direct_execution`) skips the `RequestWorker` enqueue when the processor runs in the current process. The request gets a `DirectTaskHandler` that holds the `RequestWorker` job arguments, so every re-enqueue path (processor shutdown, crash recovery, and the at-capacity fallback) can enqueue the request as a normal `RequestWorker` job. The handler exposes a minimal job record for the crash-recovery registry because the orphan sweep pushes the stored record from another process. Scheduled requests and requests made while `Sidekiq::Testing` is enabled always go through the queue.
 
 ## Component Relationships
 
@@ -401,6 +410,9 @@ PatientHttp::Sidekiq.configure do |config|
   # Sidekiq worker options (applied to both RequestWorker and CallbackWorker)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
+  # Skip the Sidekiq queue when the processor runs in the current process
+  config.direct_execution = true
+
   # Encryption (for sensitive data in Sidekiq jobs; inherited from PatientHttp::Configuration)
   config.encryption_key = ENV["PATIENT_HTTP_ENCRYPTION_KEY"]
 
@@ -464,6 +476,13 @@ Fiber reactor processes request
   ↓ Non-blocking HTTP I/O
 Response/Error received
 ```
+
+With direct execution (the default), a request made in a process with a running
+processor skips the enqueue and the `RequestWorker#perform` steps. A
+`DirectTaskHandler` holds the `RequestWorker` job arguments, and the request
+goes straight to the processor. The rest of the flow is identical, and the
+re-enqueue paths use the handler to enqueue a normal `RequestWorker` job when
+needed.
 
 ### Processing a Response
 

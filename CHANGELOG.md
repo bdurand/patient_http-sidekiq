@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.0
+
+### Added
+
+- Requests made in a process with a running processor now go straight to the processor instead of being enqueued through Sidekiq. The request can always be re-enqueued as a normal `RequestWorker` job, so all of the re-enqueue paths (processor shutdown, crash recovery, and the at-capacity fallback) behave the same as the enqueued path. The new `direct_execution` configuration option (default: `true`) turns this behavior off.
+
 ## 1.2.0
 
 ### Added

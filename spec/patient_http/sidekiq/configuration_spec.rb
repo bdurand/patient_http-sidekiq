@@ -294,6 +294,31 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
     end
   end
 
+  describe "#direct_execution" do
+    it "defaults to true" do
+      config = described_class.new
+
+      expect(config.direct_execution).to be(true)
+      expect(config.direct_execution?).to be(true)
+    end
+
+    it "can be set with the initializer" do
+      config = described_class.new(direct_execution: false)
+
+      expect(config.direct_execution?).to be(false)
+    end
+
+    it "coerces the value to a boolean" do
+      config = described_class.new
+
+      config.direct_execution = nil
+      expect(config.direct_execution).to be(false)
+
+      config.direct_execution = "yes"
+      expect(config.direct_execution).to be(true)
+    end
+  end
+
   describe "#logger" do
     context "when logger is configured" do
       it "returns the configured logger" do
@@ -341,6 +366,7 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect(hash["connection_timeout"]).to eq(10)
       expect(hash["proxy_url"]).to eq("http://proxy.example.com:8080")
       expect(hash["retries"]).to eq(5)
+      expect(hash["direct_execution"]).to eq(true)
     end
   end
 end

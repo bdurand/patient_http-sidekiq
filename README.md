@@ -247,6 +247,17 @@ The options are applied with Sidekiq's `set` method, so any Sidekiq job option (
 - If the options include a `queue`, the callback job that invokes your `on_complete`/`on_error` methods is enqueued on that queue as well, so the whole request keeps one priority end to end.
 - Nested blocks merge their options, and the innermost values take precedence. The previous options are restored when the block exits, even if the block raises an error.
 
+### Direct Execution
+
+When a request is made in a process where the processor is running (normally a Sidekiq server process), the request skips the Sidekiq queue and goes straight to the processor. This removes a round trip through Redis. The behavior is the same as the enqueued path:
+
+- The request can always be re-enqueued. If the processor shuts down or the process crashes, the request is enqueued as a normal `RequestWorker` job.
+- If the processor is at max capacity or stops accepting requests, the request is enqueued through Sidekiq instead, and the normal Sidekiq retry behavior applies from there.
+- Requests scheduled with `with_sidekiq_options(at: ...)` always go through the Sidekiq queue.
+- Direct execution is disabled when `Sidekiq::Testing` is enabled, so tests can observe enqueued jobs as usual.
+
+You can turn this off with `config.direct_execution = false`. Do this if you need Sidekiq client or server middleware to run for every request, or if you want every request to be visible as an enqueued job in Sidekiq metrics and the Web UI.
+
 ### Using Request Templates
 
 For repeated requests to the same API, use `PatientHttp::RequestTemplate` to share configuration:
@@ -463,6 +474,10 @@ PatientHttp::Sidekiq.configure do |config|
   # Sidekiq options for RequestWorker and CallbackWorker
   # (use PatientHttp::Sidekiq.with_sidekiq_options to override per request)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
+
+  # Whether requests made in a process with a running processor skip the
+  # Sidekiq queue and go straight to the processor (default: true)
+  config.direct_execution = true
 
   # Handler called when a callback job exhausts all Sidekiq retries
   config.on_retries_exhausted { |error| MyAlertService.notify(error) }

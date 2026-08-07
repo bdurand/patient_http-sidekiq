@@ -78,6 +78,24 @@
       </div>
 
       <div class="form-group">
+        <label>Asynchronous Request Mode</label>
+        <div style="display: flex; align-items: center; gap: 24px; padding: 4px 0;">
+          <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
+            <input type="checkbox" id="direct" name="direct" value="1" checked>
+            Direct execution
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
+            <input type="checkbox" id="from-server" name="from_server" value="1">
+            Fire from a Sidekiq worker
+          </label>
+        </div>
+        <div class="help-text">
+          Direct execution skips the Sidekiq queue when the processor runs in this process.
+          The worker option fires the requests from inside a Sidekiq job instead of the web request.
+        </div>
+      </div>
+
+      <div class="form-group">
         <label for="timeout">Timeout (seconds)</label>
         <input
           type="number"
@@ -198,7 +216,11 @@
             const delayDrift = formData.get('delay_drift');
             const driftText = parseFloat(delayDrift) > 0 ? ` (±${delayDrift}%)` : '';
             const totalCount = parseInt(asyncCount) + parseInt(syncCount);
-            showToast(`Successfully enqueued ${totalCount} jobs (${asyncCount} async, ${syncCount} sync) - ${delay}s delay${driftText}, ${timeout}s timeout!`);
+            const modes = [];
+            if (formData.get('direct')) modes.push('direct execution');
+            if (formData.get('from_server')) modes.push('fired from worker');
+            const modeText = modes.length > 0 ? ` [${modes.join(', ')}]` : '';
+            showToast(`Successfully enqueued ${totalCount} jobs (${asyncCount} async, ${syncCount} sync) - ${delay}s delay${driftText}, ${timeout}s timeout!${modeText}`);
             // Reset zero activity count and restart polling if stopped
             zeroActivityCount = 0;
             if (!isPolling) {
