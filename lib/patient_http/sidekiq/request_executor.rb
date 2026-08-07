@@ -7,9 +7,8 @@ module PatientHttp
       class << self
         # Execute the request directly on the async processor.
         #
-        # This method enqueues the request directly to the async processor. It must be
-        # called from within a Sidekiq job context (the sidekiq_job parameter is required).
-        # Used internally by RequestWorker.
+        # This method enqueues the request directly to the async processor. Used internally
+        # by RequestWorker.
         #
         # When the request completes, the callback's +on_complete+ method is called with
         # a Response object. If an error occurs (network error, timeout, or non-2xx response
