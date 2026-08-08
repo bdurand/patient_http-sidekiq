@@ -70,6 +70,40 @@ RSpec.describe "Direct Execution", :integration do
     expect(response.request_id).to eq(request_id)
   end
 
+  it "raises when the crash-recovery registry entry cannot be written" do
+    observer = PatientHttp::Sidekiq::ProcessorObserver.new(processor)
+    processor.observe(observer)
+    allow(observer.task_monitor).to receive(:register).and_raise("Redis is unavailable")
+    # Prove the error propagates on the production path, not through the
+    # testing-mode re-raise in the processor's observer notifications.
+    allow(PatientHttp).to receive(:testing?).and_return(false)
+
+    request = PatientHttp::Request.new(:get, "#{test_web_server.base_url}/test/200")
+
+    expect do
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback)
+    end.to raise_error(RuntimeError, "Redis is unavailable")
+
+    # The processor did not accept the task, so nothing executes without a
+    # durable record.
+    expect(processor.tracked_request_ids).to be_empty
+    expect(enqueued_jobs).to be_empty
+  end
+
+  it "registers the request in the crash-recovery registry before execute returns" do
+    observer = PatientHttp::Sidekiq::ProcessorObserver.new(processor)
+    processor.observe(observer)
+
+    request = PatientHttp::Request.new(:get, "#{test_web_server.base_url}/delay/500")
+    request_id = PatientHttp::Sidekiq.execute(request, callback: TestCallback)
+
+    registered_ids = observer.task_monitor.registered_task_ids
+    expect(registered_ids).to include(a_string_ending_with("/#{request_id}"))
+
+    # The entry is removed when the request completes.
+    expect(wait_until { observer.task_monitor.registered_task_ids.empty? }).to be(true)
+  end
+
   context "with external payload storage" do
     before do
       TestPayloadStore.clear!

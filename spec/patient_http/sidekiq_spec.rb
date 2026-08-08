@@ -683,22 +683,36 @@ RSpec.describe PatientHttp::Sidekiq do
           expect(enqueued_jobs.size).to eq(0)
         end
 
-        it "applies the scoped Sidekiq options to the task handler" do
-          captured_options = nil
-          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute) do |_req, **options|
-            captured_options = options
-            options[:request_id]
-          end
+        it "enqueues the job through Sidekiq when scoped Sidekiq options are set" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
 
           request = PatientHttp::Request.new(:get, "https://example.com")
           described_class.with_sidekiq_options(queue: "high_priority", retry: 3) do
             described_class.execute(request, callback: TestCallback)
           end
 
-          job = captured_options[:task_handler].sidekiq_job
-          expect(job["queue"]).to eq("high_priority")
+          jobs = enqueued_jobs("high_priority")
+          expect(jobs.size).to eq(1)
+
+          job = jobs.first
+          expect(job["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
           expect(job["retry"]).to eq(3)
           expect(job["patient_http_callback_queue"]).to eq("high_priority")
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+        end
+
+        it "enqueues the job through Sidekiq when the scoped Sidekiq options are empty" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.with_sidekiq_options({}) do
+            described_class.execute(request, callback: TestCallback)
+          end
+
+          jobs = enqueued_jobs
+          expect(jobs.size).to eq(1)
+          expect(jobs.first["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
         end
 
         it "enqueues the job through Sidekiq when the processor is at max capacity" do

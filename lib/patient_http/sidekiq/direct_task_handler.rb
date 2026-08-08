@@ -3,7 +3,9 @@
 module PatientHttp
   module Sidekiq
     # TaskHandler for requests executed directly on the local processor
-    # without an enqueued Sidekiq job.
+    # without an enqueued Sidekiq job. Requests with scoped Sidekiq options
+    # always go through the queue, so the handler only deals with the
+    # default RequestWorker options.
     #
     # Retry enqueues a normal RequestWorker job with the original arguments,
     # so the fail-back behavior matches the enqueued path. The sidekiq_job
@@ -12,10 +14,8 @@ module PatientHttp
     # re-enqueued, so job_id returns nil.
     class DirectTaskHandler < TaskHandler
       # @param args [Array] the RequestWorker job arguments
-      # @param sidekiq_options [Hash, nil] scoped Sidekiq options for the request
-      def initialize(args, sidekiq_options = nil)
+      def initialize(args)
         @args = args
-        @sidekiq_options = sidekiq_options || {}
         super(minimal_job_record)
       end
 
@@ -23,11 +23,7 @@ module PatientHttp
       #
       # @return [String] the job ID
       def retry
-        if @sidekiq_options.any?
-          RequestWorker.set(@sidekiq_options).perform_async(*@args)
-        else
-          RequestWorker.perform_async(*@args)
-        end
+        RequestWorker.perform_async(*@args)
       end
 
       private
@@ -41,7 +37,6 @@ module PatientHttp
       # @return [Hash]
       def minimal_job_record
         RequestWorker.get_sidekiq_options
-          .merge(@sidekiq_options)
           .merge("class" => RequestWorker.name, "args" => @args)
       end
     end

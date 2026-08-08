@@ -221,7 +221,9 @@ module PatientHttp
       # Nested calls merge options with the innermost values taking precedence.
       # If the options include a queue, the callback job for the request is
       # enqueued on that queue as well. Options only apply to requests enqueued
-      # in the same fiber as the block. This method has no effect
+      # in the same fiber as the block. Requests made in the block always go
+      # through the Sidekiq queue, even when direct execution is enabled, so
+      # that Sidekiq applies the options. This method has no effect
       # when jobs run inline with Sidekiq::Testing.inline!.
       #
       # @param options [Hash] Sidekiq job options (symbol or string keys)
@@ -278,7 +280,14 @@ module PatientHttp
         args = [data, callback_name, raise_error_responses, callback_args, request_id]
 
         if direct_execution?(options)
-          execute_on_local_processor(request_json, args, options)
+          execute_on_local_processor(
+            request_json,
+            args,
+            callback_name: callback_name,
+            raise_error_responses: raise_error_responses,
+            callback_args: callback_args,
+            request_id: request_id
+          )
         elsif options&.any?
           RequestWorker.set(options).perform_async(*args)
         else
@@ -405,15 +414,16 @@ module PatientHttp
       end
 
       # Check if the request can go directly to a processor running in the current
-      # process. Scheduled requests must go through Redis, and Sidekiq testing modes
-      # must keep their normal enqueue semantics.
+      # process. Requests made in a with_sidekiq_options block always go through
+      # the queue so that Sidekiq applies the options (queue routing, scheduling,
+      # retry), and Sidekiq testing modes must keep their normal enqueue semantics.
       #
       # @param options [Hash, nil] scoped Sidekiq options for the request
       # @return [Boolean]
       def direct_execution?(options)
+        return false unless options.nil?
         return false unless configuration.direct_execution?
         return false unless running?
-        return false if options&.key?("at")
         return false if defined?(::Sidekiq::Testing) && ::Sidekiq::Testing.enabled?
 
         true
@@ -426,19 +436,24 @@ module PatientHttp
       #
       # @param request_json [Hash] the serialized request
       # @param args [Array] the RequestWorker job arguments
-      # @param options [Hash, nil] scoped Sidekiq options for the request
+      # @param callback_name [String] the callback service class name
+      # @param raise_error_responses [Boolean] whether non-2xx responses are errors
+      # @param callback_args [Hash, nil] arguments to pass to the callback
+      # @param request_id [String] unique request ID
       # @return [void]
-      def execute_on_local_processor(request_json, args, options)
-        task_handler = DirectTaskHandler.new(args, options)
+      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:)
+        task_handler = DirectTaskHandler.new(args)
 
         begin
+          # Reload the request from its serialized form so the direct path
+          # processes the same reconstructed request a RequestWorker job would.
           RequestExecutor.execute(
             PatientHttp::Request.load(request_json),
-            callback: args[1],
-            raise_error_responses: args[2],
-            callback_args: args[3],
+            callback: callback_name,
+            raise_error_responses: raise_error_responses,
+            callback_args: callback_args,
             task_handler: task_handler,
-            request_id: args[4]
+            request_id: request_id
           )
         rescue PatientHttp::NotRunningError, PatientHttp::MaxCapacityError => e
           configuration.logger&.info(

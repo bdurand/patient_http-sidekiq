@@ -18,19 +18,6 @@ RSpec.describe PatientHttp::Sidekiq::DirectTaskHandler do
       expect(job).not_to have_key("created_at")
     end
 
-    it "includes the scoped Sidekiq options" do
-      handler = described_class.new(args, {
-        "queue" => "high_priority",
-        "retry" => 3,
-        "patient_http_callback_queue" => "high_priority"
-      })
-
-      job = handler.sidekiq_job
-      expect(job["queue"]).to eq("high_priority")
-      expect(job["retry"]).to eq(3)
-      expect(job["patient_http_callback_queue"]).to eq("high_priority")
-    end
-
     it "serializes to JSON for the crash-recovery registry" do
       handler = described_class.new(args)
 
@@ -50,22 +37,6 @@ RSpec.describe PatientHttp::Sidekiq::DirectTaskHandler do
       expect(job["args"]).to eq(args)
       expect(job["queue"]).to eq("default")
     end
-
-    it "applies the scoped Sidekiq options to the job" do
-      handler = described_class.new(args, {
-        "queue" => "high_priority",
-        "retry" => 3,
-        "patient_http_callback_queue" => "high_priority"
-      })
-
-      handler.retry
-
-      job = PatientHttp::Sidekiq::RequestWorker.jobs.first
-      expect(job["args"]).to eq(args)
-      expect(job["queue"]).to eq("high_priority")
-      expect(job["retry"]).to eq(3)
-      expect(job["patient_http_callback_queue"]).to eq("high_priority")
-    end
   end
 
   describe "#job_id" do
@@ -78,27 +49,6 @@ RSpec.describe PatientHttp::Sidekiq::DirectTaskHandler do
 
   describe "#on_complete" do
     before { TestCallback.reset_calls! }
-
-    it "routes the callback job to the callback queue from the options" do
-      handler = described_class.new(args, {
-        "queue" => "high_priority",
-        "patient_http_callback_queue" => "high_priority"
-      })
-
-      response = PatientHttp::Response.new(
-        status: 200,
-        headers: {"Content-Type" => "text/plain"},
-        body: "OK",
-        duration: 0.1,
-        request_id: "req-1",
-        url: "http://example.com/test",
-        http_method: "get"
-      )
-      handler.on_complete(response, TestCallback.name)
-
-      job = PatientHttp::Sidekiq::CallbackWorker.jobs.last
-      expect(job["queue"]).to eq("high_priority")
-    end
 
     context "with external payload storage" do
       before do

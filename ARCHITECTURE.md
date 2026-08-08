@@ -156,7 +156,7 @@ Key integration points:
 3. **CallbackWorker** invokes the user's callback service methods
 4. **ExternalStorage** handles large payloads transparently at each step
 
-Direct execution (enabled by default with `config.direct_execution`) skips the `RequestWorker` enqueue when the processor runs in the current process. The request gets a `DirectTaskHandler` that holds the `RequestWorker` job arguments, so every re-enqueue path (processor shutdown, crash recovery, and the at-capacity fallback) can enqueue the request as a normal `RequestWorker` job. The handler exposes a minimal job record for the crash-recovery registry because the orphan sweep pushes the stored record from another process. Scheduled requests and requests made while `Sidekiq::Testing` is enabled always go through the queue.
+Direct execution (enabled by default with `config.direct_execution`) skips the `RequestWorker` enqueue when the processor runs in the current process. The request gets a `DirectTaskHandler` that holds the `RequestWorker` job arguments, so every re-enqueue path (processor shutdown, crash recovery, and the at-capacity fallback) can enqueue the request as a normal `RequestWorker` job. The handler exposes a minimal job record for the crash-recovery registry because the orphan sweep pushes the stored record from another process. Requests made in a `with_sidekiq_options` block and requests made while `Sidekiq::Testing` is enabled always go through the queue, so that Sidekiq applies the options. Options set with `config.sidekiq_options` (including a `queue`) do not apply to direct-executed requests, because no Sidekiq job is created; set `config.direct_execution = false` to route every request through the configured queue. A failure to write the crash-recovery registry entry rejects the request and raises to the caller, the same as a failed enqueue.
 
 ## Component Relationships
 
@@ -386,12 +386,14 @@ In-flight requests are tracked in Redis to enable recovery when Sidekiq processe
 - Re-enqueues orphaned requests via `Sidekiq::Client.push`
 
 ### Recovery Process
-1. `ProcessorObserver` notifies `TaskMonitor` when requests start/complete
-2. `TaskMonitorThread` updates heartbeat timestamps in Redis
+1. `ProcessorObserver` registers a request with `TaskMonitor` when the processor accepts it (before `Processor#enqueue` returns) and unregisters it when the request completes or when a Sidekiq job owns the request again (rejected or re-enqueued)
+2. `TaskMonitorThread` updates heartbeat timestamps in Redis for all tracked requests (queued, pending, and in-flight)
 3. If a process crashes, heartbeat updates stop
 4. Other processes' monitor threads detect stale timestamps
 5. Orphaned requests are atomically removed and re-enqueued
 6. Prevents lost work during deployments or crashes
+
+Recovery gives at-least-once delivery. A crash between a re-enqueue and the removal of the registry entry can execute a request more than once, so callbacks must be idempotent. A request is durable once the submitting call returns; a crash during the call behaves like a failed enqueue.
 
 **Redis Keys:**
 - `sidekiq:patient_http:inflight_index` - Sorted set of request IDs by timestamp

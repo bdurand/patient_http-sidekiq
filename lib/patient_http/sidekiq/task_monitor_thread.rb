@@ -20,12 +20,13 @@ module PatientHttp
       #
       # @param config [Configuration] the configuration object
       # @param task_monitor [TaskMonitor] the inflight request registry
-      # @param inflight_ids_callback [Proc] callback to get current inflight request IDs
+      # @param tracked_ids_callback [Proc] callback to get the IDs of all requests the
+      #   processor is tracking (queued, pending, and in-flight)
       # @return [void]
-      def initialize(config, task_monitor, inflight_ids_callback)
+      def initialize(config, task_monitor, tracked_ids_callback)
         @config = config
         @task_monitor = task_monitor
-        @inflight_ids_callback = inflight_ids_callback
+        @tracked_ids_callback = tracked_ids_callback
         @thread = nil
         @running = Concurrent::AtomicBoolean.new(false)
         @stop_signal = Concurrent::Event.new
@@ -107,16 +108,16 @@ module PatientHttp
         @config.logger&.info("[PatientHttp::Sidekiq] Monitor thread stopped")
       end
 
-      # Update heartbeats for all inflight requests.
+      # Update heartbeats for all tracked requests.
       #
       # @return [void]
       def update_heartbeats
-        request_ids = @inflight_ids_callback.call
+        request_ids = @tracked_ids_callback.call
         return if request_ids.empty?
 
         @task_monitor.update_heartbeats(request_ids)
 
-        @config.logger&.debug("[PatientHttp::Sidekiq] Updated heartbeats for #{request_ids.size} inflight requests")
+        @config.logger&.debug("[PatientHttp::Sidekiq] Updated heartbeats for #{request_ids.size} tracked requests")
       rescue => e
         @config.logger&.error("[PatientHttp::Sidekiq] Failed to update heartbeats: #{e.class} - #{e.message}")
         raise if PatientHttp.testing?

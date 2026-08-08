@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Requests made in a process with a running processor now go straight to the processor instead of being enqueued through Sidekiq. The request can always be re-enqueued as a normal `RequestWorker` job, so all of the re-enqueue paths (processor shutdown, crash recovery, and the at-capacity fallback) behave the same as the enqueued path. The new `direct_execution` configuration option (default: `true`) turns this behavior off.
+- Requests made in a process with a running processor now go straight to the processor instead of being enqueued through Sidekiq. The request can always be re-enqueued as a normal `RequestWorker` job, so all of the re-enqueue paths (processor shutdown, crash recovery, and the at-capacity fallback) behave the same as the enqueued path. Requests made in a `with_sidekiq_options` block always go through the Sidekiq queue, so that Sidekiq applies the options; options set with `config.sidekiq_options` do not apply to direct-executed requests because no Sidekiq job is created. The new `direct_execution` configuration option (default: `true`) turns this behavior off.
+
+### Changed
+
+- Requests are now registered in the crash-recovery registry when the processor accepts them, before the enqueue call returns, instead of when the request starts processing. A request handed to the processor is durable from that point on, and heartbeats now cover queued requests as well as in-flight ones. The entry is removed when the request completes or when a Sidekiq job owns the request again. A failure to write the registry entry rejects the request and raises to the caller, the same as a failed enqueue. This requires patient_http 1.4.0.
 
 ## 1.2.0
 

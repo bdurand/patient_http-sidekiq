@@ -140,6 +140,46 @@ RSpec.describe "Crash Recovery", :integration do
     task_monitor2.release_gc_lock
   end
 
+  it "registers accepted requests in the registry until the job system owns them again" do
+    local_processor = PatientHttp::Processor.new(config)
+    local_observer = PatientHttp::Sidekiq::ProcessorObserver.new(local_processor)
+    local_processor.observe(local_observer)
+    # Never let the reactor consume the queue so the task stays queued.
+    allow(local_processor).to receive(:dequeue_request) { |**_args| nil }
+
+    job_payload = {
+      "class" => "TestWorker",
+      "jid" => "registration-test-jid",
+      "args" => []
+    }
+    request = PatientHttp::Request.new(:get, "http://localhost:9876/test")
+    task = PatientHttp::RequestTask.new(
+      request: request,
+      task_handler: PatientHttp::Sidekiq::TaskHandler.new(job_payload),
+      callback: TestCallback
+    )
+
+    local_processor.start
+    local_processor.enqueue(task)
+
+    # The registry entry is written before enqueue returns, and heartbeats
+    # cover the task while it is still queued.
+    expect(local_observer.task_monitor.registered?(task)).to be true
+    expect(local_processor.tracked_request_ids).to include(task.id)
+
+    pushed_jobs = []
+    allow(Sidekiq::Client).to receive(:push) { |job| pushed_jobs << job }
+
+    # Shutdown re-enqueues the queued task as a Sidekiq job and removes the
+    # registry entry so crash recovery cannot push the job a second time.
+    local_processor.stop(timeout: 0)
+
+    expect(pushed_jobs.size).to eq(1)
+    expect(local_observer.task_monitor.registered?(task)).to be false
+  ensure
+    local_processor&.stop(timeout: 0)
+  end
+
   it "monitor thread updates heartbeats periodically" do
     # Create a task
     job_payload = {

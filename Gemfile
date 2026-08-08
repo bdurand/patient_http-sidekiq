@@ -2,6 +2,13 @@ source "https://rubygems.org"
 
 gemspec
 
+# Use the local patient_http checkout when present so the gems can be
+# developed in tandem before a release.
+local_patient_http = File.expand_path("../patient_http", __dir__)
+if File.directory?(local_patient_http)
+  gem "patient_http", path: local_patient_http
+end
+
 # Exclude development-only gems from dependabot.
 unless ENV["DEPENDABOT"]
   gem "protocol-rack"
