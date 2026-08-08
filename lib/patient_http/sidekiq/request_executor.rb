@@ -7,9 +7,8 @@ module PatientHttp
       class << self
         # Execute the request directly on the async processor.
         #
-        # This method enqueues the request directly to the async processor. It must be
-        # called from within a Sidekiq job context (the sidekiq_job parameter is required).
-        # Used internally by RequestWorker.
+        # This method enqueues the request directly to the async processor. Used internally
+        # by RequestWorker.
         #
         # When the request completes, the callback's +on_complete+ method is called with
         # a Response object. If an error occurs (network error, timeout, or non-2xx response
@@ -22,6 +21,9 @@ module PatientHttp
         #   If not provided, uses PatientHttp::Sidekiq::Context.current_job.
         #   This requires the PatientHttp::Sidekiq::Context::Middleware to be added
         #   to the Sidekiq server middleware chain.
+        # @param task_handler [PatientHttp::TaskHandler, nil] A prebuilt task handler.
+        #   When provided, the sidekiq_job parameter is ignored and no handler is
+        #   built from it. Used for direct execution on the local processor.
         # @param synchronous [Boolean] If true, runs the request inline (for testing).
         # @param callback_args [#to_h, nil] Arguments to pass to callback via the
         #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
@@ -38,14 +40,14 @@ module PatientHttp
           request,
           callback:,
           sidekiq_job: nil,
+          task_handler: nil,
           synchronous: false,
           callback_args: nil,
           raise_error_responses: false,
           request_id: nil
         )
-          sidekiq_job = validate_sidekiq_job(sidekiq_job)
+          task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job))
           config = PatientHttp::Sidekiq.configuration
-          task_handler = TaskHandler.new(sidekiq_job)
 
           task = PatientHttp::RequestTask.new(
             request: request,

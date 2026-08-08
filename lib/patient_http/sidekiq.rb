@@ -77,6 +77,7 @@ module PatientHttp
     autoload :CallbackWorker, File.join(__dir__, "sidekiq/callback_worker")
     autoload :Configuration, File.join(__dir__, "sidekiq/configuration")
     autoload :Context, File.join(__dir__, "sidekiq/context")
+    autoload :DirectTaskHandler, File.join(__dir__, "sidekiq/direct_task_handler")
     autoload :ProcessorObserver, File.join(__dir__, "sidekiq/processor_observer")
     autoload :RequestExecutor, File.join(__dir__, "sidekiq/request_executor")
     autoload :RequestWorker, File.join(__dir__, "sidekiq/request_worker")
@@ -220,7 +221,9 @@ module PatientHttp
       # Nested calls merge options with the innermost values taking precedence.
       # If the options include a queue, the callback job for the request is
       # enqueued on that queue as well. Options only apply to requests enqueued
-      # in the same fiber as the block. This method has no effect
+      # in the same fiber as the block. Requests made in the block always go
+      # through the Sidekiq queue, even when direct execution is enabled, so
+      # that Sidekiq applies the options. This method has no effect
       # when jobs run inline with Sidekiq::Testing.inline!.
       #
       # @param options [Hash] Sidekiq job options (symbol or string keys)
@@ -260,7 +263,8 @@ module PatientHttp
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
-        encrypted = encrypt(request.as_json)
+        request_json = request.as_json
+        encrypted = encrypt(request_json)
 
         data = if external_storage.enabled?
           external_storage.store(encrypted, max_size: configuration.payload_store_threshold)
@@ -272,9 +276,22 @@ module PatientHttp
         if options&.any?
           queue = options["queue"]
           options = options.merge("patient_http_callback_queue" => queue.to_s) if queue
-          RequestWorker.set(options).perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+        end
+        args = [data, callback_name, raise_error_responses, callback_args, request_id]
+
+        if direct_execution?(options)
+          execute_on_local_processor(
+            request_json,
+            args,
+            callback_name: callback_name,
+            raise_error_responses: raise_error_responses,
+            callback_args: callback_args,
+            request_id: request_id
+          )
+        elsif options&.any?
+          RequestWorker.set(options).perform_async(*args)
         else
-          RequestWorker.perform_async(data, callback_name, raise_error_responses, callback_args, request_id)
+          RequestWorker.perform_async(*args)
         end
 
         request_id
@@ -394,6 +411,56 @@ module PatientHttp
       # @return [Hash, nil]
       def current_sidekiq_options
         Thread.current[:patient_http_sidekiq_options]
+      end
+
+      # Check if the request can go directly to a processor running in the current
+      # process. Requests made in a with_sidekiq_options block always go through
+      # the queue so that Sidekiq applies the options (queue routing, scheduling,
+      # retry), and Sidekiq testing modes must keep their normal enqueue semantics.
+      #
+      # @param options [Hash, nil] scoped Sidekiq options for the request
+      # @return [Boolean]
+      def direct_execution?(options)
+        return false unless options.nil?
+        return false unless configuration.direct_execution?
+        return false unless running?
+        return false if defined?(::Sidekiq::Testing) && ::Sidekiq::Testing.enabled?
+
+        true
+      end
+
+      # Hand the request to the processor running in the current process. If the
+      # processor cannot accept the request (at capacity or shutting down), the
+      # request is enqueued as a normal RequestWorker job instead through the
+      # same retry path the processor uses when it drains.
+      #
+      # @param request_json [Hash] the serialized request
+      # @param args [Array] the RequestWorker job arguments
+      # @param callback_name [String] the callback service class name
+      # @param raise_error_responses [Boolean] whether non-2xx responses are errors
+      # @param callback_args [Hash, nil] arguments to pass to the callback
+      # @param request_id [String] unique request ID
+      # @return [void]
+      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:)
+        task_handler = DirectTaskHandler.new(args)
+
+        begin
+          # Reload the request from its serialized form so the direct path
+          # processes the same reconstructed request a RequestWorker job would.
+          RequestExecutor.execute(
+            PatientHttp::Request.load(request_json),
+            callback: callback_name,
+            raise_error_responses: raise_error_responses,
+            callback_args: callback_args,
+            task_handler: task_handler,
+            request_id: request_id
+          )
+        rescue PatientHttp::NotRunningError, PatientHttp::MaxCapacityError => e
+          configuration.logger&.info(
+            "[PatientHttp::Sidekiq] Falling back to enqueuing request: #{e.message}"
+          )
+          task_handler.retry
+        end
       end
     end
   end

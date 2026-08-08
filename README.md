@@ -246,6 +246,19 @@ The options are applied with Sidekiq's `set` method, so any Sidekiq job option (
 
 - If the options include a `queue`, the callback job that invokes your `on_complete`/`on_error` methods is enqueued on that queue as well, so the whole request keeps one priority end to end.
 - Nested blocks merge their options, and the innermost values take precedence. The previous options are restored when the block exits, even if the block raises an error.
+- Requests made in the block always go through the Sidekiq queue, even when the processor runs in the current process, so that Sidekiq applies the options (see Direct Execution below).
+
+### Direct Execution
+
+When a request is made in a process where the processor is running (normally a Sidekiq server process), the request skips the Sidekiq queue and goes straight to the processor. This removes a round trip through Redis. The behavior is the same as the enqueued path:
+
+- The request can always be re-enqueued. It is registered in the crash-recovery registry before the call returns, so if the processor shuts down or the process crashes, the request is enqueued as a normal `RequestWorker` job. If the registry entry cannot be written (for example, Redis is unavailable), the call raises, the same as a failed enqueue.
+- If the processor is at max capacity or stops accepting requests, the request is enqueued through Sidekiq instead, and the normal Sidekiq retry behavior applies from there.
+- Requests made in a `with_sidekiq_options` block always go through the Sidekiq queue, so that Sidekiq applies the options (queue routing, scheduling, retry). Use this to route specific requests to a dedicated Sidekiq process.
+- Options set with `config.sidekiq_options` (including a `queue`) do not apply to direct-executed requests, because no Sidekiq job is created. If every request must go through the configured queue (for example, to run all requests on a dedicated Sidekiq process), set `config.direct_execution = false`.
+- Direct execution is disabled when `Sidekiq::Testing` is enabled, so tests can observe enqueued jobs as usual.
+
+You can turn this off with `config.direct_execution = false`. Do this if you route all requests to a dedicated queue with `config.sidekiq_options`, if you need Sidekiq client or server middleware to run for every request, or if you want every request to be visible as an enqueued job in Sidekiq metrics and the Web UI.
 
 ### Using Request Templates
 
@@ -464,6 +477,12 @@ PatientHttp::Sidekiq.configure do |config|
   # (use PatientHttp::Sidekiq.with_sidekiq_options to override per request)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
+  # Whether requests made in a process with a running processor skip the
+  # Sidekiq queue and go straight to the processor (default: true).
+  # Sidekiq options, including a queue, do not apply to direct-executed
+  # requests; set this to false to route every request through the queue.
+  config.direct_execution = true
+
   # Handler called when a callback job exhausts all Sidekiq retries
   config.on_retries_exhausted { |error| MyAlertService.notify(error) }
 
@@ -587,6 +606,8 @@ The gem includes crash recovery to handle process failures:
 3. **Automatic Re-enqueue:** Orphaned requests have their original Sidekiq jobs re-enqueued
 
 This ensures that if a Sidekiq process crashes, its in-flight requests will be retried by another process.
+
+Crash recovery gives at-least-once delivery. If a process crashes at the wrong moment (for example, between a re-enqueue and the removal of the registry entry), a request can execute more than once and its callback can fire more than once. Make your callbacks idempotent. A request is durable once the call that submits it returns; a crash during the call behaves like a failed enqueue, and the caller never received an acknowledgment.
 
 ## Testing
 

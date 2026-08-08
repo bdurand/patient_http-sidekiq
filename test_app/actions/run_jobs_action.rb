@@ -16,6 +16,10 @@ class RunJobsAction
     delay = request.params["delay"].to_f
     timeout = request.params["timeout"].to_f
     delay_drift = request.params["delay_drift"].to_f.clamp(0.0, 100.0)
+    direct_execution = request.params["direct"] == "1"
+    from_server = request.params["from_server"] == "1"
+
+    PatientHttp::Sidekiq.configuration.direct_execution = direct_execution
 
     # Reset success and error counters only if all activity is zero
     current_stats = CurrentStats.new
@@ -36,8 +40,12 @@ class RunJobsAction
     end
 
     jobs = []
-    async_count.times do
-      jobs << lambda { async_get("/slow", params: {delay: drifted_delay.call}, callback: StatusReport::Callback, timeout: timeout) }
+    if from_server
+      jobs << lambda { EnqueueRequestsWorker.perform_async(async_count, delay, timeout, delay_drift) } if async_count > 0
+    else
+      async_count.times do
+        jobs << lambda { async_get("/slow", params: {delay: drifted_delay.call}, callback: StatusReport::Callback, timeout: timeout) }
+      end
     end
 
     sync_count.times do

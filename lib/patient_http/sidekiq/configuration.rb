@@ -24,6 +24,10 @@ module PatientHttp
       # @return [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
       attr_reader :sidekiq_options
 
+      # @return [Boolean] Whether requests execute directly on a processor running in the
+      #   current process instead of being enqueued through Sidekiq
+      attr_reader :direct_execution
+
       # @return [#call, nil] Handler invoked when a CallbackWorker job exhausts all retries.
       # @overload on_retries_exhausted
       #   Returns the current handler.
@@ -51,6 +55,8 @@ module PatientHttp
       # @param orphan_threshold [Integer] Age threshold for detecting orphaned requests in seconds
       # @param sidekiq_options [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
       # @param on_retries_exhausted [#call, nil] Handler called when a CallbackWorker job exhausts retries
+      # @param direct_execution [Boolean] Whether requests execute directly on a processor
+      #   running in the current process instead of being enqueued through Sidekiq
       # @param pool_options [Hash] Options passed through to PatientHttp::Configuration.
       #   Sidekiq-aware defaults are applied for shutdown_timeout and logger
       #   if not explicitly provided.
@@ -60,6 +66,7 @@ module PatientHttp
         sidekiq_options: nil,
         payload_store_threshold: DEFAULT_PAYLOAD_STORE_THRESHOLD,
         on_retries_exhausted: nil,
+        direct_execution: true,
         **pool_options
       )
         pool_options[:shutdown_timeout] ||= (::Sidekiq.default_configuration[:timeout] || 25) - 2
@@ -73,6 +80,7 @@ module PatientHttp
         self.orphan_threshold = orphan_threshold
         self.payload_store_threshold = payload_store_threshold || DEFAULT_PAYLOAD_STORE_THRESHOLD
         self.on_retries_exhausted = on_retries_exhausted
+        self.direct_execution = direct_execution
       end
 
       # Set the on_retries_exhausted handler.
@@ -144,6 +152,24 @@ module PatientHttp
         apply_sidekiq_options(options)
       end
 
+      # Set whether requests execute directly on a processor running in the current
+      # process. When enabled, requests made in a process with a running processor
+      # skip the Sidekiq queue and go straight to the processor. The value is
+      # coerced to a boolean.
+      #
+      # @param value [Boolean] true to enable direct execution
+      # @return [void]
+      def direct_execution=(value)
+        @direct_execution = !!value
+      end
+
+      # Check if direct execution is enabled.
+      #
+      # @return [Boolean]
+      def direct_execution?
+        @direct_execution
+      end
+
       # Convert to hash for inspection
       # @return [Hash] hash representation with string keys
       def to_h
@@ -152,6 +178,7 @@ module PatientHttp
           "heartbeat_interval" => heartbeat_interval,
           "orphan_threshold" => orphan_threshold,
           "sidekiq_options" => sidekiq_options,
+          "direct_execution" => direct_execution,
           "on_retries_exhausted" => on_retries_exhausted ? "defined" : nil
         )
       end
