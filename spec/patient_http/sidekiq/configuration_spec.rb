@@ -314,7 +314,7 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       config.direct_execution = nil
       expect(config.direct_execution).to be(false)
 
-      config.direct_execution = "yes"
+      config.direct_execution = "truthy"
       expect(config.direct_execution).to be(true)
     end
   end
