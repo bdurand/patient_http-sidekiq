@@ -49,7 +49,6 @@ end
 Sidekiq.strict_args!(true)
 Sidekiq.logger.level = Logger::FATAL
 
-
 # Set up Sidekiq middlewares for tests
 PatientHttp::Sidekiq.append_middleware
 
