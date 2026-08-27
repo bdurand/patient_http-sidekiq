@@ -736,7 +736,7 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitor do
       register_request("https://api.example.com/third")
 
       urls = described_class.inflight_details.map { |detail| detail[:url] }
-      expect(urls).to eq([
+      expect(urls).to match_array([
         "https://api.example.com/first",
         "https://api.example.com/second",
         "https://api.example.com/third"

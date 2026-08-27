@@ -47,9 +47,8 @@ Dir.glob(File.join(__dir__, "support", "**", "*.rb")).sort.each do |file|
 end
 
 Sidekiq.strict_args!(true)
+Sidekiq.logger.level = Logger::FATAL
 
-# Disable Sidekiq logging during tests
-Sidekiq.logger.level = Logger::ERROR
 
 # Set up Sidekiq middlewares for tests
 PatientHttp::Sidekiq.append_middleware
