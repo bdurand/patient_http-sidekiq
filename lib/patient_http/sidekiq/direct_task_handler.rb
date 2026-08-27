@@ -23,7 +23,9 @@ module PatientHttp
       #
       # @return [String] the job ID
       def retry
-        RequestWorker.perform_async(*@args)
+        PatientHttp::Sidekiq.with_redis_pool do
+          RequestWorker.perform_async(*@args)
+        end
       end
 
       private

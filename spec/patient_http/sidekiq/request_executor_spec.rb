@@ -10,12 +10,14 @@ RSpec.describe PatientHttp::Sidekiq::RequestExecutor do
 
     before do
       allow(PatientHttp::Sidekiq).to receive(:processor).and_return(processor)
+      allow(processor).to receive(:config).and_return(PatientHttp::Sidekiq.configuration)
       TestCallback.reset_calls!
     end
 
     context "when processor is running" do
       before do
         allow(processor).to receive(:running?).and_return(true)
+        allow(processor).to receive(:capacity_available?).and_return(true)
         allow(processor).to receive(:enqueue)
       end
 
@@ -152,6 +154,7 @@ RSpec.describe PatientHttp::Sidekiq::RequestExecutor do
     context "validation" do
       before do
         allow(processor).to receive(:running?).and_return(true)
+        allow(processor).to receive(:capacity_available?).and_return(true)
       end
 
       it "validates callback class has required methods" do

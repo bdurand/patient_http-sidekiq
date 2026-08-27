@@ -28,7 +28,9 @@ module PatientHttp
       # @return [void]
       def on_complete(response, callback)
         data = store_if_needed(response.as_json)
-        callback_worker.perform_async(data, "response", callback)
+        PatientHttp::Sidekiq.with_redis_pool do
+          callback_worker.perform_async(data, "response", callback)
+        end
         delete_stored_request_payload
       end
 
@@ -42,7 +44,9 @@ module PatientHttp
       # @return [void]
       def on_error(error, callback)
         data = store_if_needed(error.as_json)
-        callback_worker.perform_async(data, "error", callback)
+        PatientHttp::Sidekiq.with_redis_pool do
+          callback_worker.perform_async(data, "error", callback)
+        end
         delete_stored_request_payload
       end
 
@@ -50,7 +54,9 @@ module PatientHttp
       #
       # @return [String] the job ID
       def retry
-        ::Sidekiq::Client.push(@sidekiq_job)
+        PatientHttp::Sidekiq.with_redis_pool do
+          ::Sidekiq::Client.push(@sidekiq_job)
+        end
       end
 
       # Return the job ID from the Sidekiq job.

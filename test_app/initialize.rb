@@ -18,6 +18,9 @@ end
 # Configure PatientHttp::Sidekiq processor
 PatientHttp::Sidekiq.configure do |config|
   config.max_connections = AppConfig.max_connections
+  config.redis_pool_size = AppConfig.redis_pool_size
+  config.stats_flush_interval = AppConfig.stats_flush_interval
+  config.completion_threads = AppConfig.completion_threads
   config.proxy_url = ENV["HTTP_PROXY"]
   config.register_payload_store(:files, adapter: :file, directory: File.join(__dir__, "tmp/payloads"))
   config.payload_store_threshold = 1024
@@ -25,6 +28,10 @@ PatientHttp::Sidekiq.configure do |config|
   config.encryption { |bytes| "_#{bytes.reverse}" }
   config.decryption { |bytes| bytes.reverse.chomp("_") }
   config.register_secret(:api_key) { "super_secret_api_key" }
+
+  AppConfig.processor_profiles.each do |name, options|
+    config.processor(name, **options)
+  end
 
   config.sidekiq_options = {retry: 1}
   config.on_retries_exhausted do |error|

@@ -543,6 +543,236 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitor do
     end
   end
 
+  describe "batched orphan removal" do
+    let(:logger) { instance_double(Logger, info: nil, error: nil) }
+
+    it "removes and re-enqueues many orphans in batches" do
+      old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
+      250.times do |i|
+        add_fake_orphaned_request(
+          process_id: "crashed-host:999:deadbeef",
+          request_id: "orphan-#{i}",
+          job_payload: {"class" => "TestWorker", "jid" => "jid-#{i}", "args" => []},
+          timestamp_ms: old_timestamp_ms
+        )
+      end
+
+      pushed = []
+      allow(Sidekiq::Client).to receive(:push) { |job| pushed << job["jid"] }
+
+      count = registry.cleanup_orphaned_requests(300, logger)
+
+      expect(count).to eq(250)
+      expect(pushed.sort).to eq((0...250).map { |i| "jid-#{i}" }.sort)
+      expect(described_class.inflight_count).to eq(0)
+    end
+
+    it "still works after the server's script cache is flushed" do
+      registry.register(task)
+      old_timestamp_ms = ((Time.now.to_f - 400) * 1000).round
+      set_task_timestamp(registry, task, old_timestamp_ms)
+
+      ::Sidekiq.redis { |redis| redis.call("SCRIPT", "FLUSH") }
+
+      expect(Sidekiq::Client).to receive(:push).with(sidekiq_job)
+      count = registry.cleanup_orphaned_requests(300, logger)
+
+      expect(count).to eq(1)
+    end
+  end
+
+  describe "#release_gc_lock after script cache flush" do
+    it "releases the lock with the EVAL fallback" do
+      expect(registry.acquire_gc_lock).to be true
+      ::Sidekiq.redis { |redis| redis.call("SCRIPT", "FLUSH") }
+
+      expect(registry.release_gc_lock).to be true
+    end
+  end
+
+  describe "#ping_process with a max_connections callable" do
+    it "records the callable's value" do
+      counting_registry = described_class.new(config, max_connections: -> { 300 })
+      counting_registry.ping_process
+
+      identifier = counting_registry.instance_variable_get(:@lock_identifier)
+      value = ::Sidekiq.redis do |redis|
+        redis.get("#{described_class::PROCESS_SET_KEY}:#{identifier}:max_connections")
+      end
+      expect(value).to eq("300")
+    end
+  end
+
+  describe "#ping_process with a processors callable" do
+    let(:snapshot) do
+      {default: {inflight: 2, max_capacity: 100}, llm: {inflight: 5, max_capacity: 200}}
+    end
+    let(:snapshot_registry) { described_class.new(config, processors: -> { snapshot }) }
+
+    it "records the total capacity of all the processors" do
+      snapshot_registry.ping_process
+
+      expect(described_class.total_max_connections).to eq(300)
+    end
+
+    it "reports the counts of each processor" do
+      snapshot_registry.ping_process
+
+      counts = described_class.inflight_counts_by_processor
+      expect(counts).to eq(
+        "default" => {inflight: 2, max_capacity: 100},
+        "llm" => {inflight: 5, max_capacity: 200}
+      )
+    end
+
+    it "includes the processor counts in the per-process report" do
+      snapshot_registry.ping_process
+
+      process = described_class.inflight_counts_by_process.values.first
+      expect(process[:processors]).to eq(
+        "default" => {inflight: 2, max_capacity: 100},
+        "llm" => {inflight: 5, max_capacity: 200}
+      )
+    end
+
+    it "sums the counts of processes on the same host" do
+      snapshot_registry.ping_process
+      described_class.new(config, processors: -> { snapshot }).ping_process
+
+      counts = described_class.inflight_counts_by_processor
+      expect(counts["llm"]).to eq(inflight: 10, max_capacity: 400)
+    end
+
+    it "removes the published counts when the process is removed" do
+      snapshot_registry.ping_process
+      snapshot_registry.remove_process
+
+      expect(described_class.inflight_counts_by_processor).to eq({})
+    end
+
+    it "skips counts it cannot read" do
+      snapshot_registry.ping_process
+      identifier = snapshot_registry.instance_variable_get(:@lock_identifier)
+      ::Sidekiq.redis do |redis|
+        redis.set("#{described_class::PROCESS_SET_KEY}:#{identifier}:processors", "not json")
+      end
+
+      expect(described_class.inflight_counts_by_processor).to eq({})
+    end
+  end
+
+  describe ".inflight_counts_by_processor" do
+    it "returns an empty hash when no process publishes counts" do
+      registry.ping_process
+
+      expect(described_class.inflight_counts_by_processor).to eq({})
+    end
+  end
+
+  describe "in-flight request details" do
+    def register_request(url, processor_name: :default, id: nil)
+      handler = PatientHttp::Sidekiq::TaskHandler.new(sidekiq_job.merge("jid" => id || SecureRandom.hex(6)))
+      task = PatientHttp::RequestTask.new(
+        request: PatientHttp::Request.new(:get, url),
+        task_handler: handler,
+        callback: TestCallback
+      )
+      registry.register(task, processor_name: processor_name)
+      task
+    end
+
+    it "records the URL, method, and processor of each request" do
+      register_request("https://api.example.com/v1/things", processor_name: :llm)
+
+      details = described_class.inflight_details
+
+      expect(details.size).to eq(1)
+      expect(details.first).to include(
+        url: "https://api.example.com/v1/things",
+        http_method: "get",
+        processor: "llm"
+      )
+      expect(details.first[:age]).to be >= 0
+      expect(details.first[:process_id]).to include(":")
+    end
+
+    it "removes the credentials and the query string from the URL" do
+      register_request("https://user:secret@api.example.com/things?token=abc#part")
+
+      expect(described_class.inflight_details.first[:url]).to eq("https://api.example.com/things")
+    end
+
+    it "applies a configured sanitizer instead of the default one" do
+      config.inflight_url_sanitizer { |url| url.sub(%r{/things/\d+}, "/things/:id") }
+      register_request("https://api.example.com/things/12345")
+
+      expect(described_class.inflight_details.first[:url]).to eq("https://api.example.com/things/:id")
+    end
+
+    it "records nothing when the details are turned off" do
+      config.inflight_details = false
+      register_request("https://api.example.com/things")
+
+      expect(described_class.inflight_details).to eq([])
+    end
+
+    it "still registers the request when the sanitizer raises" do
+      config.inflight_url_sanitizer { |_url| raise "boom" }
+      task = register_request("https://api.example.com/things")
+
+      expect(registry.registered?(task)).to be(true)
+      expect(described_class.inflight_details).to eq([])
+    end
+
+    it "truncates a very long URL" do
+      register_request("https://api.example.com/#{"a" * 1000}")
+
+      expect(described_class.inflight_details.first[:url].length).to eq(described_class::MAX_DISPLAY_URL_LENGTH)
+    end
+
+    it "lists the oldest requests first, up to the limit" do
+      register_request("https://api.example.com/first")
+      register_request("https://api.example.com/second")
+      register_request("https://api.example.com/third")
+
+      urls = described_class.inflight_details.map { |detail| detail[:url] }
+      expect(urls).to eq([
+        "https://api.example.com/first",
+        "https://api.example.com/second",
+        "https://api.example.com/third"
+      ])
+      expect(described_class.inflight_details(limit: 2).size).to eq(2)
+      expect(described_class.inflight_details(limit: 0)).to eq([])
+    end
+
+    it "stops listing a request when it is unregistered" do
+      task = register_request("https://api.example.com/things")
+      registry.unregister(task)
+
+      expect(described_class.inflight_details).to eq([])
+    end
+
+    it "stops listing a request when the orphan collector re-enqueues it" do
+      task = register_request("https://api.example.com/things")
+      set_task_timestamp(registry, task, ((Time.now.to_f - 600) * 1000).round)
+      expire_process_liveness(registry)
+      allow(Sidekiq::Client).to receive(:push)
+
+      registry.cleanup_orphaned_requests(300, config.logger)
+
+      expect(described_class.inflight_details).to eq([])
+    end
+
+    it "ignores a record it cannot read" do
+      task = register_request("https://api.example.com/things")
+      ::Sidekiq.redis do |redis|
+        redis.hset(described_class::INFLIGHT_DETAILS_KEY, registry.full_task_id(task.id), "not json")
+      end
+
+      expect(described_class.inflight_details).to eq([])
+    end
+  end
+
   describe ".clear_all!" do
     it "clears all registry data" do
       registry.ping_process

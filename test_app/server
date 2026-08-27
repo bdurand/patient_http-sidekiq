@@ -19,7 +19,11 @@ app = Protocol::Rack::Adapter.new(rack_app)
 puts "=" * 80
 puts "PatientHttp::Sidekiq Test Application (Async HTTP Server)"
 puts "=" * 80
-puts "Processor max_connections: #{PatientHttp::Sidekiq.configuration.max_connections}"
+AppConfig.processor_names.each do |name|
+  processor_config = PatientHttp::Sidekiq.configuration.processor_config(name)
+  puts "Processor #{name}: max_connections=#{processor_config.max_connections} " \
+    "request_timeout=#{processor_config.request_timeout}"
+end
 puts "Redis URL: #{AppConfig.redacted_redis_url}"
 puts "Web UI: http://localhost:#{AppConfig.port}/"
 puts "=" * 80

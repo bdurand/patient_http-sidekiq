@@ -79,6 +79,7 @@ module PatientHttp
     autoload :Context, File.join(__dir__, "sidekiq/context")
     autoload :DirectTaskHandler, File.join(__dir__, "sidekiq/direct_task_handler")
     autoload :ProcessorObserver, File.join(__dir__, "sidekiq/processor_observer")
+    autoload :RedisPool, File.join(__dir__, "sidekiq/redis_pool")
     autoload :RequestExecutor, File.join(__dir__, "sidekiq/request_executor")
     autoload :RequestWorker, File.join(__dir__, "sidekiq/request_worker")
     autoload :LifecycleHooks, File.join(__dir__, "sidekiq/lifecycle_hooks")
@@ -88,13 +89,17 @@ module PatientHttp
     autoload :TaskMonitorThread, File.join(__dir__, "sidekiq/task_monitor_thread")
     autoload :WebUI, File.join(__dir__, "sidekiq/web_ui")
 
-    @processor = nil
+    @processors = {}
     @configuration = nil
     @after_completion_callbacks = []
     @after_error_callbacks = []
     @external_storage = nil
     @request_handler = nil
     @lifecycle_mutex = Mutex.new
+    @redis_pool = nil
+    @stats = nil
+    @task_monitor = nil
+    @monitor_thread = nil
 
     class << self
       attr_writer :configuration
@@ -111,6 +116,9 @@ module PatientHttp
         yield(configuration) if block_given?
         @configuration = configuration
         @external_storage = nil
+        # Rebuild the stats aggregator from the new configuration unless a
+        # running processor already owns it.
+        @stats = nil unless running?
         register_handler
         PatientHttp.default_configuration = configuration
         configuration
@@ -161,33 +169,33 @@ module PatientHttp
         end
       end
 
-      # Check if the processor is running.
+      # Check if any processor is running.
       #
       # @return [Boolean]
       def running?
-        !!@processor&.running?
+        @processors.values.any?(&:running?)
       end
 
-      # Check if the processor is draining (not accepting new requests
+      # Check if any processor is draining (not accepting new requests
       # but still processing in-flight ones).
       #
       # @return [Boolean]
       def draining?
-        !!@processor&.draining?
+        @processors.values.any?(&:draining?)
       end
 
-      # Check if the processor is in the process of stopping.
+      # Check if any processor is in the process of stopping.
       #
       # @return [Boolean]
       def stopping?
-        !!@processor&.stopping?
+        @processors.values.any?(&:stopping?)
       end
 
-      # Check if the processor is stopped or has not been started.
+      # Check if all processors are stopped or none have been started.
       #
       # @return [Boolean]
       def stopped?
-        @processor.nil? || @processor.stopped?
+        @processors.values.all?(&:stopped?)
       end
 
       # Get an ExternalStorage instance for storing and fetching payloads.
@@ -256,8 +264,11 @@ module PatientHttp
       #   +error.callback_args+ using symbol or string keys.
       # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
       #   and calls +on_error+ instead of +on_complete+. Defaults to false.
+      # @param processor [Symbol, String, nil] Name of the processor profile that should
+      #   execute the request. Defaults to the request's own processor name, a
+      #   "processor" value from with_sidekiq_options, or :default.
       # @return [String] the request ID
-      def execute(request, callback:, callback_args: nil, raise_error_responses: false)
+      def execute(request, callback:, callback_args: nil, raise_error_responses: false, processor: nil)
         PatientHttp::CallbackValidator.validate!(callback)
         callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
@@ -273,11 +284,13 @@ module PatientHttp
         end
 
         options = current_sidekiq_options
+        processor_name = resolve_processor_name(processor, request, options)
         if options&.any?
+          options = options.except("processor")
           queue = options["queue"]
           options = options.merge("patient_http_callback_queue" => queue.to_s) if queue
         end
-        args = [data, callback_name, raise_error_responses, callback_args, request_id]
+        args = [data, callback_name, raise_error_responses, callback_args, request_id, processor_name]
 
         if direct_execution?(options)
           execute_on_local_processor(
@@ -286,7 +299,8 @@ module PatientHttp
             callback_name: callback_name,
             raise_error_responses: raise_error_responses,
             callback_args: callback_args,
-            request_id: request_id
+            request_id: request_id,
+            processor_name: processor_name
           )
         elsif options&.any?
           RequestWorker.set(options).perform_async(*args)
@@ -314,36 +328,62 @@ module PatientHttp
         PatientHttp.register_handler(@request_handler)
       end
 
-      # Start the processor
+      # Start a processor for each configured processor profile, along with the
+      # shared crash-recovery monitor and stats.
       #
       # @return [void]
       def start
         @lifecycle_mutex.synchronize do
-          return if @processor && !@processor.stopped?
+          return if @processors.any? && !@processors.values.all?(&:stopped?)
 
-          @processor = PatientHttp::Processor.new(configuration)
-          @processor.observe(ProcessorObserver.new(@processor))
-          configuration.observers.each do |observer|
-            @processor.observe(observer)
+          warn_about_blocking_redis_driver
+
+          @redis_pool ||= RedisPool.new(configuration)
+          @stats ||= Stats.new(configuration)
+          @task_monitor ||= TaskMonitor.new(
+            configuration,
+            processors: -> { processor_capacity_snapshot }
+          )
+
+          @processors = {}
+          configuration.processor_profiles.each_key do |name|
+            processor = PatientHttp::Processor.new(configuration.processor_config(name), name: name)
+            processor.observe(ProcessorObserver.new(processor, stats: @stats, task_monitor: @task_monitor))
+            configuration.observers.each do |observer|
+              processor.observe(observer)
+            end
+            @processors[name] = processor
           end
-          @processor.start
+          @processors.each_value(&:start)
+
+          # A restart after the processors stopped on their own (e.g. a reactor
+          # error) leaves the previous monitor thread running; stop it before
+          # replacing the reference so only one thread ever heartbeats.
+          @monitor_thread&.stop
+          @monitor_thread = TaskMonitorThread.new(
+            configuration,
+            @task_monitor,
+            -> { @processors.values.flat_map(&:tracked_request_ids) },
+            stats: @stats
+          )
+          @monitor_thread.start
         end
 
         register_handler
       end
 
-      # Signal the processor to drain (stop accepting new requests)
+      # Signal all processors to drain (stop accepting new requests)
       #
       # @return [void]
       def quiet
         @lifecycle_mutex.synchronize do
           return unless running?
 
-          @processor.drain
+          @processors.each_value(&:drain)
         end
       end
 
-      # Stop the processor gracefully
+      # Stop all processors gracefully
       #
       # @param timeout [Float, nil] maximum time to wait for in-flight requests to complete
       # @return [void]
@@ -353,10 +393,12 @@ module PatientHttp
         end
 
         @lifecycle_mutex.synchronize do
-          return unless @processor
+          # Shared services can outlive the processors when a start failed part
+          # way through, so tear them down whenever any of them exist.
+          return if @processors.empty? && @redis_pool.nil? && @task_monitor.nil? && @monitor_thread.nil?
 
-          @processor.stop(timeout: timeout)
-          @processor = nil
+          stop_processors(timeout)
+          shutdown_shared_services
         end
       end
 
@@ -366,8 +408,8 @@ module PatientHttp
       # @api private
       def reset!
         @lifecycle_mutex.synchronize do
-          @processor&.stop(timeout: 0)
-          @processor = nil
+          stop_processors(0)
+          shutdown_shared_services
         end
         @configuration = nil
         @external_storage = nil
@@ -398,19 +440,180 @@ module PatientHttp
         end
       end
 
-      # Returns the processor instance (internal accessor)
+      # Returns a processor instance by name (internal accessor).
       #
+      # @param name [Symbol, String] the processor name
       # @return [PatientHttp::Processor, nil]
       # @api private
-      attr_accessor :processor
+      def processor(name = :default)
+        @processors[name.to_sym]
+      end
+
+      # Set the default processor (internal, for testing).
+      #
+      # @param value [PatientHttp::Processor, nil]
+      # @api private
+      def processor=(value)
+        if value.nil?
+          @processors.delete(:default)
+        else
+          @processors[:default] = value
+        end
+      end
+
+      # The gem's dedicated Redis pool, or nil when no processor has started
+      # in this process (e.g. web or client processes).
+      #
+      # @return [RedisPool, nil]
+      # @api private
+      attr_reader :redis_pool
+
+      # The shared stats aggregator for this process. Available before start so
+      # rejection stats can be recorded from any path.
+      #
+      # @return [Stats]
+      # @api private
+      def stats
+        @stats ||= Stats.new(configuration)
+      end
+
+      # Yield a Redis connection: the gem's dedicated pool when it exists,
+      # falling back to Sidekiq's pool selection otherwise.
+      #
+      # @param retry_on_connection_error [Boolean] whether a connection-level
+      #   failure may replay the block. Pass false when the block is not
+      #   idempotent, such as a batch of counter increments the server may
+      #   already have applied.
+      # @yield [conn] the Redis connection
+      # @return [Object] the block's return value
+      # @api private
+      def redis(retry_on_connection_error: true, &block)
+        pool = @redis_pool
+        if pool
+          pool.with(retry_on_connection_error: retry_on_connection_error, &block)
+        else
+          ::Sidekiq.redis(&block)
+        end
+      end
+
+      # Run a block with Sidekiq client pushes routed through the gem's
+      # dedicated Redis pool. Used for pushes made from gem-owned threads
+      # (completion workers, the monitor thread) so they do not contend with
+      # Sidekiq's internal pool.
+      #
+      # @return [Object] the block's return value
+      # @api private
+      def with_redis_pool(&block)
+        pool = @redis_pool&.pool
+        if pool
+          ::Sidekiq::Client.via(pool, &block)
+        else
+          yield
+        end
+      end
 
       private
+
+      # Snapshot of each processor's capacity in this process, published with
+      # the heartbeat so the Web UI can report capacity per processor. The
+      # inflight count is the number of requests counted against the
+      # processor's capacity: queued, pending, and in flight.
+      #
+      # @return [Hash] processor name => { inflight:, max_capacity: }
+      def processor_capacity_snapshot
+        @processors.each_with_object({}) do |(name, processor), snapshot|
+          snapshot[name] = {
+            inflight: processor.total_count,
+            max_capacity: processor.config.max_connections
+          }
+        end
+      end
+
+      # Stop every processor and clear the registry. Each processor waits up to
+      # the full timeout for its in-flight requests, so they are stopped in
+      # parallel; stopping them in sequence would multiply the shutdown
+      # deadline by the number of processor profiles and overrun the time
+      # Sidekiq allows before it kills the process.
+      #
+      # @param timeout [Float, nil] maximum time to wait for in-flight requests
+      # @return [void]
+      def stop_processors(timeout)
+        processors = @processors.values
+        @processors = {}
+        return if processors.empty?
+
+        if processors.size == 1
+          processors.first.stop(timeout: timeout)
+          return
+        end
+
+        processors.map { |processor|
+          Thread.new do
+            processor.stop(timeout: timeout)
+          rescue => e
+            configuration.logger&.error(
+              "[PatientHttp::Sidekiq] Failed to stop processor #{processor.name}: #{e.inspect}"
+            )
+          end
+        }.each(&:join)
+      end
+
+      # Stop the shared monitor thread, flush pending stats, remove this
+      # process from the registry, and shut down the Redis pool. Called with
+      # the lifecycle mutex held after all processors have stopped.
+      def shutdown_shared_services
+        @monitor_thread&.stop
+        @monitor_thread = nil
+        begin
+          @stats&.flush
+        rescue => e
+          configuration.logger&.error("[PatientHttp::Sidekiq] Failed to flush stats during shutdown: #{e.inspect}")
+        end
+        begin
+          @task_monitor&.remove_process
+        rescue => e
+          configuration.logger&.error("[PatientHttp::Sidekiq] Failed to remove process registration: #{e.inspect}")
+        end
+        @task_monitor = nil
+        @stats = nil
+        @redis_pool&.shutdown
+        @redis_pool = nil
+      end
+
+      # Log a warning when a blocking C-level Redis driver is installed.
+      # Blocking Redis I/O on the reactor thread stalls every in-flight HTTP
+      # request; the gem's own calls run on worker threads, but application
+      # observers may still call Redis from processor callbacks.
+      def warn_about_blocking_redis_driver
+        return unless defined?(RedisClient) && RedisClient.default_driver.name.to_s.include?("Hiredis")
+
+        configuration.logger&.warn(
+          "[PatientHttp::Sidekiq] hiredis-client detected. The hiredis driver performs blocking I/O " \
+          "that does not yield to the fiber scheduler. Avoid Redis calls from processor observers " \
+          "or callbacks that run on the reactor thread."
+        )
+      rescue => e
+        configuration.logger&.debug("[PatientHttp::Sidekiq] Redis driver check failed: #{e.inspect}")
+      end
 
       # Current scoped Sidekiq options, if any.
       #
       # @return [Hash, nil]
       def current_sidekiq_options
         Thread.current[:patient_http_sidekiq_options]
+      end
+
+      # Resolve the processor profile name for a request. Precedence: the
+      # explicit +processor:+ argument, the request's own processor name, a
+      # "processor" value from with_sidekiq_options, then :default.
+      #
+      # @param explicit [Symbol, String, nil] the processor: argument
+      # @param request [PatientHttp::Request] the request
+      # @param options [Hash, nil] scoped Sidekiq options
+      # @return [String] the processor name
+      def resolve_processor_name(explicit, request, options)
+        name = explicit || request.processor || options&.[]("processor") || :default
+        name.to_s
       end
 
       # Check if the request can go directly to a processor running in the current
@@ -440,8 +643,9 @@ module PatientHttp
       # @param raise_error_responses [Boolean] whether non-2xx responses are errors
       # @param callback_args [Hash, nil] arguments to pass to the callback
       # @param request_id [String] unique request ID
+      # @param processor_name [String] name of the processor profile to run on
       # @return [void]
-      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:)
+      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:, processor_name: "default")
         task_handler = DirectTaskHandler.new(args)
 
         begin
@@ -453,7 +657,8 @@ module PatientHttp
             raise_error_responses: raise_error_responses,
             callback_args: callback_args,
             task_handler: task_handler,
-            request_id: request_id
+            request_id: request_id,
+            processor_name: processor_name
           )
         rescue PatientHttp::NotRunningError, PatientHttp::MaxCapacityError => e
           configuration.logger&.info(

@@ -32,7 +32,23 @@ RSpec.describe PatientHttp::Sidekiq::TaskMonitorThread do
     end
   end
 
+  describe "#start" do
+    after { monitor_thread.stop }
+
+    it "publishes the process capacity before the thread starts" do
+      monitor_thread.start
+
+      expect(PatientHttp::Sidekiq::TaskMonitor.total_max_connections).to eq(config.max_connections)
+    end
+  end
+
   describe "error handling", :disable_testing_mode do
+    it "does not raise when the process registration fails outside of testing mode" do
+      allow(task_monitor).to receive(:ping_process).and_raise(RuntimeError.new("redis down"))
+
+      expect { monitor_thread.send(:ping_process) }.not_to raise_error
+    end
+
     it "does not raise when heartbeat updates fail outside of testing mode" do
       allow(task_monitor).to receive(:update_heartbeats).and_raise(RuntimeError.new("redis down"))
 

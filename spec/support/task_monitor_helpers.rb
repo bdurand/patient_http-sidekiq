@@ -19,6 +19,19 @@ module TaskMonitorHelpers
     end
   end
 
+  # Remove a registry's process liveness marker, which is what the orphan
+  # collector sees once the process that wrote it is gone. A registry that has
+  # pinged recently is still considered live, and requests registered by a live
+  # process are never treated as orphaned.
+  #
+  # @param registry [PatientHttp::Sidekiq::TaskMonitor] the registry instance
+  def expire_process_liveness(registry)
+    process_id = registry.instance_variable_get(:@lock_identifier)
+    ::Sidekiq.redis do |redis|
+      redis.del("#{PatientHttp::Sidekiq::TaskMonitor::PROCESS_SET_KEY}:#{process_id}:max_connections")
+    end
+  end
+
   # Add a fake orphaned request to Redis (simulating a crashed process).
   #
   # @param process_id [String] the fake process identifier

@@ -31,60 +31,115 @@
             <span><%= avg_duration %></span>
           </div>
         </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('patient_http_max_capacity') %></div>
+          <div class="stat-value"><%= number_with_delimiter(max_capacity) %></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('patient_http_currently_inflight') %></div>
+          <div class="stat-value"><%= number_with_delimiter(current_inflight) %></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><%= t('patient_http_capacity_utilization') %></div>
+          <div class="stat-value"><%= utilization %>%</div>
+        </div>
       </div>
 
-      <!-- Capacity Information -->
-      <div class="capacity-section">
-        <h3><%= t('patient_http_connection_capacity') %></h3>
-        <div class="capacity-cards">
-          <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http_max_capacity') %></div>
-            <div class="capacity-value"><%= number_with_delimiter(max_capacity) %></div>
-            <div class="capacity-unit"><%= t('patient_http_connections') %></div>
-          </div>
-          <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http_currently_inflight') %></div>
-            <div class="capacity-value"><%= number_with_delimiter(current_inflight) %></div>
-            <div class="capacity-unit"><%= t('patient_http_requests') %></div>
-          </div>
-          <div class="capacity-card">
-            <div class="capacity-label"><%= t('patient_http_capacity_utilization') %></div>
-            <div class="capacity-value"><%= utilization %>%</div>
-            <div class="capacity-unit"><%= t('patient_http_used') %></div>
-          </div>
-        </div>
-
-        <!-- Process Breakdown -->
-        <div class="process-breakdown">
-          <h4><%= t('patient_http_per_process_details') %></h4>
-          <table class="table">
-            <thead>
-              <tr>
-                <th><%= t('patient_http_process') %></th>
-                <th><%= t('patient_http_inflight') %></th>
-                <th><%= t('patient_http_max_capacity') %></th>
-                <th><%= t('patient_http_utilization') %></th>
-              </tr>
-            </thead>
-            <tbody>
-              <% if processes.empty? %>
-                <tr class="empty-state">
-                  <td colspan="4"><%= t('patient_http_no_active_processes') %></td>
+      <!-- Processor Breakdown -->
+      <% unless processors.empty? %>
+        <div class="breakdown-section">
+          <h3><%= t('patient_http_processors') %></h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th><%= t('patient_http_processor') %></th>
+                  <th><%= t('patient_http_inflight') %></th>
+                  <th><%= t('patient_http_peak_inflight') %></th>
+                  <th><%= t('patient_http_max_capacity') %></th>
+                  <th><%= t('patient_http_utilization') %></th>
+                  <th><%= t('patient_http_total_requests') %></th>
+                  <th><%= t('patient_http_errors') %></th>
+                  <th><%= t('patient_http_max_capacity_exceeded') %></th>
+                  <th><%= t('patient_http_avg_duration') %></th>
                 </tr>
-              <% else %>
-                <% processes.each do |process_id, info| %>
-                  <% utilization = info[:max_capacity] > 0 ? (info[:inflight].to_f / info[:max_capacity] * 100).round(1) : 0 %>
+              </thead>
+              <tbody>
+                <% processors.each do |processor| %>
                   <tr>
-                    <td><%= h(process_id) %></td>
-                    <td><%= number_with_delimiter(info[:inflight]) %></td>
-                    <td><%= number_with_delimiter(info[:max_capacity]) %></td>
-                    <td><%= utilization %>%</td>
+                    <td><%= h(processor[:name]) %></td>
+                    <td><%= number_with_delimiter(processor[:inflight]) %></td>
+                    <td><%= number_with_delimiter(processor[:peak_inflight]) %></td>
+                    <td><%= number_with_delimiter(processor[:max_capacity]) %></td>
+                    <td><%= processor[:utilization] %>%</td>
+                    <td><%= number_with_delimiter(processor[:requests]) %></td>
+                    <td><%= number_with_delimiter(processor[:errors]) %></td>
+                    <td><%= number_with_delimiter(processor[:max_capacity_exceeded]) %></td>
+                    <td><%= processor[:avg_duration] %></td>
                   </tr>
                 <% end %>
-              <% end %>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
+      <% end %>
+
+      <!-- In-Flight Requests -->
+      <% unless inflight.empty? %>
+        <div class="breakdown-section">
+          <h3><%= t('patient_http_inflight_requests') %></h3>
+          <div class="table-scroll">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th><%= t('patient_http_age') %></th>
+                  <th><%= t('patient_http_method') %></th>
+                  <th><%= t('patient_http_url') %></th>
+                  <th><%= t('patient_http_processor') %></th>
+                  <th><%= t('patient_http_process') %></th>
+                </tr>
+              </thead>
+              <tbody>
+                <% inflight.each do |request| %>
+                  <tr>
+                    <td><%= request[:age] %></td>
+                    <td><%= h(request[:http_method].to_s.upcase) %></td>
+                    <td class="url"><%= h(request[:url]) %></td>
+                    <td><%= h(request[:processor]) %></td>
+                    <td><%= h(request[:process_id]) %></td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Sidekiq Process Breakdown -->
+      <div class="breakdown-section">
+        <h3><%= t('patient_http_sidekiq_processes') %></h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th><%= t('patient_http_process') %></th>
+              <th><%= t('patient_http_inflight') %></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if processes.empty? %>
+              <tr class="empty-state">
+                <td colspan="2"><%= t('patient_http_no_active_processes') %></td>
+              </tr>
+            <% else %>
+              <% processes.each do |process_id, info| %>
+                <tr>
+                  <td><%= h(process_id) %></td>
+                  <td><%= number_with_delimiter(info[:inflight]) %></td>
+                </tr>
+              <% end %>
+            <% end %>
+          </tbody>
+        </table>
       </div>
 
       <!-- HTTP Status Codes Breakdown -->

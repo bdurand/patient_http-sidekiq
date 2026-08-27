@@ -19,9 +19,47 @@ body {
   border-radius: 10px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   padding: 12px;
-  max-width: 500px;
+  max-width: 1000px;
   width: 100%;
   position: relative;
+}
+
+/* Controls on the left, live stats on the right, so the stats stay in view
+   while the form is used. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.stats {
+  border-left: 1px solid #e0e0e0;
+  padding-left: 16px;
+}
+
+/* The first section heads its column, so it needs no rule above it. */
+.stats .status-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+@media (max-width: 800px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .stats {
+    border-left: none;
+    padding-left: 0;
+  }
+
+  .stats .status-section:first-child {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid #e0e0e0;
+  }
 }
 
 h1 {
@@ -192,6 +230,10 @@ button:disabled {
 
 .status-grid.three-col {
   grid-template-columns: 1fr 1fr 1fr;
+}
+
+.status-grid.auto-fit {
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
 }
 
 .status-card {

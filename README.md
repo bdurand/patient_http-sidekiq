@@ -260,6 +260,39 @@ When a request is made in a process where the processor is running (normally a S
 
 You can turn this off with `config.direct_execution = false`. Do this if you route all requests to a dedicated queue with `config.sidekiq_options`, if you need Sidekiq client or server middleware to run for every request, or if you want every request to be visible as an enqueued job in Sidekiq metrics and the Web UI.
 
+### Named Processors
+
+By default all requests share one processor and one `max_connections` cap. When one process serves workload classes with very different profiles (for example, large slow API calls and small fast webhook deliveries), a burst of one class can consume all of the capacity the other class needs. Named processor profiles isolate them:
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  config.processor(:llm, max_connections: 200, request_timeout: 120)
+  config.processor(:webhooks, max_connections: 64, request_timeout: 10)
+end
+```
+
+Each profile runs as an independent processor in the process, with its own capacity, timeouts, and threads. Profile options override the top-level configuration; anything not overridden (secrets, preprocessors, payload stores, encryption, logger) is shared. The `:default` processor always exists; declare `config.processor(:default, ...)` to override its options.
+
+Route a request to a processor in any of these ways:
+
+```ruby
+# Explicit option on execute
+PatientHttp::Sidekiq.execute(request, callback: MyCallback, processor: :llm)
+
+# On the request itself (survives serialization, retries, and crash recovery)
+request = PatientHttp::Request.new(:get, url, processor: :llm)
+
+# Through a request template
+template = PatientHttp::RequestTemplate.new(base_url: url, processor: :llm)
+
+# Scoped for a block
+PatientHttp::Sidekiq.with_sidekiq_options("processor" => "webhooks") do
+  PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+end
+```
+
+The processor name is serialized into the job arguments, so Sidekiq retries and crash recovery keep their routing. A job that names a processor that is not configured in the executing process raises `PatientHttp::UnknownProcessorError` and goes through the normal Sidekiq retry mechanism; this makes new profile names safe to roll out gradually. Jobs enqueued by older gem versions run on the `:default` processor.
+
 ### Using Request Templates
 
 For repeated requests to the same API, use `PatientHttp::RequestTemplate` to share configuration:
@@ -477,11 +510,41 @@ PatientHttp::Sidekiq.configure do |config|
   # (use PatientHttp::Sidekiq.with_sidekiq_options to override per request)
   config.sidekiq_options = {queue: "patient_http", retry: 5}
 
+  # Whether the URL, HTTP method, and processor of each in-flight request are
+  # recorded so the Web UI can list them (default: true).
+  config.inflight_details = true
+
+  # Sanitizer applied to a URL before it is recorded. Without one, the user
+  # name, password, query string, and fragment are removed.
+  config.inflight_url_sanitizer { |url| url.sub(%r{/users/\d+}, "/users/:id") }
+
   # Whether requests made in a process with a running processor skip the
   # Sidekiq queue and go straight to the processor (default: true).
   # Sidekiq options, including a queue, do not apply to direct-executed
   # requests; set this to false to route every request through the queue.
   config.direct_execution = true
+
+  # Size of the gem's dedicated Redis pool used by its own threads
+  # (default: nil, sized automatically from completion_threads with a
+  # floor of 10)
+  config.redis_pool_size = nil
+
+  # Checkout timeout in seconds for the dedicated Redis pool (default: 5)
+  config.redis_pool_timeout = 5
+
+  # Seconds between flushes of locally aggregated stats to Redis
+  # (default: 5; 0 writes every event synchronously)
+  config.stats_flush_interval = 5
+
+  # Number of threads that decode responses and deliver results (default: 2)
+  config.completion_threads = 2
+
+  # Maximum connections per host (default: nil, unlimited)
+  config.max_connections_per_host = 32
+
+  # Named processor profiles for workload isolation (see Named Processors)
+  config.processor(:llm, max_connections: 200, request_timeout: 120)
+  config.processor(:webhooks, max_connections: 64, request_timeout: 10)
 
   # Handler called when a callback job exhausts all Sidekiq retries
   config.on_retries_exhausted { |error| MyAlertService.notify(error) }
@@ -507,6 +570,13 @@ See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all
 - `connection_timeout`: Set this if you need to fail fast on connection establishment. Useful for detecting network issues quickly.
 - `retries`: Number of times to retry a failed request before calling the error callback.
 - `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
+- `max_connections_per_host`: Bounds sockets per host. Verify the process file descriptor limit covers `max_connections` plus pooled idle host connections plus the application's own connections; raise the limit if needed.
+- `shutdown_timeout`: Must be below the process supervisor's termination window so the drain finishes before a hard kill. The default derives it from Sidekiq's own shutdown timeout; check any additional supervisor (container orchestrator, init system) stop timeout as well.
+- `completion_threads`: Increase when result callbacks do heavier work (serialization, encryption) and completions back up behind them.
+- `redis_pool_size`: The automatic size covers the gem's own threads. Increase it when a high request rate makes registration or completion pushes wait on checkouts.
+
+> [!WARNING]
+> Do not install `hiredis-client` in processes that run the async processor. The hiredis driver performs blocking I/O that does not yield to the fiber scheduler, so a Redis call made on the reactor thread (for example, from a custom processor observer) stalls every in-flight HTTP request. The gem logs a warning at startup when it detects the hiredis driver.
 
 > [!IMPORTANT]
 >
@@ -530,9 +600,40 @@ mount Sidekiq::Web => "/sidekiq"
 ```
 
 The Web UI shows:
-- Total requests, errors, and average duration
-- Current capacity utilization
+- Total requests, errors, average duration, and current capacity utilization
+- Per-processor capacity, utilization, requests, errors, average duration, and the high-water mark of
+  requests in flight, when more than one [named processor](#named-processors) is configured
+- The requests that have been in flight the longest, with their URL, HTTP method, processor, and age
 - Per-process inflight request counts
+
+The per-processor numbers come from the capacity each process publishes with its heartbeat, so they
+cover the processes that are currently running and can lag by a few seconds.
+
+The high-water mark is the most requests one process held on that processor at once, so compare it
+with `max_connections`, which is also per process, rather than with the capacity column, which is the
+sum across the running processes. The count only rises when a processor accepts a request, so the
+mark is exact rather than sampled. It covers everything since the statistics were last cleared.
+
+#### In-Flight Requests
+
+The URL, HTTP method, and processor of each in-flight request are recorded next to its
+crash-recovery record, and the dashboard lists the 50 oldest. A request left behind by a process
+that died stays listed until the orphan collector re-enqueues it, so this is also where you see what
+a process was working on when it stopped.
+
+The URL is sanitized before it is recorded: the user name, password, query string, and fragment are
+removed and the scheme, host, and path are kept. Paths can still carry identifiers, so you can
+redact more, or record nothing at all:
+
+```ruby
+PatientHttp::Sidekiq.configure do |config|
+  # Redact more of the URL.
+  config.inflight_url_sanitizer { |url| url.sub(%r{/users/\d+}, "/users/:id") }
+
+  # Or keep URLs out of Redis entirely.
+  config.inflight_details = false
+end
+```
 
 ### Callbacks for Custom Monitoring
 
@@ -608,6 +709,8 @@ The gem includes crash recovery to handle process failures:
 This ensures that if a Sidekiq process crashes, its in-flight requests will be retried by another process.
 
 Crash recovery gives at-least-once delivery. If a process crashes at the wrong moment (for example, between a re-enqueue and the removal of the registry entry), a request can execute more than once and its callback can fire more than once. Make your callbacks idempotent. A request is durable once the call that submits it returns; a crash during the call behaves like a failed enqueue, and the caller never received an acknowledgment.
+
+A request whose result cannot be handed to a callback job keeps its registry entry as well, so the same recovery re-enqueues it. When the failure is one that trying again cannot fix, because the result cannot be serialized, the request is not kept: it is counted as an `undeliverable_result` error and its job is moved to the Sidekiq dead set, where you can inspect it and retry it by hand.
 
 ## Testing
 

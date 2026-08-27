@@ -40,8 +40,10 @@ module PatientHttp
       #   nil is treated as false
       # @param callback_args [Hash, nil] Arguments to pass to the callback
       # @param request_id [String, nil] Unique request ID for tracking
+      # @param processor_name [String, nil] Name of the processor profile to run the request
+      #   on; nil (jobs enqueued by older versions) runs on the default processor
       # @return [void]
-      def perform(data, callback_service_name, raise_error_responses, callback_args, request_id)
+      def perform(data, callback_service_name, raise_error_responses, callback_args, request_id, processor_name = nil)
         # Fetch from external storage if needed
         actual_data = PatientHttp::ExternalStorage.storage_ref?(data) ? Sidekiq.external_storage.fetch(data) : data
         actual_data = Sidekiq.decrypt(actual_data)
@@ -59,7 +61,8 @@ module PatientHttp
           raise_error_responses: raise_error_responses,
           callback_args: callback_args,
           sidekiq_job: sidekiq_job,
-          request_id: request_id
+          request_id: request_id,
+          processor_name: processor_name || "default"
         )
       end
     end
