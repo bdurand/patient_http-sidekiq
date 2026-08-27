@@ -369,4 +369,127 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect(hash["direct_execution"]).to eq(true)
     end
   end
+
+  describe "Redis pool options" do
+    it "defaults redis_pool_size to nil and redis_pool_timeout to 5" do
+      config = described_class.new
+      expect(config.redis_pool_size).to be_nil
+      expect(config.redis_pool_timeout).to eq(5)
+    end
+
+    it "accepts explicit values" do
+      config = described_class.new(redis_pool_size: 20, redis_pool_timeout: 2.5)
+      expect(config.redis_pool_size).to eq(20)
+      expect(config.redis_pool_timeout).to eq(2.5)
+    end
+
+    it "validates the values" do
+      expect { described_class.new(redis_pool_size: 0) }.to raise_error(ArgumentError, /redis_pool_size/)
+      expect { described_class.new(redis_pool_timeout: 0) }.to raise_error(ArgumentError, /redis_pool_timeout/)
+    end
+  end
+
+  describe "stats_flush_interval" do
+    it "defaults to 5 and accepts 0 for synchronous flushing" do
+      expect(described_class.new.stats_flush_interval).to eq(5)
+      expect(described_class.new(stats_flush_interval: 0).stats_flush_interval).to eq(0)
+    end
+
+    it "rejects negative values" do
+      expect { described_class.new(stats_flush_interval: -1) }.to raise_error(ArgumentError, /stats_flush_interval/)
+    end
+  end
+
+  describe "#processor" do
+    it "always includes a default profile" do
+      config = described_class.new
+      expect(config.processor_profiles).to eq(default: {})
+    end
+
+    it "declares named profiles with option overrides" do
+      config = described_class.new
+      config.processor(:llm, max_connections: 200, request_timeout: 120)
+      config.processor(:webhooks, max_connections: 64)
+
+      expect(config.processor_profiles.keys).to eq([:default, :llm, :webhooks])
+      expect(config.processor(:llm)).to eq(max_connections: 200, request_timeout: 120)
+    end
+
+    it "rejects invalid profile options" do
+      config = described_class.new
+      expect { config.processor(:bad, max_connections: 0) }.to raise_error(ArgumentError, /Invalid processor profile options/)
+      expect { config.processor(:bad, no_such_option: 1) }.to raise_error(ArgumentError, /Invalid processor profile options/)
+    end
+
+    it "rejects an empty name" do
+      config = described_class.new
+      expect { config.processor("", max_connections: 1) }.to raise_error(ArgumentError, /processor name cannot be empty/)
+    end
+
+    it "records in-flight request details by default and can turn them off" do
+      config = described_class.new
+      expect(config.inflight_details?).to be(true)
+
+      config.inflight_details = false
+      expect(config.inflight_details?).to be(false)
+      expect(described_class.new(inflight_details: false).inflight_details?).to be(false)
+    end
+
+    it "takes a URL sanitizer as a block or a callable" do
+      config = described_class.new
+      expect(config.inflight_url_sanitizer).to be_nil
+
+      config.inflight_url_sanitizer { |url| url.upcase }
+      expect(config.inflight_url_sanitizer.call("https://example.com")).to eq("HTTPS://EXAMPLE.COM")
+
+      config.inflight_url_sanitizer = ->(url) { url.reverse }
+      expect(config.inflight_url_sanitizer.call("ab")).to eq("ba")
+    end
+
+    it "rejects a URL sanitizer that cannot be called" do
+      expect { described_class.new.inflight_url_sanitizer = "nope" }.to raise_error(
+        ArgumentError, /inflight_url_sanitizer must respond to #call/
+      )
+    end
+
+    it "reports whether more than one profile is declared" do
+      config = described_class.new
+      expect(config.multiple_processors?).to be(false)
+
+      config.processor(:llm, max_connections: 10)
+      expect(config.multiple_processors?).to be(true)
+    end
+  end
+
+  describe "#processor_config" do
+    it "returns the configuration itself for the default profile" do
+      config = described_class.new
+      expect(config.processor_config(:default)).to be(config)
+    end
+
+    it "applies profile overrides on top of the base options" do
+      config = described_class.new(max_connections: 100, request_timeout: 30)
+      config.processor(:llm, max_connections: 200)
+
+      llm_config = config.processor_config(:llm)
+      expect(llm_config.max_connections).to eq(200)
+      expect(llm_config.request_timeout).to eq(30)
+    end
+
+    it "shares secrets and preprocessors with the base configuration" do
+      config = described_class.new
+      config.register_secret(:token, "secret-value")
+      config.processor(:llm, max_connections: 5)
+
+      llm_config = config.processor_config(:llm)
+      expect(llm_config.secret_manager.resolve_headers("authorization" => PatientHttp.secret(:token))).to eq(
+        "authorization" => "secret-value"
+      )
+    end
+
+    it "raises for an unknown profile" do
+      config = described_class.new
+      expect { config.processor_config(:nope) }.to raise_error(ArgumentError, /Unknown processor profile/)
+    end
+  end
 end

@@ -20,12 +20,52 @@ module PatientHttp
       ROOT = File.join(__dir__, "web_ui")
       VIEWS = File.join(ROOT, "views")
 
+      # Number of in-flight requests listed on the dashboard. The oldest are
+      # listed, because those are the ones worth looking at.
+      INFLIGHT_LIMIT = 50
+
       class << self
         # Sidekiq resolves symbol view names to different file names depending
         # on the version (*.erb before 8.1, *.html.erb from 8.1 on), so the
         # template is rendered from a string instead.
         def template
           @template ||= File.read(File.join(VIEWS, "patient_http.html.erb"))
+        end
+
+        # Build the per-processor rows for the dashboard by combining the
+        # cumulative counters with the live capacity each processor reports.
+        #
+        # Statistics are not recorded per processor when only one is
+        # configured, because they would duplicate the overall totals, so the
+        # breakdown is empty in that case.
+        #
+        # @param stats_by_processor [Hash, nil] cumulative counters by processor name
+        # @param capacity_by_processor [Hash] inflight and capacity by processor name
+        # @return [Array<Hash>] one row per processor, sorted by name
+        def processor_rows(stats_by_processor, capacity_by_processor)
+          stats_by_processor ||= {}
+          return [] if stats_by_processor.empty? && capacity_by_processor.size < 2
+
+          names = (stats_by_processor.keys | capacity_by_processor.keys).sort
+          names.map do |name|
+            counts = stats_by_processor[name] || {}
+            capacity = capacity_by_processor[name] || {}
+            requests = counts["requests"].to_i
+            max_capacity = capacity[:max_capacity].to_i
+            inflight = capacity[:inflight].to_i
+
+            {
+              name: name,
+              inflight: inflight,
+              peak_inflight: counts["max_inflight"].to_i,
+              max_capacity: max_capacity,
+              utilization: (max_capacity > 0) ? (inflight.to_f / max_capacity * 100).round(1) : 0,
+              requests: requests,
+              errors: counts["errors"].to_i,
+              max_capacity_exceeded: counts["max_capacity_exceeded"].to_i,
+              avg_duration: (requests > 0) ? (counts["duration"].to_f / requests).round(3) : 0.0
+            }
+          end
         end
 
         # This method is called by Sidekiq::Web when registering the extension
@@ -47,6 +87,16 @@ module PatientHttp
             current_inflight = processes.values.sum { |data| data[:inflight] }
             utilization = (max_capacity > 0) ? (current_inflight.to_f / max_capacity * 100).round(1) : 0
 
+            # Per-processor breakdown, combining the cumulative counters with
+            # the capacity each processor reports.
+            processors = PatientHttp::Sidekiq::WebUI.processor_rows(
+              totals["processors"],
+              PatientHttp::Sidekiq::TaskMonitor.inflight_counts_by_processor(processes)
+            )
+
+            # The requests that have been in flight the longest.
+            inflight = PatientHttp::Sidekiq::TaskMonitor.inflight_details(limit: INFLIGHT_LIMIT)
+
             erb(PatientHttp::Sidekiq::WebUI.template, locals: {
               totals: totals,
               total_requests: total_requests,
@@ -54,7 +104,9 @@ module PatientHttp
               max_capacity: max_capacity,
               current_inflight: current_inflight,
               utilization: utilization,
-              processes: processes
+              processes: processes,
+              processors: processors,
+              inflight: inflight
             })
           end
 

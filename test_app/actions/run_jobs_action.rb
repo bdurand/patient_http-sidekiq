@@ -18,6 +18,7 @@ class RunJobsAction
     delay_drift = request.params["delay_drift"].to_f.clamp(0.0, 100.0)
     direct_execution = request.params["direct"] == "1"
     from_server = request.params["from_server"] == "1"
+    processor = processor_param(request.params["processor"])
 
     PatientHttp::Sidekiq.configuration.direct_execution = direct_execution
 
@@ -41,10 +42,18 @@ class RunJobsAction
 
     jobs = []
     if from_server
-      jobs << lambda { EnqueueRequestsWorker.perform_async(async_count, delay, timeout, delay_drift) } if async_count > 0
+      jobs << lambda { EnqueueRequestsWorker.perform_async(async_count, delay, timeout, delay_drift, processor.to_s) } if async_count > 0
     else
       async_count.times do
-        jobs << lambda { async_get("/slow", params: {delay: drifted_delay.call}, callback: StatusReport::Callback, timeout: timeout) }
+        jobs << lambda {
+          async_get(
+            "/slow",
+            params: {delay: drifted_delay.call},
+            callback: StatusReport::Callback,
+            timeout: timeout,
+            processor: processor
+          )
+        }
       end
     end
 
@@ -57,6 +66,13 @@ class RunJobsAction
   end
 
   private
+
+  # Requests go to the default processor unless the form names one of the
+  # configured profiles.
+  def processor_param(value)
+    name = value.to_s.to_sym
+    AppConfig.processor_names.include?(name) ? name : :default
+  end
 
   def method_not_allowed_response
     [405, {"Content-Type" => "text/plain"}, ["Method Not Allowed"]]

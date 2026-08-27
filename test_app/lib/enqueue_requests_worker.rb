@@ -10,13 +10,14 @@ class EnqueueRequestsWorker
 
   request_template base_url: BASE_URL
 
-  def perform(count, delay, timeout, delay_drift)
+  def perform(count, delay, timeout, delay_drift, processor = nil)
     count.times do
       async_get(
         "/slow",
         params: {delay: drifted_delay(delay, delay_drift)},
         callback: StatusReport::Callback,
-        timeout: timeout
+        timeout: timeout,
+        processor: processor
       )
     end
   end

@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0
+
+### Added
+
+- Dedicated Redis connection pool for the gem's own threads (`redis_pool_size`, default automatic; `redis_pool_timeout`, default 5 seconds). Registry writes, stats, and job pushes made from the processor's completion worker threads and the monitor thread no longer go through Sidekiq's small internal pool, which was a serialization point under load and could time out and lose completions.
+- Named processors: declare profiles with `config.processor(:llm, max_connections: 200)` and route requests with `PatientHttp::Sidekiq.execute(request, processor: :llm)`, a `processor:` option on the request itself, or `with_sidekiq_options("processor" => "llm")`. Each profile runs as an independent processor with its own capacity, timeouts, and threads, so one workload class cannot starve another. The processor name is serialized into the job arguments, so retries and crash recovery keep their routing. Jobs from older gem versions run on the `:default` processor.
+- Local stats aggregation (`stats_flush_interval`, default 5 seconds; 0 restores synchronous writes). Request metrics accumulate in memory and flush to Redis in one pipelined write per interval, removing the per-request write to the shared totals hash key. `get_totals` reports per-processor requests, duration, errors, and capacity rejections when more than one profile is configured.
+- A result that can never be delivered no longer keeps its crash-recovery record. Delivery is retried and then recovered as before, but a failure that means the result cannot be serialized (`JSON::GeneratorError` and the `Encoding` errors, in the failure or in its cause chain) is permanent: the request is counted as an `undeliverable_result` error and its job is moved to the Sidekiq dead set. Such a request previously stayed in the registry, counted as in flight, and was re-enqueued and failed again after every process restart.
+- The Web UI dashboard reports the high-water mark of requests in flight for each processor. The count only rises when a processor accepts a request, so the mark is recorded exactly rather than sampled, and it costs one comparison in memory. It is the most requests one process held at once, so it compares with `max_connections`, which is also per process. Like the other statistics it covers everything since they were last cleared.
+- The Web UI dashboard lists the requests that have been in flight the longest, with the URL, HTTP method, processor, and age of each. The details are written next to the crash-recovery record, so a request left behind by a process that died stays listed until the orphan collector re-enqueues it. The URL is sanitized first: the user name, password, query string, and fragment are removed. Use `config.inflight_url_sanitizer` to redact more, or `config.inflight_details = false` to record nothing.
+- The Web UI dashboard breaks the statistics down by processor when more than one profile is configured, reporting each processor's inflight requests, capacity, utilization, requests, errors, capacity rejections, and average duration. Each process publishes the capacity of its processors with its heartbeat, which the monitor thread now sends on every pass so the inflight counts stay current.
+- Capacity fast path: requests are rejected with a cheap in-memory capacity check before any Redis registration. A rejection previously cost three Redis round trips (register, unregister, stat); it now costs none.
+- The `completion_failed` processor event is handled by keeping the crash-recovery registry entry, so a request whose result could not be delivered is re-enqueued by the orphan collector instead of being silently lost, unless the failure is permanent (see above). Requires patient_http 1.5.0.
+- A warning is logged at startup when the hiredis Redis driver is detected, because its blocking I/O can stall the reactor thread if application code calls Redis from processor callbacks.
+
+### Changed
+
+- The orphan collector removes orphans in batches of 100 with a single Lua call per batch (invoked by `EVALSHA`), instead of one `EVAL` with the full script body per orphan. Releasing the collector's lock is now a single compare-and-delete script call instead of a WATCH/GET/MULTI sequence.
+- The shutdown re-enqueue path no longer unregisters a task twice or records a completion stat for a request that never completed.
+- The task monitor thread and stats are now shared across all processors in the process; `ProcessorObserver.new` takes `stats:` and `task_monitor:` keyword arguments.
+- The `patient_http` dependency floor is now 1.5.0.
+
 ## 1.3.0
 
 ### Added

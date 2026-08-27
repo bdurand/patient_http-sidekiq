@@ -34,6 +34,8 @@ module PatientHttp
         #   and calls +on_error+ instead of +on_complete+. Defaults to false.
         # @param request_id [String, nil] Unique request ID for tracking. If nil, a new UUID
         #   will be generated.
+        # @param processor_name [Symbol, String, nil] Name of the processor profile to run
+        #   the request on. Defaults to the request's own processor name or :default.
         # @return [String] the request ID
         # @api private
         def execute(
@@ -44,10 +46,19 @@ module PatientHttp
           synchronous: false,
           callback_args: nil,
           raise_error_responses: false,
-          request_id: nil
+          request_id: nil,
+          processor_name: nil
         )
           task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job))
           config = PatientHttp::Sidekiq.configuration
+
+          # Look up the named processor and the effective configuration for its
+          # profile, so per-processor overrides apply to the request itself.
+          # A running processor already holds the built profile configuration.
+          name = (processor_name || request.processor || :default).to_sym
+          processor = PatientHttp::Sidekiq.processor(name)
+          profile_declared = config.processor_profiles.key?(name)
+          task_config = processor&.config || (profile_declared ? config.processor_config(name) : config)
 
           task = PatientHttp::RequestTask.new(
             request: request,
@@ -56,24 +67,41 @@ module PatientHttp
             callback_args: callback_args,
             raise_error_responses: raise_error_responses,
             id: request_id,
-            default_max_redirects: config.max_redirects
+            default_max_redirects: task_config.max_redirects
           )
 
           # Run the request inline if Sidekiq::Testing.inline! is enabled
           if synchronous || async_disabled?
             PatientHttp::SynchronousExecutor.new(
               task,
-              config: config,
+              config: task_config,
               on_complete: ->(response) { PatientHttp::Sidekiq.invoke_completion_callbacks(response) },
               on_error: ->(error) { PatientHttp::Sidekiq.invoke_error_callbacks(error) }
             ).call
             return task.id
           end
 
-          # Check if processor is running
-          processor = PatientHttp::Sidekiq.processor
+          # An unknown name raises so the job lands in Sidekiq's retry
+          # mechanism instead of being dropped; this covers rolling deploys
+          # where an old process has not configured a new profile yet.
+          if processor.nil? && !profile_declared
+            raise PatientHttp::UnknownProcessorError.new("No processor profile configured for #{name.inspect}")
+          end
+
           unless processor&.running?
             raise PatientHttp::NotRunningError.new("Cannot enqueue request: processor is not running")
+          end
+
+          # Advisory capacity check before enqueueing. A real enqueue pays for
+          # durable registration before the authoritative capacity check, so a
+          # full processor would cost several Redis round trips just to be
+          # rejected. This peek rejects for free; the race where capacity fills
+          # after the peek falls through to the normal rejection path.
+          unless processor.capacity_available?
+            PatientHttp::Sidekiq.stats.record_capacity_exceeded(processor_name: name)
+            raise PatientHttp::MaxCapacityError.new(
+              "Cannot enqueue request: processor #{name} is at max capacity (#{processor.config.max_connections} connections)"
+            )
           end
 
           processor.enqueue(task)

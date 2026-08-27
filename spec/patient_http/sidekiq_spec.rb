@@ -674,7 +674,7 @@ RSpec.describe PatientHttp::Sidekiq do
 
           job = task_handler.sidekiq_job
           expect(job["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
-          expect(job["args"]).to eq([request.as_json, "TestCallback", false, {"info" => "data"}, request_id])
+          expect(job["args"]).to eq([request.as_json, "TestCallback", false, {"info" => "data"}, request_id, "default"])
           expect(job["queue"]).to eq("default")
           expect(job["retry"]).to eq(true)
           expect(job).not_to have_key("jid")

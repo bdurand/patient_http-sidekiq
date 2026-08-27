@@ -21,12 +21,14 @@ module PatientHttp
       # @param config [Configuration] the configuration object
       # @param task_monitor [TaskMonitor] the inflight request registry
       # @param tracked_ids_callback [Proc] callback to get the IDs of all requests the
-      #   processor is tracking (queued, pending, and in-flight)
+      #   processors are tracking (queued, pending, and in-flight)
+      # @param stats [Stats, nil] stats aggregator to flush on the monitor cadence
       # @return [void]
-      def initialize(config, task_monitor, tracked_ids_callback)
+      def initialize(config, task_monitor, tracked_ids_callback, stats: nil)
         @config = config
         @task_monitor = task_monitor
         @tracked_ids_callback = tracked_ids_callback
+        @stats = stats
         @thread = nil
         @running = Concurrent::AtomicBoolean.new(false)
         @stop_signal = Concurrent::Event.new
@@ -78,6 +80,11 @@ module PatientHttp
       def run
         @config.logger&.info("[PatientHttp::Sidekiq] Monitor thread started")
 
+        # Route Sidekiq client pushes made from this thread (orphan
+        # re-enqueues) through the gem's dedicated Redis pool.
+        gem_pool = PatientHttp::Sidekiq.redis_pool
+        Thread.current[:sidekiq_redis_pool] = gem_pool.pool if gem_pool
+
         last_heartbeat_update = monotonic_time - @config.heartbeat_interval
         last_gc_attempt = monotonic_time - @config.heartbeat_interval
 
@@ -86,9 +93,13 @@ module PatientHttp
 
           current_time = monotonic_time
 
+          # Publish this process's capacity on every pass. It is a single
+          # round trip, and the Web UI reports the inflight counts it carries,
+          # which would otherwise be a full heartbeat interval old.
+          ping_process
+
           # Update heartbeats for all inflight requests
           if current_time - last_heartbeat_update >= @config.heartbeat_interval
-            @task_monitor.ping_process
             update_heartbeats
             last_heartbeat_update = current_time
           end
@@ -99,6 +110,8 @@ module PatientHttp
             last_gc_attempt = current_time
           end
 
+          flush_stats
+
           # Sleep with interruptible wait - returns true if interrupted
           wait_time = @config.heartbeat_interval / 2.0
           wait_time = MAX_MONITOR_SLEEP if wait_time > MAX_MONITOR_SLEEP
@@ -106,6 +119,26 @@ module PatientHttp
         end
 
         @config.logger&.info("[PatientHttp::Sidekiq] Monitor thread stopped")
+      end
+
+      # Register this process and publish its capacity.
+      #
+      # @return [void]
+      def ping_process
+        @task_monitor.ping_process
+      rescue => e
+        @config.logger&.error("[PatientHttp::Sidekiq] Failed to register the process: #{e.class} - #{e.message}")
+        raise if PatientHttp.testing?
+      end
+
+      # Flush locally aggregated stats when their interval has elapsed.
+      #
+      # @return [void]
+      def flush_stats
+        @stats&.flush_if_due
+      rescue => e
+        @config.logger&.error("[PatientHttp::Sidekiq] Failed to flush stats: #{e.class} - #{e.message}")
+        raise if PatientHttp.testing?
       end
 
       # Update heartbeats for all tracked requests.

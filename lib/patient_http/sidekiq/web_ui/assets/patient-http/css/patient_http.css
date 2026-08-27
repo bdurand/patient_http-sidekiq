@@ -71,14 +71,21 @@
 }
 
 /* Summary Stats Grid */
+/* Four cards fill a row exactly (four bases of 25% less their share of the
+   gaps), so the row breaks after the fourth card and the cards left over grow
+   to fill the row below. */
 .stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 24px;
   margin-bottom: 32px;
 }
 
 .stat-card {
+  flex: 1 1 calc(25% - 18px);
+  /* Without this a long label could grow a card past its basis and change
+     how many cards fit on a row. */
+  min-width: 0;
   padding: 24px;
   background: var(--patient-http-card-bg);
   border: 1px solid var(--patient-http-border);
@@ -108,59 +115,6 @@
   color: var(--patient-http-error);
 }
 
-/* Capacity Section */
-.capacity-section {
-  margin: 32px 0;
-  padding: 24px;
-  background: var(--patient-http-card-bg);
-  border: 1px solid var(--patient-http-border);
-  border-radius: 6px;
-}
-
-.capacity-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 24px;
-  margin-bottom: 32px;
-}
-
-.capacity-card {
-  padding: 16px;
-  background: var(--patient-http-card-bg);
-  border: 1px solid var(--patient-http-border);
-  border-radius: 4px;
-  text-align: center;
-}
-
-.capacity-label {
-  font-size: 0.875em;
-  color: var(--patient-http-subtle);
-  font-weight: 500;
-  margin-bottom: 8px;
-  display: block;
-}
-
-.capacity-value {
-  display: block;
-  font-size: 1.75em;
-  font-weight: 700;
-  color: var(--patient-http-primary);
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.capacity-unit {
-  font-size: 0.75em;
-  color: var(--patient-http-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-/* Process Breakdown Table */
-.process-breakdown {
-  margin-top: 24px;
-}
-
 /* Breakdown Sections (HTTP Status Codes, Error Types) */
 .breakdown-section {
   margin: 32px 0;
@@ -172,6 +126,15 @@
 
 .breakdown-section h3 {
   margin: 0 0 24px 0;
+}
+
+/* Wide tables scroll inside their section instead of overflowing the page. */
+.patient-http-dashboard .table-scroll {
+  overflow-x: auto;
+}
+
+.patient-http-dashboard .table-scroll .table {
+  min-width: 640px;
 }
 
 /* Table Styling */
@@ -205,6 +168,13 @@
   background: var(--patient-http-bg);
 }
 
+/* URLs are the widest thing on the page; keep one from pushing the other
+   columns off screen. */
+.patient-http-dashboard .table td.url {
+  max-width: 32em;
+  overflow-wrap: anywhere;
+}
+
 .patient-http-dashboard .table .empty-state {
   text-align: center;
   color: var(--patient-http-subtle);
@@ -213,12 +183,8 @@
 
 /* Responsive Design */
 @media (max-width: 768px) {
-  .stats-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .capacity-cards {
-    grid-template-columns: 1fr;
+  .stat-card {
+    flex-basis: 40%;
   }
 
   .patient-http-dashboard h2 {
@@ -235,16 +201,8 @@
 }
 
 @media (max-width: 480px) {
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .capacity-bar {
-    height: 20px;
-  }
-
-  .capacity-value {
-    font-size: 1.5em;
+  .stat-card {
+    flex-basis: 100%;
   }
 }
 

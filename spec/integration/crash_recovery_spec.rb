@@ -12,19 +12,29 @@ RSpec.describe "Crash Recovery", :integration do
     )
   end
   let(:processor) { PatientHttp::Processor.new(config) }
-  let(:observer) { PatientHttp::Sidekiq::ProcessorObserver.new(processor) }
-  let(:task_monitor) { observer.task_monitor }
+  let(:stats) { PatientHttp::Sidekiq::Stats.new(config) }
+  let(:task_monitor) { PatientHttp::Sidekiq::TaskMonitor.new(config) }
+  let(:observer) { PatientHttp::Sidekiq::ProcessorObserver.new(processor, stats: stats, task_monitor: task_monitor) }
+  let(:monitor_thread) do
+    PatientHttp::Sidekiq::TaskMonitorThread.new(config, task_monitor, -> { processor.tracked_request_ids }, stats: stats)
+  end
 
   around do |example|
     processor.observe(observer)
-    processor.run do
-      example.run
+    monitor_thread.start
+    begin
+      processor.run do
+        example.run
+      end
+    ensure
+      monitor_thread.stop
     end
   end
 
   it "re-enqueues requests after simulated crash" do
-    # Stop processor to prevent monitor thread from holding lock
+    # Stop the processor and monitor thread so the monitor cannot hold the lock
     processor.stop(timeout: 1)
+    monitor_thread.stop
 
     # Force release any lock
     ::Sidekiq.redis do |redis|
@@ -51,6 +61,10 @@ RSpec.describe "Crash Recovery", :integration do
     task_monitor.register(task)
     old_timestamp_ms = ((Time.now.to_f - 10) * 1000).round
     set_task_timestamp(task_monitor, task, old_timestamp_ms)
+
+    # The collector only re-enqueues requests whose process is gone, so drop
+    # the liveness marker the monitor thread wrote for this one.
+    expire_process_liveness(task_monitor)
 
     # Verify it's registered
     expect(task_monitor.registered?(task)).to be true
@@ -115,8 +129,9 @@ RSpec.describe "Crash Recovery", :integration do
   end
 
   it "handles distributed locking correctly" do
-    # Stop processor to prevent monitor thread from interfering
+    # Stop the processor and monitor thread so the monitor cannot interfere
     processor.stop(timeout: 1)
+    monitor_thread.stop
 
     # Force release any lock
     ::Sidekiq.redis do |redis|
@@ -142,7 +157,11 @@ RSpec.describe "Crash Recovery", :integration do
 
   it "registers accepted requests in the registry until the job system owns them again" do
     local_processor = PatientHttp::Processor.new(config)
-    local_observer = PatientHttp::Sidekiq::ProcessorObserver.new(local_processor)
+    local_observer = PatientHttp::Sidekiq::ProcessorObserver.new(
+      local_processor,
+      stats: PatientHttp::Sidekiq::Stats.new(config),
+      task_monitor: PatientHttp::Sidekiq::TaskMonitor.new(config)
+    )
     local_processor.observe(local_observer)
     # Never let the reactor consume the queue so the task stays queued.
     allow(local_processor).to receive(:dequeue_request) { |**_args| nil }

@@ -12,165 +12,187 @@
   <div class="container">
     <h1>🚀 PatientHttp Sidekiq - Performance Test</h1>
 
-    <form id="job-form">
-      <div class="form-group">
-        <label for="async-count">Asynchronous Requests</label>
-        <input
-          type="number"
-          id="async-count"
-          name="async_count"
-          value="50"
-          min="0"
-          max="5000"
-          step="1"
-          autocomplete="off"
-          required
-        >
-        <div class="help-text">Number of asynchronous HTTP jobs to enqueue (0-5000)</div>
-      </div>
-
-      <div class="form-group">
-        <label for="sync-count">Synchronous Requests</label>
-        <input
-          type="number"
-          id="sync-count"
-          name="sync_count"
-          value="50"
-          min="0"
-          max="5000"
-          step="1"
-          autocomplete="off"
-          required
-        >
-        <div class="help-text">Number of synchronous HTTP jobs to enqueue (0-5000)</div>
-      </div>
-
-      <div class="form-group">
-        <label for="delay">Delay (seconds) & Drift (%)</label>
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <input
-            type="number"
-            id="delay"
-            name="delay"
-            value="5"
-            min="0.0"
-            max="60.0"
-            step="any"
-            autocomplete="off"
-            placeholder="Seconds"
-          >
-          <div style="display: flex; align-items: center; gap: 5px; width: 60%;">
+    <div class="layout">
+      <div class="controls">
+        <form id="job-form">
+          <div class="form-group">
+            <label for="async-count">Asynchronous Requests</label>
             <input
               type="number"
-              id="delay_drift"
-              name="delay_drift"
+              id="async-count"
+              name="async_count"
               value="50"
               min="0"
-              max="100"
+              max="5000"
               step="1"
               autocomplete="off"
-              placeholder="Drift"
+              required
             >
-            <span style="font-size: 14px; font-weight: 600; color: #555;">%</span>
+            <div class="help-text">Number of asynchronous HTTP jobs to enqueue (0-5000)</div>
+          </div>
+
+          <div class="form-group">
+            <label for="sync-count">Synchronous Requests</label>
+            <input
+              type="number"
+              id="sync-count"
+              name="sync_count"
+              value="50"
+              min="0"
+              max="5000"
+              step="1"
+              autocomplete="off"
+              required
+            >
+            <div class="help-text">Number of synchronous HTTP jobs to enqueue (0-5000)</div>
+          </div>
+
+          <div class="form-group">
+            <label for="delay">Delay (seconds) & Drift (%)</label>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <input
+                type="number"
+                id="delay"
+                name="delay"
+                value="5"
+                min="0.0"
+                max="60.0"
+                step="any"
+                autocomplete="off"
+                placeholder="Seconds"
+              >
+              <div style="display: flex; align-items: center; gap: 5px; width: 60%;">
+                <input
+                  type="number"
+                  id="delay_drift"
+                  name="delay_drift"
+                  value="50"
+                  min="0"
+                  max="100"
+                  step="1"
+                  autocomplete="off"
+                  placeholder="Drift"
+                >
+                <span style="font-size: 14px; font-weight: 600; color: #555;">%</span>
+              </div>
+            </div>
+            <div class="help-text">HTTP endpoint delay in seconds and random drift percentage (0-100)</div>
+          </div>
+
+          <div class="form-group">
+            <label for="processor">Processor</label>
+            <select id="processor" name="processor" autocomplete="off">
+              <!-- PROCESSOR_OPTIONS -->
+            </select>
+            <div class="help-text">
+              Named processor that runs the asynchronous requests. Each processor has its own
+              capacity, so a burst on one does not consume the capacity of another.
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Asynchronous Request Mode</label>
+            <div style="display: flex; align-items: center; gap: 24px; padding: 4px 0;">
+              <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
+                <input type="checkbox" id="direct" name="direct" value="1" checked>
+                Direct execution
+              </label>
+              <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
+                <input type="checkbox" id="from-server" name="from_server" value="1">
+                Fire from a Sidekiq worker
+              </label>
+            </div>
+            <div class="help-text">
+              Direct execution skips the Sidekiq queue when the processor runs in this process.
+              The worker option fires the requests from inside a Sidekiq job instead of the web request.
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="timeout">Timeout (seconds)</label>
+            <input
+              type="number"
+              id="timeout"
+              name="timeout"
+              value="30"
+              min="0.1"
+              max="60.0"
+              step="any"
+              autocomplete="off"
+              style="width: 100%;"
+            >
+            <div class="help-text">Request timeout in seconds</div>
+          </div>
+
+          <button type="submit">Run Jobs</button>
+        </form>
+      </div>
+
+      <div class="stats">
+        <div class="status-section">
+          <div class="status-title">Asynchronous HTTP Requests</div>
+          <div class="status-grid three-col">
+            <div class="status-card">
+              <div class="status-label">In Flight</div>
+              <div class="status-value" id="inflight-count">0</div>
+            </div>
+            <div class="status-card success">
+              <div class="status-label">Completed</div>
+              <div class="status-value" id="async-completed-count">0</div>
+            </div>
+            <div class="status-card failure">
+              <div class="status-label">Error</div>
+              <div class="status-value" id="async-error-count">0</div>
+            </div>
           </div>
         </div>
-        <div class="help-text">HTTP endpoint delay in seconds and random drift percentage (0-100)</div>
-      </div>
 
-      <div class="form-group">
-        <label>Asynchronous Request Mode</label>
-        <div style="display: flex; align-items: center; gap: 24px; padding: 4px 0;">
-          <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
-            <input type="checkbox" id="direct" name="direct" value="1" checked>
-            Direct execution
-          </label>
-          <label style="display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0;">
-            <input type="checkbox" id="from-server" name="from_server" value="1">
-            Fire from a Sidekiq worker
-          </label>
+        <div class="status-section">
+          <div class="status-title">Processors</div>
+          <div class="status-grid auto-fit" id="processor-grid"></div>
         </div>
-        <div class="help-text">
-          Direct execution skips the Sidekiq queue when the processor runs in this process.
-          The worker option fires the requests from inside a Sidekiq job instead of the web request.
-        </div>
-      </div>
 
-      <div class="form-group">
-        <label for="timeout">Timeout (seconds)</label>
-        <input
-          type="number"
-          id="timeout"
-          name="timeout"
-          value="30"
-          min="0.1"
-          max="60.0"
-          step="any"
-          autocomplete="off"
-          style="width: 100%;"
-        >
-        <div class="help-text">Request timeout in seconds</div>
-      </div>
-
-      <button type="submit">Run Jobs</button>
-    </form>
-
-    <div class="status-section">
-      <div class="status-title">Asynchronous HTTP Requests</div>
-      <div class="status-grid three-col">
-        <div class="status-card">
-          <div class="status-label">In Flight</div>
-          <div class="status-value" id="inflight-count">0</div>
+        <div class="status-section">
+          <div class="status-title">Synchronous HTTP Requests</div>
+          <div class="status-grid">
+            <div class="status-card success">
+              <div class="status-label">Completed</div>
+              <div class="status-value" id="sync-completed-count">0</div>
+            </div>
+            <div class="status-card failure">
+              <div class="status-label">Error</div>
+              <div class="status-value" id="sync-error-count">0</div>
+            </div>
+          </div>
         </div>
-        <div class="status-card success">
-          <div class="status-label">Completed</div>
-          <div class="status-value" id="async-completed-count">0</div>
-        </div>
-        <div class="status-card failure">
-          <div class="status-label">Error</div>
-          <div class="status-value" id="async-error-count">0</div>
+
+        <div class="status-section">
+          <div class="status-title">Sidekiq Queue Stats</div>
+          <div class="status-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
+            <div class="status-card">
+              <div class="status-label">Busy</div>
+              <div class="status-value" id="busy-count">0</div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Enqueued</div>
+              <div class="status-value" id="enqueued-count">0</div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Retry</div>
+              <div class="status-value" id="retry-count">0</div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Processed</div>
+              <div class="status-value" id="processed-count">0</div>
+            </div>
+            <div class="status-card">
+              <div class="status-label">Failed</div>
+              <div class="status-value" id="failed-count">0</div>
+            </div>
+          </div>
+          <div class="polling-indicator active" id="polling-status">Polling active</div>
         </div>
       </div>
-    </div>
-
-    <div class="status-section">
-      <div class="status-title">Synchronous HTTP Requests</div>
-      <div class="status-grid">
-        <div class="status-card success">
-          <div class="status-label">Completed</div>
-          <div class="status-value" id="sync-completed-count">0</div>
-        </div>
-        <div class="status-card failure">
-          <div class="status-label">Error</div>
-          <div class="status-value" id="sync-error-count">0</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="status-section">
-      <div class="status-title">Sidekiq Queue Stats</div>
-      <div class="status-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr;">
-        <div class="status-card">
-          <div class="status-label">Busy</div>
-          <div class="status-value" id="busy-count">0</div>
-        </div>
-        <div class="status-card">
-          <div class="status-label">Enqueued</div>
-          <div class="status-value" id="enqueued-count">0</div>
-        </div>
-        <div class="status-card">
-          <div class="status-label">Retry</div>
-          <div class="status-value" id="retry-count">0</div>
-        </div>
-        <div class="status-card">
-          <div class="status-label">Processed</div>
-          <div class="status-value" id="processed-count">0</div>
-        </div>
-        <div class="status-card">
-          <div class="status-label">Failed</div>
-          <div class="status-value" id="failed-count">0</div>
-        </div>
-      </div>
-      <div class="polling-indicator active" id="polling-status">Polling active</div>
     </div>
 
     <div class="links">
@@ -220,7 +242,8 @@
             if (formData.get('direct')) modes.push('direct execution');
             if (formData.get('from_server')) modes.push('fired from worker');
             const modeText = modes.length > 0 ? ` [${modes.join(', ')}]` : '';
-            showToast(`Successfully enqueued ${totalCount} jobs (${asyncCount} async, ${syncCount} sync) - ${delay}s delay${driftText}, ${timeout}s timeout!${modeText}`);
+            const processor = formData.get('processor');
+            showToast(`Successfully enqueued ${totalCount} jobs (${asyncCount} async on the ${processor} processor, ${syncCount} sync) - ${delay}s delay${driftText}, ${timeout}s timeout!${modeText}`);
             // Reset zero activity count and restart polling if stopped
             zeroActivityCount = 0;
             if (!isPolling) {
@@ -267,6 +290,7 @@
         const retry = data.retry || 0;
 
         inflightEl.textContent = inflight;
+        updateProcessors(data.processors);
         asyncCompletedEl.textContent = (data.asynchronous && data.asynchronous.complete) || 0;
         asyncErrorEl.textContent = (data.asynchronous && data.asynchronous.error) || 0;
         syncCompletedEl.textContent = (data.synchronous && data.synchronous.complete) || 0;
@@ -290,6 +314,42 @@
           statusEl.textContent = 'Polling stopped (no activity)';
           statusEl.className = 'polling-indicator stopped';
         }
+      }
+
+      // Build one card per processor on the first update and keep the counts
+      // current after that.
+      function updateProcessors(processors) {
+        if (!processors) return;
+
+        const grid = document.getElementById('processor-grid');
+        Object.keys(processors).forEach(name => {
+          let card = document.getElementById('processor-card-' + name);
+          if (!card) {
+            card = document.createElement('div');
+            card.className = 'status-card';
+            card.id = 'processor-card-' + name;
+
+            const label = document.createElement('div');
+            label.className = 'status-label';
+            label.textContent = name;
+
+            const value = document.createElement('div');
+            value.className = 'status-value';
+            value.id = 'processor-inflight-' + name;
+
+            const capacity = document.createElement('div');
+            capacity.className = 'help-text';
+            capacity.id = 'processor-capacity-' + name;
+
+            card.appendChild(label);
+            card.appendChild(value);
+            card.appendChild(capacity);
+            grid.appendChild(card);
+          }
+
+          document.getElementById('processor-inflight-' + name).textContent = processors[name].inflight;
+          document.getElementById('processor-capacity-' + name).textContent = 'of ' + processors[name].max_capacity;
+        });
       }
 
       function fetchStatus() {

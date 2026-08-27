@@ -7,6 +7,14 @@ RSpec.describe "Direct Execution", :integration do
   let(:config) { PatientHttp::Sidekiq::Configuration.new(max_connections: 5) }
   let(:processor) { PatientHttp::Processor.new(config) }
 
+  def build_observer
+    PatientHttp::Sidekiq::ProcessorObserver.new(
+      processor,
+      stats: PatientHttp::Sidekiq::Stats.new(config),
+      task_monitor: PatientHttp::Sidekiq::TaskMonitor.new(config)
+    )
+  end
+
   around do |example|
     # The testing mode must be changed globally, not with the thread-local
     # block form, so the processor's reactor thread also enqueues callback
@@ -71,7 +79,7 @@ RSpec.describe "Direct Execution", :integration do
   end
 
   it "raises when the crash-recovery registry entry cannot be written" do
-    observer = PatientHttp::Sidekiq::ProcessorObserver.new(processor)
+    observer = build_observer
     processor.observe(observer)
     allow(observer.task_monitor).to receive(:register).and_raise("Redis is unavailable")
     # Prove the error propagates on the production path, not through the
@@ -90,8 +98,35 @@ RSpec.describe "Direct Execution", :integration do
     expect(enqueued_jobs).to be_empty
   end
 
+  it "records the highest number of requests the processor held at once" do
+    # Per-processor statistics are only recorded when more than one profile
+    # exists; the requests still run on the default processor.
+    config.processor(:llm, max_connections: 5)
+    stats = PatientHttp::Sidekiq::Stats.new(config)
+    processor.observe(
+      PatientHttp::Sidekiq::ProcessorObserver.new(
+        processor,
+        stats: stats,
+        task_monitor: PatientHttp::Sidekiq::TaskMonitor.new(config)
+      )
+    )
+
+    3.times do
+      PatientHttp::Sidekiq.execute(
+        PatientHttp::Request.new(:get, "#{test_web_server.base_url}/delay/500"),
+        callback: TestCallback
+      )
+    end
+
+    # The mark is published even though nothing has completed yet.
+    expect(stats.get_totals["processors"]["default"]["max_inflight"]).to eq(3)
+
+    expect(wait_until { processor.total_count.zero? }).to be(true)
+    expect(stats.get_totals["processors"]["default"]["max_inflight"]).to eq(3)
+  end
+
   it "registers the request in the crash-recovery registry before execute returns" do
-    observer = PatientHttp::Sidekiq::ProcessorObserver.new(processor)
+    observer = build_observer
     processor.observe(observer)
 
     request = PatientHttp::Request.new(:get, "#{test_web_server.base_url}/delay/500")
