@@ -331,7 +331,7 @@ end
 
 For classes that make many async HTTP requests, you can include `PatientHttp::RequestHelper` to get convenient instance methods like `async_get`, `async_post`, `async_put`, `async_patch`, and `async_delete`. You can also define a request template at the class level using the `request_template` class method to set shared options like `base_url`, `headers`, and `timeout`.
 
-When using this gem, the request handler is automatically registered when the processor starts and unregistered when it stops — no manual setup is required.
+When using this gem, the request handler is automatically registered when you call `PatientHttp::Sidekiq.configure` or when the processor starts — no manual setup is required. The handler stays registered when the processor stops, so a request submitted while the process is shutting down is enqueued as a Sidekiq job and executed by the next process instead of being lost.
 
 ```ruby
 class NotificationService
