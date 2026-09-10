@@ -383,15 +383,16 @@ module PatientHttp
         end
       end
 
-      # Stop all processors gracefully
+      # Stop all processors gracefully.
+      #
+      # The request handler stays registered. Sidekiq fires its shutdown event while
+      # jobs are still running, and a job that submits a request after the processors
+      # have stopped must have it enqueued as a job for the next process rather than
+      # raise. Only {.reset!} removes the handler.
       #
       # @param timeout [Float, nil] maximum time to wait for in-flight requests to complete
       # @return [void]
       def stop(timeout: nil)
-        if @request_handler
-          PatientHttp.unregister_handler(@request_handler)
-        end
-
         @lifecycle_mutex.synchronize do
           # Shared services can outlive the processors when a start failed part
           # way through, so tear them down whenever any of them exist.
