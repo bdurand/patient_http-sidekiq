@@ -1,5 +1,10 @@
 # frozen_string_literal: true
 
+# The gem and its dependencies ship UTF-8 data files. A shell with no LANG/LC_ALL
+# set leaves default_external as US-ASCII, and those files come back with invalid
+# bytes, so we need to force UTF-8 encoding in tests.
+Encoding.default_external = Encoding::UTF_8
+
 # Suppress experimental feature warnings (IO::Buffer used by async gems)
 Warning[:experimental] = false
 
