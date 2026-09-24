@@ -16,9 +16,11 @@ module PatientHttp
       # Creates a task handler for a request that runs directly.
       #
       # @param args [Array] The RequestWorker job arguments.
-      def initialize(args)
+      # @param config [PatientHttp::Configuration, nil] The configuration of the
+      #   processor that runs the request. If `nil`, uses the base configuration.
+      def initialize(args, config: nil)
         @args = args
-        super(minimal_job_record)
+        super(minimal_job_record, config: config)
       end
 
       # Enqueues the request as a RequestWorker job.

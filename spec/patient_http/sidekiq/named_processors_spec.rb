@@ -97,6 +97,57 @@ RSpec.describe "Named processors" do
       job = PatientHttp::Sidekiq::RequestWorker.jobs.last
       expect(job["args"].last).to eq("default")
     end
+
+    it "uses the processor profile raise_error_responses when none is given" do
+      PatientHttp::Sidekiq.configure { |config| config.processor(:strict, raise_error_responses: true) }
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :strict)
+
+      job = PatientHttp::Sidekiq::RequestWorker.jobs.last
+      expect(job["args"][2]).to be(true)
+      expect(PatientHttp::Sidekiq.configuration.processor(:strict)).to eq(raise_error_responses: true)
+    end
+
+    it "uses the base raise_error_responses for a profile that does not override it" do
+      PatientHttp::Sidekiq.configuration.raise_error_responses = true
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :llm)
+
+      job = PatientHttp::Sidekiq::RequestWorker.jobs.last
+      expect(job["args"][2]).to be(true)
+    end
+
+    it "enqueues a processor name without a declared profile using the base configuration" do
+      PatientHttp::Sidekiq.configuration.raise_error_responses = true
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :undeclared)
+
+      job = PatientHttp::Sidekiq::RequestWorker.jobs.last
+      expect(job["args"][2]).to be(true)
+      expect(job["args"].last).to eq("undeclared")
+      expect(PatientHttp::Sidekiq.configuration.processor_profiles).not_to have_key(:undeclared)
+    end
+
+    it "uses the processor profile payload_store_threshold" do
+      TestPayloadStore.clear!
+      PatientHttp::Sidekiq.configure do |config|
+        config.register_payload_store(:test_store, adapter: :test_store)
+        config.processor(:small, payload_store_threshold: 1)
+      end
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback)
+      default_data = PatientHttp::Sidekiq::RequestWorker.jobs.last["args"][0]
+
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :small)
+      small_data = PatientHttp::Sidekiq::RequestWorker.jobs.last["args"][0]
+
+      expect(PatientHttp::ExternalStorage.storage_ref?(default_data)).to be(false)
+      expect(PatientHttp::ExternalStorage.storage_ref?(small_data)).to be(true)
+    end
   end
 
   describe "execution on a named processor" do
@@ -118,6 +169,26 @@ RSpec.describe "Named processors" do
       )
 
       expect(captured).to be_a(PatientHttp::RequestTask)
+    end
+
+    it "builds the task handler with the named processor configuration" do
+      PatientHttp::Sidekiq.configure do |config|
+        config.processor(:llm, max_connections: 20)
+      end
+      PatientHttp::Sidekiq.start
+
+      allow(PatientHttp::Sidekiq.processor(:llm)).to receive(:enqueue)
+      expect(PatientHttp::Sidekiq::TaskHandler).to receive(:new)
+        .with(anything, config: PatientHttp::Sidekiq.processor(:llm).config)
+        .and_call_original
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq::RequestExecutor.execute(
+        request,
+        callback: TestCallback,
+        sidekiq_job: {"class" => "TestWorker", "args" => []},
+        processor_name: "llm"
+      )
     end
 
     it "raises UnknownProcessorError for a job naming an unconfigured processor" do

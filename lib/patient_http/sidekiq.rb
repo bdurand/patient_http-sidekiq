@@ -311,25 +311,24 @@ module PatientHttp
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
+        options = current_sidekiq_options
+        processor_name = resolve_processor_name(processor, request, options)
+        profile_config = processor_profile_config(processor_name)
+
+        # The PatientHttp module methods pass nil when the caller did not ask for a
+        # specific behavior, so fall back to the configured default for the processor
+        # the request is routed to, the same way the inline handler in the base gem does.
+        raise_error_responses = profile_config.raise_error_responses if raise_error_responses.nil?
+
         request_json = request.as_json
         encrypted = encrypt(request_json)
 
         data = if external_storage.enabled?
-          external_storage.store(encrypted, max_size: configuration.payload_store_threshold)
+          external_storage.store(encrypted, max_size: profile_config.payload_store_threshold)
         else
           encrypted
         end
 
-        options = current_sidekiq_options
-        processor_name = resolve_processor_name(processor, request, options)
-        # The PatientHttp module methods pass nil when the caller did not ask for a
-        # specific behavior, so fall back to the configured default for the processor
-        # the request is routed to, the same way the inline handler in the base gem does.
-        if raise_error_responses.nil?
-          config = configuration
-          config = config.processor_config(processor_name) if config.processor(processor_name)
-          raise_error_responses = config.raise_error_responses
-        end
         if options&.any?
           options = options.except("processor")
           queue = options["queue"]
@@ -345,7 +344,8 @@ module PatientHttp
             raise_error_responses: raise_error_responses,
             callback_args: callback_args,
             request_id: request_id,
-            processor_name: processor_name
+            processor_name: processor_name,
+            config: profile_config
           )
         elsif options&.any?
           RequestWorker.set(options).perform_async(*args)
@@ -688,6 +688,19 @@ module PatientHttp
         name.to_s
       end
 
+      # Returns the configuration for a processor profile. A name without a
+      # declared profile is still enqueued, because the process that runs the
+      # job may declare it. Until then the base configuration applies.
+      #
+      # @param name [String] The processor name.
+      # @return [PatientHttp::Configuration] The configuration for the profile.
+      def processor_profile_config(name)
+        config = configuration
+        return config unless config.processor_profiles.key?(name.to_sym)
+
+        config.processor_config(name)
+      end
+
       # Returns whether a request can go directly to a processor in the current
       # process. Requests made in a {with_sidekiq_options} block always go
       # through the queue so that Sidekiq applies the options. Requests also go
@@ -719,9 +732,11 @@ module PatientHttp
       # @param request_id [String] The request ID.
       # @param processor_name [String] The name of the processor profile that
       #   runs the request.
+      # @param config [PatientHttp::Configuration, nil] The configuration of the
+      #   processor profile that runs the request.
       # @return [void]
-      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:, processor_name: "default")
-        task_handler = DirectTaskHandler.new(args)
+      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:, processor_name: "default", config: nil)
+        task_handler = DirectTaskHandler.new(args, config: config)
 
         begin
           # Reload the request from its serialized form so the direct path

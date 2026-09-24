@@ -59,7 +59,6 @@ module PatientHttp
           request_id: nil,
           processor_name: nil
         )
-          task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job))
           config = PatientHttp::Sidekiq.configuration
 
           # Look up the named processor and the effective configuration for its
@@ -69,6 +68,8 @@ module PatientHttp
           processor = PatientHttp::Sidekiq.processor(name)
           profile_declared = config.processor_profiles.key?(name)
           task_config = processor&.config || (profile_declared ? config.processor_config(name) : config)
+
+          task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job), config: task_config)
 
           task = PatientHttp::RequestTask.new(
             request: request,

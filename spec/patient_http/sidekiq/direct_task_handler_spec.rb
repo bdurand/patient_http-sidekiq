@@ -78,6 +78,26 @@ RSpec.describe PatientHttp::Sidekiq::DirectTaskHandler do
 
         expect(TestPayloadStore.payloads).to be_empty
       end
+
+      it "uses the threshold from the given processor configuration" do
+        config = PatientHttp::Sidekiq.configuration
+        config.processor(:small, payload_store_threshold: 1)
+        handler = described_class.new(args, config: config.processor_config(:small))
+
+        response = PatientHttp::Response.new(
+          status: 200,
+          headers: {"Content-Type" => "text/plain"},
+          body: "OK",
+          duration: 0.1,
+          request_id: "req-1",
+          url: "http://example.com/test",
+          http_method: "get"
+        )
+        handler.on_complete(response, TestCallback.name)
+
+        data = PatientHttp::Sidekiq::CallbackWorker.jobs.last["args"][0]
+        expect(PatientHttp::ExternalStorage.storage_ref?(data)).to be(true)
+      end
     end
   end
 end

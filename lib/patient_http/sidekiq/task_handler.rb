@@ -17,8 +17,11 @@ module PatientHttp
       #
       # @param sidekiq_job [Hash] The Sidekiq job Hash, with `class`, `jid`,
       #   `args`, and other keys.
-      def initialize(sidekiq_job)
+      # @param config [PatientHttp::Configuration, nil] The configuration of the
+      #   processor that runs the request. If `nil`, uses the base configuration.
+      def initialize(sidekiq_job, config: nil)
         @sidekiq_job = sidekiq_job
+        @config = config
       end
 
       # Enqueues a CallbackWorker job that calls the callback service's
@@ -118,7 +121,7 @@ module PatientHttp
         encrypted = Sidekiq.encrypt(data)
         external_storage = PatientHttp::Sidekiq.external_storage
         if external_storage.enabled?
-          external_storage.store(encrypted, max_size: PatientHttp::Sidekiq.configuration.payload_store_threshold)
+          external_storage.store(encrypted, max_size: (@config || PatientHttp::Sidekiq.configuration).payload_store_threshold)
         else
           encrypted
         end

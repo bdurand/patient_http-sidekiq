@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `config.raise_error_responses = true` now applies to requests made through the `PatientHttp` module methods. Those methods pass `nil` when the caller does not ask for a specific behavior, and `execute` treated `nil` as `false` instead of falling back to the configuration, so a non-2xx response was delivered to `on_complete` rather than `on_error`. An explicit `raise_error_responses:` argument still wins, and jobs already enqueued without the option continue to be treated as `false`.
+- A processor profile's `payload_store_threshold` override applies to requests routed to that profile. Previously the request payload and the callback result used the base configuration's `payload_store_threshold`, whatever processor ran the request.
 
 ## 1.4.1
 
