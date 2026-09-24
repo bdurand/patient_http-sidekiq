@@ -322,6 +322,17 @@ RSpec.describe PatientHttp::Sidekiq do
     it "returns early if not running" do
       expect { described_class.stop }.not_to raise_error
     end
+
+    it "keeps the request handler registered so requests made while stopping are enqueued" do
+      described_class.start
+      described_class.stop
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      request_id = PatientHttp.execute(request: request, callback: TestCallback)
+
+      expect(PatientHttp.handler_registered?).to be(true)
+      expect(PatientHttp::Sidekiq::RequestWorker.jobs.first["args"][4]).to eq(request_id)
+    end
   end
 
   describe "lifecycle integration" do

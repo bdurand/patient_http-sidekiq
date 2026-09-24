@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `config.raise_error_responses = true` now applies to requests made through the `PatientHttp` module methods. Those methods pass `nil` when the caller does not ask for a specific behavior, and `execute` treated `nil` as `false` instead of falling back to the configuration, so a non-2xx response was delivered to `on_complete` rather than `on_error`. An explicit `raise_error_responses:` argument still wins, and jobs already enqueued without the option continue to be treated as `false`.
 
+## 1.4.1
+
+### Fixed
+
+- The request handler is no longer unregistered when the processors stop. Sidekiq fires its `shutdown` event before its worker threads finish, so a job that submitted a request during the shutdown window raised `No request handler registered` and the request was lost. The handler now stays registered for the life of the process, and a request submitted after the processors have stopped is enqueued as a Sidekiq job and executed by the next process.
+
 ## 1.4.0
 
 ### Added
