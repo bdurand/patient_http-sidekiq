@@ -3,74 +3,44 @@
 require "sidekiq"
 require "patient_http"
 
-# This gem provides a mechanism to offload long-running HTTP requests from Sidekiq workers
-# to a dedicated async I/O processor running in the same process, freeing worker threads
-# immediately while HTTP requests are in flight.
-#
-# == Usage
-#
-# Make HTTP requests from anywhere in your code:
-#
-#   request = PatientHttp::Request.new(:get, "https://api.example.com/users/123")
-#   PatientHttp::Sidekiq.execute(
-#     request,
-#     callback: MyCallback,
-#     callback_args: {user_id: 123}
-#   )
-#
-# Set Sidekiq job options at runtime for the requests enqueued within a block:
-#
-#   PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
-#     PatientHttp::Sidekiq.execute(request, callback: MyCallback)
-#   end
-#
-# Define a callback service class with +on_complete+ and +on_error+ methods:
-#
-#   class MyCallback
-#     def on_complete(response)
-#       user_id = response.callback_args[:user_id]
-#       User.find(user_id).update!(data: response.json)
-#     end
-#
-#     def on_error(error)
-#       Rails.logger.error("Request failed: #{error.message}")
-#     end
-#   end
-#
-# == Key Features
-#
-# - Asynchronous HTTP processing using Ruby's Fiber scheduler
-# - Non-blocking worker threads
-# - Automatic connection pooling and HTTP/2 support
-# - Comprehensive error handling and retry logic
-# - Integration with Sidekiq's job lifecycle
-# - Optional Web UI for monitoring
-#
-# = Singleton Processor Pattern
-#
-# This module maintains a single Processor instance at the module level (@processor).
-# This is an intentional design decision driven by integration requirements with Sidekiq's
-# lifecycle and practical operational considerations:
-#
-# == Rationale:
-#
-# 1. **Sidekiq Integration**: The processor lifecycle (start/quiet/stop) must align with
-#    Sidekiq's own lifecycle hooks. A single processor instance integrates cleanly with
-#    Sidekiq's startup and shutdown signals.
-#
-# 2. **Resource Management**: Running multiple async I/O reactors in a single process would
-#    create resource contention and complexity. A single reactor efficiently handles all
-#    HTTP requests using connection pooling and fiber-based concurrency.
-#
-# 3. **Configuration Simplicity**: A singleton processor means one configuration, one set
-#    of metrics, and one connection pool. Multiple processors would require complex
-#    coordination and resource allocation.
-#
-# 4. **Process Model**: Sidekiq's process model (multiple workers, single process) maps
-#    naturally to a single async processor per process. Each Sidekiq process gets one
-#    processor, workers within that process share it.
 module PatientHttp
+  # Runs HTTP requests from Sidekiq jobs on an async I/O processor.
+  #
+  # The processor runs in the Sidekiq server process. Worker threads hand off
+  # long-running HTTP requests to it and are free to run other jobs while the
+  # requests are in flight.
+  #
+  # This module manages the processors for the current process. It starts one
+  # processor for each configured processor profile when the Sidekiq server
+  # starts, and stops them when the server shuts down. All processors in a
+  # process share one crash-recovery monitor, one stats aggregator, and one
+  # Redis pool.
+  #
+  # @example Make a request
+  #   PatientHttp.get(
+  #     "https://api.example.com/users/123",
+  #     callback: MyCallback,
+  #     callback_args: {user_id: 123}
+  #   )
+  #
+  # @example Define a callback service
+  #   class MyCallback
+  #     def on_complete(response)
+  #       user_id = response.callback_args[:user_id]
+  #       User.find(user_id).update!(data: response.json)
+  #     end
+  #
+  #     def on_error(error)
+  #       Rails.logger.error("Request failed: #{error.message}")
+  #     end
+  #   end
+  #
+  # @example Set Sidekiq job options for the requests made in a block
+  #   PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
+  #     PatientHttp.get("https://api.example.com/users/123", callback: MyCallback)
+  #   end
   module Sidekiq
+    # The gem version.
     VERSION = File.read(File.expand_path("../../../VERSION", __FILE__)).strip
 
     # Sidekiq-specific autoloads
@@ -90,7 +60,6 @@ module PatientHttp
     autoload :WebUI, File.join(__dir__, "sidekiq/web_ui")
 
     @processors = {}
-    @configuration = nil
     @after_completion_callbacks = []
     @after_error_callbacks = []
     @external_storage = nil
@@ -102,63 +71,118 @@ module PatientHttp
     @monitor_thread = nil
 
     class << self
-      attr_writer :configuration
-
-      # Configure the gem with a block. The built configuration is also set as the
-      # `PatientHttp.default_configuration` so that secrets registered at the module
-      # level with `PatientHttp.register_secret` are applied to the configuration the
-      # processor runs with, regardless of boot order.
+      # Sets the configuration. Intended for tests.
       #
-      # @yield [Configuration] the configuration object
-      # @return [Configuration]
+      # `PatientHttp` stores the configuration, so this method assigns it there.
+      #
+      # @param config [Configuration, nil] The configuration, or `nil` to build a
+      #   new one on next use.
+      # @return [void]
+      def configuration=(config)
+        PatientHttp.default_configuration = config
+      end
+
+      # Yields the configuration to a block.
+      #
+      # Every call yields the same configuration object, so options accumulate.
+      # Several initializers can each set options without overwriting one
+      # another. `PatientHttp.configure` calls this method, so application code
+      # can use either one.
+      #
+      # Configure the gem before the processors start. Running processors use
+      # this same configuration object, so an option changed while they run
+      # takes effect partway through the requests they're handling, and a
+      # processor profile declared while they run isn't started until the
+      # next restart. Changing the configuration while processors run logs a
+      # warning.
+      #
+      # @example
+      #   PatientHttp.configure do |config|
+      #     config.max_connections = 512
+      #   end
+      #
+      # @yield [config] The block that sets configuration options.
+      # @yieldparam config [Configuration] The configuration.
+      # @return [Configuration] The configuration.
       def configure
-        configuration = Configuration.new
-        yield(configuration) if block_given?
-        @configuration = configuration
-        @external_storage = nil
-        # Rebuild the stats aggregator from the new configuration unless a
-        # running processor already owns it.
-        @stats = nil unless running?
-        register_handler
-        PatientHttp.default_configuration = configuration
-        configuration
+        config = configuration
+        if block_given?
+          if running?
+            config.logger&.warn(
+              "[PatientHttp::Sidekiq] Configuration changed while processors are running; " \
+              "configure the gem before the Sidekiq server starts."
+            )
+          end
+          yield(config)
+        end
+        config
       end
 
-      # Ensure configuration is initialized
-      # @return [Configuration]
-      def configuration
-        @configuration ||= Configuration.new
-      end
-
-      # Reset configuration to defaults (useful for testing)
-      # @return [Configuration]
-      def reset_configuration!
-        @configuration = nil
-        @external_storage = nil
-        configuration
-      end
-
-      # Add a callback to be executed after a successful request completion.
+      # Returns the configuration for this process, and creates it on first use.
       #
-      # @yield [response] block to execute after an HTTP request completes
-      # @yieldparam response [PatientHttp::Response] the HTTP response
+      # `PatientHttp` stores the configuration, so this method and
+      # `PatientHttp.configuration` return the same object. As a result, secrets
+      # registered with `PatientHttp.register_secret` reach the configuration
+      # that the processors use, regardless of load order.
+      #
+      # @return [Configuration] The configuration.
+      def configuration
+        PatientHttp.configuration
+      end
+
+      # Builds a new configuration. `PatientHttp` calls this method when it
+      # creates the configuration for this process.
+      #
+      # @return [Configuration] The new configuration.
+      # @api private
+      def new_configuration
+        Configuration.new
+      end
+
+      # Resets the configuration to the defaults. Intended for tests.
+      #
+      # @return [Configuration] The new configuration.
+      def reset_configuration!
+        PatientHttp.default_configuration = nil
+        configuration
+      end
+
+      # Registers a block to run after each request completes. Use it for
+      # monitoring. Blocks run in the order they're registered.
+      #
+      # @example
+      #   PatientHttp::Sidekiq.after_completion do |response|
+      #     StatsD.timing("patient_http.duration", response.duration * 1000)
+      #   end
+      #
+      # @yield [response] The block to run.
+      # @yieldparam response [PatientHttp::Response] The HTTP response.
+      # @return [void]
       def after_completion(&block)
         @after_completion_callbacks << block
       end
 
-      # Add a callback to be executed after a request error.
+      # Registers a block to run after each request error. Use it for
+      # monitoring. Blocks run in the order they're registered.
       #
-      # @yield [error] block to execute after an HTTP request errors
-      # @yieldparam error [PatientHttp::Error] information about the error that was raised
+      # @example
+      #   PatientHttp::Sidekiq.after_error do |error|
+      #     StatsD.increment("patient_http.error.#{error.error_type}")
+      #   end
+      #
+      # @yield [error] The block to run.
+      # @yieldparam error [PatientHttp::Error] The error.
+      # @return [void]
       def after_error(&block)
         @after_error_callbacks << block
       end
 
-      # Add Sidekiq middleware for context handling. The middleware
-      # is already added during initialization. You can call this method again to
-      # append the middleware if needed to insert it after other middleware. If you need
-      # further control, you can manually add the `PatientHttp::Sidekiq::Context::Middleware`
-      # middleware yourself.
+      # Adds the context middleware to the Sidekiq server middleware chain.
+      #
+      # The gem adds the middleware when it loads. Call this method again to
+      # move the middleware to the end of the chain, after middleware that was
+      # added later. For more control, add
+      # PatientHttp::Sidekiq::Context::Middleware to the chain yourself.
       #
       # @return [void]
       def append_middleware
@@ -169,74 +193,95 @@ module PatientHttp
         end
       end
 
-      # Check if any processor is running.
+      # Returns whether any processor is running.
       #
-      # @return [Boolean]
+      # @return [Boolean] `true` if any processor is running.
       def running?
         @processors.values.any?(&:running?)
       end
 
-      # Check if any processor is draining (not accepting new requests
-      # but still processing in-flight ones).
+      # Returns whether any processor is draining. A draining processor doesn't
+      # accept new requests but continues to run in-flight requests.
       #
-      # @return [Boolean]
+      # @return [Boolean] `true` if any processor is draining.
       def draining?
         @processors.values.any?(&:draining?)
       end
 
-      # Check if any processor is in the process of stopping.
+      # Returns whether any processor is stopping.
       #
-      # @return [Boolean]
+      # @return [Boolean] `true` if any processor is stopping.
       def stopping?
         @processors.values.any?(&:stopping?)
       end
 
-      # Check if all processors are stopped or none have been started.
+      # Returns whether all processors are stopped.
       #
-      # @return [Boolean]
+      # @return [Boolean] `true` if all processors are stopped or none has
+      #   started.
       def stopped?
         @processors.values.all?(&:stopped?)
       end
 
-      # Get an ExternalStorage instance for storing and fetching payloads.
+      # Returns the external storage for request and result payloads. The
+      # storage is rebuilt when the configuration is replaced.
       #
-      # @return [PatientHttp::ExternalStorage]
+      # @return [PatientHttp::ExternalStorage] The external storage.
       # @api private
       def external_storage
-        @external_storage ||= PatientHttp::ExternalStorage.new(configuration)
+        config = configuration
+        storage = @external_storage
+        unless storage&.config.equal?(config)
+          storage = PatientHttp::ExternalStorage.new(config)
+          @external_storage = storage
+        end
+        storage
       end
 
-      # Encrypt data using the configured encryptor.
+      # Encrypts data with the configured encryptor.
       #
-      # @param data [Hash] the data to encrypt
-      # @return [Hash] the encrypted data (or original if no encryption configured)
+      # @param data [Hash] The data to encrypt.
+      # @return [Hash] The encrypted data, or the original data if encryption
+      #   isn't configured.
       # @api private
       def encrypt(data)
         configuration.encryptor.encrypt(data)
       end
 
-      # Decrypt data using the configured encryptor.
+      # Decrypts data with the configured encryptor.
       #
-      # @param data [Hash] the data to decrypt
-      # @return [Hash] the decrypted data (or original if not encrypted)
+      # @param data [Hash] The data to decrypt.
+      # @return [Hash] The decrypted data, or the original data if it isn't
+      #   encrypted.
       # @api private
       def decrypt(data)
         configuration.encryptor.decrypt(data)
       end
 
-      # Set Sidekiq job options for HTTP requests enqueued within the block.
-      # Options are applied with Sidekiq's `set` method (queue, retry, etc.).
-      # Nested calls merge options with the innermost values taking precedence.
-      # If the options include a queue, the callback job for the request is
-      # enqueued on that queue as well. Options only apply to requests enqueued
-      # in the same fiber as the block. Requests made in the block always go
-      # through the Sidekiq queue, even when direct execution is enabled, so
-      # that Sidekiq applies the options. This method has no effect
-      # when jobs run inline with Sidekiq::Testing.inline!.
+      # Sets Sidekiq job options for the requests made in a block.
       #
-      # @param options [Hash] Sidekiq job options (symbol or string keys)
-      # @yield block within which enqueued requests use the options
-      # @return [Object] the return value of the block
+      # Sidekiq applies the options with its `set` method, so any job option,
+      # such as `queue` or `retry`, is allowed. A `processor` option selects the
+      # processor profile for the requests instead. Nested blocks merge their
+      # options, and the innermost values take precedence. The options apply
+      # only to requests made in the same fiber as the block.
+      #
+      # If the options include a `queue`, the callback job for each request uses
+      # that queue as well. Requests made in the block go through the Sidekiq
+      # queue, even when direct execution is enabled, so that Sidekiq applies
+      # the options. A block whose only option is `processor` doesn't change
+      # this, because it has no Sidekiq options to apply. The options have no
+      # effect when jobs run inline with `Sidekiq::Testing.inline!`.
+      #
+      # @example
+      #   PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
+      #     PatientHttp.get("https://api.example.com/users/123", callback: MyCallback)
+      #   end
+      #
+      # @param options [Hash] The Sidekiq job options, with symbol or string keys.
+      # @yield The block in which requests use the options.
+      # @return [Object] The return value of the block.
+      # @raise [ArgumentError] If `options` isn't a Hash or no block is given.
       def with_sidekiq_options(options)
         unless options.is_a?(Hash)
           raise ArgumentError.new("options must be a Hash, got: #{options.class}")
@@ -252,43 +297,73 @@ module PatientHttp
         end
       end
 
-      # Execute an async HTTP request.
+      # Runs an HTTP request asynchronously and calls the callback service with
+      # the result.
       #
-      # @param request [PatientHttp::Request] the HTTP request to execute
-      # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
-      #   instance methods, or its fully qualified class name.
-      # @param callback_args [#to_h, nil] Arguments to pass to callback via the
-      #   PatientHttp::Response/PatientHttp::Error object. Must respond to +to_h+ and contain only JSON-native types
-      #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
-      #   converted to strings for serialization. Access via +response.callback_args+ or
-      #   +error.callback_args+ using symbol or string keys.
-      # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
-      #   and calls +on_error+ instead of +on_complete+. Defaults to false.
-      # @param processor [Symbol, String, nil] Name of the processor profile that should
-      #   execute the request. Defaults to the request's own processor name, a
-      #   "processor" value from with_sidekiq_options, or :default.
-      # @return [String] the request ID
-      def execute(request, callback:, callback_args: nil, raise_error_responses: false, processor: nil)
+      # Application code normally uses the `PatientHttp` module methods instead,
+      # such as `PatientHttp.get`, `PatientHttp.post`, or the
+      # PatientHttp::RequestHelper mixin. Those methods take the same options and
+      # keep application code independent of the job system. They call this
+      # method through the registered request handler.
+      #
+      # @param request [PatientHttp::Request] The HTTP request.
+      # @param callback [Class, String] The callback service class, or its fully
+      #   qualified name. The class must define `on_complete` and `on_error`
+      #   instance methods.
+      # @param callback_args [#to_h, nil] The arguments to pass to the callback.
+      #   Values must be JSON-native types: `nil`, `true`, `false`, String,
+      #   Integer, Float, Array, or Hash. Hash keys are converted to strings. The
+      #   callback reads the arguments from `response.callback_args` or
+      #   `error.callback_args` with symbol or string keys.
+      # @param raise_error_responses [Boolean, nil] Whether to treat non-2xx
+      #   responses as errors and call `on_error` instead of `on_complete`. If
+      #   `nil`, uses the `raise_error_responses` configuration option.
+      # @param processor [Symbol, String, nil] The name of the processor profile
+      #   that runs the request. If `nil`, uses the processor set on the request,
+      #   then the `processor` option from {with_sidekiq_options}, then
+      #   `:default`.
+      # @return [String] The request ID.
+      # @raise [PatientHttp::UnknownProcessorError] If the processor profile
+      #   isn't declared in this process.
+      def execute(request, callback:, callback_args: nil, raise_error_responses: nil, processor: nil)
         PatientHttp::CallbackValidator.validate!(callback)
         callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
         request_id = SecureRandom.uuid
 
+        options = current_sidekiq_options
+        processor_name = resolve_processor_name(processor, request, options)
+
+        # Catch a misspelled processor name where the request is made. A job
+        # that names a processor the running process doesn't declare is retried
+        # instead, which covers rolling deploys where the executing process is
+        # older than the enqueuing one.
+        profile_config = processor_config_for(processor_name)
+        unless profile_config
+          raise PatientHttp::UnknownProcessorError.new(
+            "No processor profile configured for #{processor_name.inspect}"
+          )
+        end
+
+        # The PatientHttp module methods pass nil when the caller did not ask for a
+        # specific behavior, so fall back to the configured default for the processor
+        # the request is routed to, the same way the inline handler in the base gem does.
+        raise_error_responses = profile_config.raise_error_responses if raise_error_responses.nil?
+
         request_json = request.as_json
         encrypted = encrypt(request_json)
 
         data = if external_storage.enabled?
-          external_storage.store(encrypted, max_size: configuration.payload_store_threshold)
+          external_storage.store(encrypted, max_size: profile_config.payload_store_threshold)
         else
           encrypted
         end
 
-        options = current_sidekiq_options
-        processor_name = resolve_processor_name(processor, request, options)
         if options&.any?
           options = options.except("processor")
           queue = options["queue"]
           options = options.merge("patient_http_callback_queue" => queue.to_s) if queue
+          options = nil if options.empty?
         end
         args = [data, callback_name, raise_error_responses, callback_args, request_id, processor_name]
 
@@ -300,7 +375,8 @@ module PatientHttp
             raise_error_responses: raise_error_responses,
             callback_args: callback_args,
             request_id: request_id,
-            processor_name: processor_name
+            processor_name: processor_name,
+            config: profile_config
           )
         elsif options&.any?
           RequestWorker.set(options).perform_async(*args)
@@ -311,8 +387,13 @@ module PatientHttp
         request_id
       end
 
-      # Register Sidekiq as the request handler for processing HTTP requests. This is called
-      # automatically when the processor starts or you call PatientHttp::Sidekiq.configure.
+      # Registers this gem as the request handler for `PatientHttp`.
+      #
+      # The gem calls this method when it loads. As a result, the `PatientHttp`
+      # module methods work in every process that loads the gem, whether or not
+      # the process runs a processor. The handler stays registered for the life
+      # of the process. After the processors stop, requests are enqueued in
+      # Redis for another process to run.
       #
       # @return [void]
       def register_handler
@@ -328,8 +409,10 @@ module PatientHttp
         PatientHttp.register_handler(@request_handler)
       end
 
-      # Start a processor for each configured processor profile, along with the
-      # shared crash-recovery monitor and stats.
+      # Starts a processor for each configured processor profile. Also starts
+      # the crash-recovery monitor and the stats aggregator that the processors
+      # share. The Sidekiq lifecycle hooks call this method when the Sidekiq
+      # server starts.
       #
       # @return [void]
       def start
@@ -339,7 +422,7 @@ module PatientHttp
           warn_about_blocking_redis_driver
 
           @redis_pool ||= RedisPool.new(configuration)
-          @stats ||= Stats.new(configuration)
+          @stats = stats
           @task_monitor ||= TaskMonitor.new(
             configuration,
             processors: -> { processor_capacity_snapshot }
@@ -372,7 +455,9 @@ module PatientHttp
         register_handler
       end
 
-      # Signal all processors to drain (stop accepting new requests)
+      # Drains all processors. A draining processor doesn't accept new requests
+      # but continues to run in-flight requests. The Sidekiq lifecycle hooks
+      # call this method when Sidekiq receives the quiet signal.
       #
       # @return [void]
       def quiet
@@ -383,14 +468,12 @@ module PatientHttp
         end
       end
 
-      # Stop all processors gracefully.
+      # Stops all processors and the services they share. The Sidekiq lifecycle
+      # hooks call this method when the Sidekiq server shuts down.
       #
-      # The request handler stays registered. Sidekiq fires its shutdown event while
-      # jobs are still running, and a job that submits a request after the processors
-      # have stopped must have it enqueued as a job for the next process rather than
-      # raise. Only {.reset!} removes the handler.
-      #
-      # @param timeout [Float, nil] maximum time to wait for in-flight requests to complete
+      # @param timeout [Float, nil] The maximum number of seconds to wait for
+      #   in-flight requests to finish. If `nil`, uses the `shutdown_timeout`
+      #   configuration option.
       # @return [void]
       def stop(timeout: nil)
         @lifecycle_mutex.synchronize do
@@ -403,7 +486,7 @@ module PatientHttp
         end
       end
 
-      # Reset all state (useful for testing)
+      # Stops all processors and resets all state. Intended for tests.
       #
       # @return [void]
       # @api private
@@ -412,16 +495,18 @@ module PatientHttp
           stop_processors(0)
           shutdown_shared_services
         end
-        @configuration = nil
         @external_storage = nil
         @after_completion_callbacks = []
         @after_error_callbacks = []
-        PatientHttp.unregister_handler(@request_handler) if @request_handler
+        PatientHttp.default_configuration = nil
+        # Restore the state a freshly loaded process is in: the handler is
+        # registered, the configuration is not built yet.
+        register_handler
       end
 
-      # Invoke the registered completion callbacks
+      # Calls the blocks registered with {after_completion}.
       #
-      # @param response [PatientHttp::Response] the HTTP response
+      # @param response [PatientHttp::Response] The HTTP response.
       # @return [void]
       # @api private
       def invoke_completion_callbacks(response)
@@ -430,9 +515,9 @@ module PatientHttp
         end
       end
 
-      # Invoke the registered error callbacks
+      # Calls the blocks registered with {after_error}.
       #
-      # @param error [PatientHttp::Error] information about the error that was raised
+      # @param error [PatientHttp::Error] The error.
       # @return [void]
       # @api private
       def invoke_error_callbacks(error)
@@ -441,18 +526,21 @@ module PatientHttp
         end
       end
 
-      # Returns a processor instance by name (internal accessor).
+      # Returns the processor with the given name.
       #
-      # @param name [Symbol, String] the processor name
-      # @return [PatientHttp::Processor, nil]
+      # @param name [Symbol, String] The processor name.
+      # @return [PatientHttp::Processor, nil] The processor, or `nil` if no
+      #   processor has that name.
       # @api private
       def processor(name = :default)
         @processors[name.to_sym]
       end
 
-      # Set the default processor (internal, for testing).
+      # Sets the default processor. Intended for tests.
       #
-      # @param value [PatientHttp::Processor, nil]
+      # @param value [PatientHttp::Processor, nil] The processor, or `nil` to
+      #   remove it.
+      # @return [void]
       # @api private
       def processor=(value)
         if value.nil?
@@ -462,31 +550,60 @@ module PatientHttp
         end
       end
 
-      # The gem's dedicated Redis pool, or nil when no processor has started
-      # in this process (e.g. web or client processes).
+      # Returns the configuration for a processor profile. Uses the running
+      # processor's configuration if there is one.
       #
-      # @return [RedisPool, nil]
+      # @param name [Symbol, String] The processor name.
+      # @return [PatientHttp::Configuration, nil] The configuration for the
+      #   profile, or `nil` if no processor has that name and the profile isn't
+      #   declared.
+      # @api private
+      def processor_config_for(name)
+        key = name.to_s
+        return nil if key.empty?
+
+        running = @processors[key.to_sym]
+        return running.config if running
+
+        config = configuration
+        config.processor_config(key) if config.processor_options(key)
+      end
+
+      # Returns the gem's dedicated Redis pool.
+      #
+      # @return [RedisPool, nil] The pool, or `nil` if no processor has started
+      #   in this process, such as in a web process.
       # @api private
       attr_reader :redis_pool
 
-      # The shared stats aggregator for this process. Available before start so
-      # rejection stats can be recorded from any path.
+      # Returns the stats aggregator for this process. The aggregator exists
+      # before the processors start, so any code path can record rejected
+      # requests. The aggregator is rebuilt when the configuration is replaced,
+      # unless a running processor uses it. The replaced aggregator is flushed
+      # so that the counts it recorded aren't lost.
       #
-      # @return [Stats]
+      # @return [Stats] The stats aggregator.
       # @api private
       def stats
-        @stats ||= Stats.new(configuration)
+        config = configuration
+        current = @stats
+        return current if current && (current.config.equal?(config) || running?)
+
+        @stats = Stats.new(config)
+        current&.flush
+        @stats
       end
 
-      # Yield a Redis connection: the gem's dedicated pool when it exists,
-      # falling back to Sidekiq's pool selection otherwise.
+      # Yields a Redis connection from the gem's dedicated pool. Uses Sidekiq's
+      # pool if the dedicated pool doesn't exist.
       #
-      # @param retry_on_connection_error [Boolean] whether a connection-level
-      #   failure may replay the block. Pass false when the block is not
-      #   idempotent, such as a batch of counter increments the server may
-      #   already have applied.
-      # @yield [conn] the Redis connection
-      # @return [Object] the block's return value
+      # @param retry_on_connection_error [Boolean] Whether to run the block
+      #   again after a connection failure. Pass `false` if the block isn't
+      #   idempotent, such as a batch of counter increments that the server
+      #   might already have applied.
+      # @yield [conn] The block that uses the connection.
+      # @yieldparam conn [Object] The Redis connection.
+      # @return [Object] The return value of the block.
       # @api private
       def redis(retry_on_connection_error: true, &block)
         pool = @redis_pool
@@ -497,12 +614,13 @@ module PatientHttp
         end
       end
 
-      # Run a block with Sidekiq client pushes routed through the gem's
-      # dedicated Redis pool. Used for pushes made from gem-owned threads
-      # (completion workers, the monitor thread) so they do not contend with
-      # Sidekiq's internal pool.
+      # Runs a block with Sidekiq client pushes sent through the gem's dedicated
+      # Redis pool. Threads that the gem owns, such as the completion workers and
+      # the monitor thread, use this method so they don't compete for
+      # connections in Sidekiq's internal pool.
       #
-      # @return [Object] the block's return value
+      # @yield The block to run.
+      # @return [Object] The return value of the block.
       # @api private
       def with_redis_pool(&block)
         pool = @redis_pool&.pool
@@ -515,12 +633,14 @@ module PatientHttp
 
       private
 
-      # Snapshot of each processor's capacity in this process, published with
-      # the heartbeat so the Web UI can report capacity per processor. The
-      # inflight count is the number of requests counted against the
-      # processor's capacity: queued, pending, and in flight.
+      # Returns the capacity of each processor in this process. The monitor
+      # thread publishes the snapshot with each heartbeat so that the Web UI can
+      # report capacity for each processor. The in-flight count includes every
+      # request counted against the processor's capacity: queued, pending, and
+      # in flight.
       #
-      # @return [Hash] processor name => { inflight:, max_capacity: }
+      # @return [Hash{Symbol => Hash}] The `:inflight` and `:max_capacity`
+      #   counts, keyed by processor name.
       def processor_capacity_snapshot
         @processors.each_with_object({}) do |(name, processor), snapshot|
           snapshot[name] = {
@@ -530,13 +650,17 @@ module PatientHttp
         end
       end
 
-      # Stop every processor and clear the registry. Each processor waits up to
-      # the full timeout for its in-flight requests, so they are stopped in
-      # parallel; stopping them in sequence would multiply the shutdown
-      # deadline by the number of processor profiles and overrun the time
-      # Sidekiq allows before it kills the process.
+      # Stops every processor and clears the registry.
       #
-      # @param timeout [Float, nil] maximum time to wait for in-flight requests
+      # Each processor waits up to the full timeout for its in-flight requests,
+      # so the processors stop in parallel. Stopping them one at a time would
+      # multiply the shutdown time by the number of processors and exceed the
+      # time that Sidekiq allows before it ends the process. An error from one
+      # processor is logged so that the other processors and the shared
+      # services still shut down.
+      #
+      # @param timeout [Float, nil] The maximum number of seconds to wait for
+      #   in-flight requests.
       # @return [void]
       def stop_processors(timeout)
         processors = @processors.values
@@ -544,24 +668,33 @@ module PatientHttp
         return if processors.empty?
 
         if processors.size == 1
-          processors.first.stop(timeout: timeout)
+          stop_processor(processors.first, timeout)
           return
         end
 
-        processors.map { |processor|
-          Thread.new do
-            processor.stop(timeout: timeout)
-          rescue => e
-            configuration.logger&.error(
-              "[PatientHttp::Sidekiq] Failed to stop processor #{processor.name}: #{e.inspect}"
-            )
-          end
-        }.each(&:join)
+        threads = processors.map { |processor| Thread.new { stop_processor(processor, timeout) } }
+        threads.each(&:join)
       end
 
-      # Stop the shared monitor thread, flush pending stats, remove this
-      # process from the registry, and shut down the Redis pool. Called with
-      # the lifecycle mutex held after all processors have stopped.
+      # Stops a processor and logs any error instead of raising it.
+      #
+      # @param processor [PatientHttp::Processor] The processor.
+      # @param timeout [Float, nil] The maximum number of seconds to wait for
+      #   in-flight requests.
+      # @return [void]
+      def stop_processor(processor, timeout)
+        processor.stop(timeout: timeout)
+      rescue => e
+        configuration.logger&.error(
+          "[PatientHttp::Sidekiq] Failed to stop processor #{processor.name}: #{e.inspect}"
+        )
+      end
+
+      # Stops the monitor thread, flushes pending stats, removes this process
+      # from the registry, and shuts down the Redis pool. The caller must hold
+      # the lifecycle mutex and must stop all processors first.
+      #
+      # @return [void]
       def shutdown_shared_services
         @monitor_thread&.stop
         @monitor_thread = nil
@@ -581,10 +714,13 @@ module PatientHttp
         @redis_pool = nil
       end
 
-      # Log a warning when a blocking C-level Redis driver is installed.
-      # Blocking Redis I/O on the reactor thread stalls every in-flight HTTP
-      # request; the gem's own calls run on worker threads, but application
-      # observers may still call Redis from processor callbacks.
+      # Logs a warning if the hiredis Redis driver is installed. The driver does
+      # blocking I/O that doesn't yield to the fiber scheduler, so a Redis call
+      # on the reactor thread stalls every in-flight request. The gem makes its
+      # own Redis calls on worker threads, but application observers can still
+      # call Redis from processor callbacks.
+      #
+      # @return [void]
       def warn_about_blocking_redis_driver
         return unless defined?(RedisClient) && RedisClient.default_driver.name.to_s.include?("Hiredis")
 
@@ -597,33 +733,36 @@ module PatientHttp
         configuration.logger&.debug("[PatientHttp::Sidekiq] Redis driver check failed: #{e.inspect}")
       end
 
-      # Current scoped Sidekiq options, if any.
+      # Returns the Sidekiq options set by the enclosing {with_sidekiq_options}
+      # block.
       #
-      # @return [Hash, nil]
+      # @return [Hash, nil] The options, or `nil` outside a block.
       def current_sidekiq_options
         Thread.current[:patient_http_sidekiq_options]
       end
 
-      # Resolve the processor profile name for a request. Precedence: the
-      # explicit +processor:+ argument, the request's own processor name, a
-      # "processor" value from with_sidekiq_options, then :default.
+      # Returns the processor profile name for a request. Uses the first of
+      # these that is set: the `processor:` argument, the processor set on the
+      # request, the `processor` option from {with_sidekiq_options}, and
+      # `:default`.
       #
-      # @param explicit [Symbol, String, nil] the processor: argument
-      # @param request [PatientHttp::Request] the request
-      # @param options [Hash, nil] scoped Sidekiq options
-      # @return [String] the processor name
+      # @param explicit [Symbol, String, nil] The `processor:` argument.
+      # @param request [PatientHttp::Request] The request.
+      # @param options [Hash, nil] The options from {with_sidekiq_options}.
+      # @return [String] The processor name.
       def resolve_processor_name(explicit, request, options)
         name = explicit || request.processor || options&.[]("processor") || :default
         name.to_s
       end
 
-      # Check if the request can go directly to a processor running in the current
-      # process. Requests made in a with_sidekiq_options block always go through
-      # the queue so that Sidekiq applies the options (queue routing, scheduling,
-      # retry), and Sidekiq testing modes must keep their normal enqueue semantics.
+      # Returns whether a request can go directly to a processor in the current
+      # process. Requests made in a {with_sidekiq_options} block always go
+      # through the queue so that Sidekiq applies the options. Requests also go
+      # through the queue when Sidekiq testing mode is enabled, so that tests
+      # see the enqueued jobs.
       #
-      # @param options [Hash, nil] scoped Sidekiq options for the request
-      # @return [Boolean]
+      # @param options [Hash, nil] The options from {with_sidekiq_options}.
+      # @return [Boolean] `true` if the request can skip the queue.
       def direct_execution?(options)
         return false unless options.nil?
         return false unless configuration.direct_execution?
@@ -633,21 +772,34 @@ module PatientHttp
         true
       end
 
-      # Hand the request to the processor running in the current process. If the
-      # processor cannot accept the request (at capacity or shutting down), the
-      # request is enqueued as a normal RequestWorker job instead through the
-      # same retry path the processor uses when it drains.
+      # Sends a request to a processor in the current process. If the processor
+      # can't accept the request because it's at capacity or shutting down,
+      # enqueues the request as a RequestWorker job instead. The processor uses
+      # the same path to re-enqueue requests when it drains.
       #
-      # @param request_json [Hash] the serialized request
-      # @param args [Array] the RequestWorker job arguments
-      # @param callback_name [String] the callback service class name
-      # @param raise_error_responses [Boolean] whether non-2xx responses are errors
-      # @param callback_args [Hash, nil] arguments to pass to the callback
-      # @param request_id [String] unique request ID
-      # @param processor_name [String] name of the processor profile to run on
+      # @param request_json [Hash] The serialized request.
+      # @param args [Array] The RequestWorker job arguments.
+      # @param callback_name [String] The callback service class name.
+      # @param raise_error_responses [Boolean] Whether to treat non-2xx
+      #   responses as errors.
+      # @param callback_args [Hash, nil] The arguments to pass to the callback.
+      # @param request_id [String] The request ID.
+      # @param processor_name [String] The name of the processor profile that
+      #   runs the request.
+      # @param config [PatientHttp::Configuration, nil] The configuration of the
+      #   processor profile that runs the request.
       # @return [void]
-      def execute_on_local_processor(request_json, args, callback_name:, raise_error_responses:, callback_args:, request_id:, processor_name: "default")
-        task_handler = DirectTaskHandler.new(args)
+      def execute_on_local_processor(
+        request_json,
+        args,
+        callback_name:,
+        raise_error_responses:,
+        callback_args:,
+        request_id:,
+        processor_name: "default",
+        config: nil
+      )
+        task_handler = DirectTaskHandler.new(args, config: config)
 
         begin
           # Reload the request from its serialized form so the direct path
@@ -671,5 +823,15 @@ module PatientHttp
     end
   end
 
+  # Set up the gem when it loads, so that requests work without a setup step:
+  #
+  # - Register the request handler, so that PatientHttp.get and the other module
+  #   methods work in every process that loads the gem.
+  # - Make PatientHttp.configure and PatientHttp.configuration use this gem's
+  #   configuration, so that applications don't need to name the integration.
+  # - Register the Sidekiq lifecycle hooks that start and stop the processors
+  #   with the Sidekiq server.
+  PatientHttp::Sidekiq.register_handler
+  PatientHttp.register_configuration_provider(PatientHttp::Sidekiq)
   PatientHttp::Sidekiq::LifecycleHooks.register
 end

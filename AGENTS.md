@@ -4,7 +4,7 @@ Always include the # frozen_string_literal: true magic comment at the top of eac
 
 Use `class << self` syntax for defining class methods. instead of `def self.method_name`.
 
-All public methods should have YARD documentation. Include an empty comment line between the method description and the first YARD tag.
+All public methods should have YARD documentation. Include an empty comment line between the method description and the first YARD tag. Documentation should conform to the Google Developer Documentation Style Guide.
 
 This project uses the standardrb style guide. Run `bundle exec standardrb --fix` to automatically fix style issues.
 
@@ -22,8 +22,13 @@ Do not change existing code to break existing line length unless absolutely nece
 
 Use `raise SomeError.new("message")` instead of `raise SomeError, "message"` for raising exceptions.
 
+Code comments and documentation should be general, to the point, and age well. They should not reference ticket numbers, or conversations, or specific conditions you encountered and then fixed when building the code.
+
 ## Testing
 
 Run the test suite with `bundle exec rspec`.
 
+
 The bundled test app can be started with `bundle exec rake test_app` and stopped with `bundle exec rake test_app:stop`. It requires a docker container running a Redis compatible server via `docker-compose up`.
+
+Redis is required for running the test suite and test app and can be started with `bin/run-valkey`.

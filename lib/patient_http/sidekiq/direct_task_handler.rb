@@ -2,26 +2,30 @@
 
 module PatientHttp
   module Sidekiq
-    # TaskHandler for requests executed directly on the local processor
-    # without an enqueued Sidekiq job. Requests with scoped Sidekiq options
-    # always go through the queue, so the handler only deals with the
-    # default RequestWorker options.
+    # Task handler for requests that run directly on a processor in the
+    # current process, without a Sidekiq job. Requests made in a
+    # `with_sidekiq_options` block always go through the queue, so this
+    # handler uses only the default RequestWorker options.
     #
-    # Retry enqueues a normal RequestWorker job with the original arguments,
-    # so the fail-back behavior matches the enqueued path. The sidekiq_job
-    # hash is a minimal job record kept for the crash-recovery registry; it
-    # has no jid because no Sidekiq job exists until the request is
-    # re-enqueued, so job_id returns nil.
+    # A retry enqueues a RequestWorker job with the original arguments, so a
+    # direct request behaves the same as an enqueued one when it's retried.
+    # The `sidekiq_job` Hash is a minimal job record for the crash-recovery
+    # registry. The record has no job ID because no Sidekiq job exists until
+    # the request is re-enqueued, so `job_id` returns `nil`.
     class DirectTaskHandler < TaskHandler
-      # @param args [Array] the RequestWorker job arguments
-      def initialize(args)
+      # Creates a task handler for a request that runs directly.
+      #
+      # @param args [Array] The RequestWorker job arguments.
+      # @param config [PatientHttp::Configuration, nil] The configuration of the
+      #   processor that runs the request. If `nil`, uses the base configuration.
+      def initialize(args, config: nil)
         @args = args
-        super(minimal_job_record)
+        super(minimal_job_record, config: config)
       end
 
-      # Re-enqueue the request as a normal RequestWorker job.
+      # Enqueues the request as a RequestWorker job.
       #
-      # @return [String] the job ID
+      # @return [String] The job ID.
       def retry
         PatientHttp::Sidekiq.with_redis_pool do
           RequestWorker.perform_async(*@args)
@@ -30,13 +34,15 @@ module PatientHttp
 
       private
 
-      # Minimal pushable job record for the crash-recovery registry.
-      # TaskMonitor serializes it to Redis and the orphan GC pushes it
-      # verbatim, possibly from another process, so it cannot enqueue
-      # through this handler. The worker options are included because
-      # Sidekiq::Client.push does not apply them when "class" is a String.
+      # Returns a minimal job record for the crash-recovery registry.
       #
-      # @return [Hash]
+      # TaskMonitor writes the record to Redis. The orphan collector pushes the
+      # record to Sidekiq as is, possibly from another process, so the record
+      # can't depend on this handler. The record includes the worker options
+      # because `Sidekiq::Client.push` doesn't apply them when `class` is
+      # a String.
+      #
+      # @return [Hash] The job record.
       def minimal_job_record
         RequestWorker.get_sidekiq_options
           .merge("class" => RequestWorker.name, "args" => @args)

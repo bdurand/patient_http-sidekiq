@@ -5,33 +5,52 @@ require "uri"
 
 module PatientHttp
   module Sidekiq
-    # Manages inflight request tracking in Redis for crash recovery.
+    # Tracks in-flight requests in Redis for crash recovery.
     #
-    # This class maintains a sorted set of request IDs indexed by timestamp
-    # and a hash of request payloads. It provides distributed locking for
-    # orphan detection and automatic re-enqueuing of requests that were
-    # interrupted by process crashes.
+    # The registry keeps a sorted set of request IDs, scored by heartbeat
+    # time, and a Hash of the Sidekiq job for each request. If a process
+    # crashes, another process finds the orphaned requests and re-enqueues
+    # their jobs. A distributed lock lets only one process at a time look for
+    # orphaned requests.
     #
-    # Task ID format: "hostname:pid:hex/request-uuid"
-    # - hostname: sanitized hostname (colons and slashes replaced with dashes)
-    # - pid: process ID
-    # - hex: 8-character random hex for uniqueness
-    # - request-uuid: unique identifier for the request
+    # Each entry has a registry ID in the format
+    # `hostname:pid:hex/request-uuid`:
+    #
+    # - `hostname`: The host name, with colons and slashes replaced by dashes.
+    # - `pid`: The process ID.
+    # - `hex`: 16 random hex characters that make the ID unique.
+    # - `request-uuid`: The request ID.
     class TaskMonitor
-      # Redis key prefixes
+      # Redis key for the sorted set of in-flight request IDs, scored by
+      # heartbeat time.
       INFLIGHT_INDEX_KEY = "sidekiq:patient_http:inflight_index"
+
+      # Redis key for the Hash of Sidekiq jobs, keyed by registry ID.
       INFLIGHT_JOBS_KEY = "sidekiq:patient_http:inflight_jobs"
+
+      # Redis key for the Hash of request details shown in the Web UI, keyed by
+      # registry ID.
       INFLIGHT_DETAILS_KEY = "sidekiq:patient_http:inflight_details"
+
+      # Redis key for the sorted set of request IDs with details, scored by
+      # registration time.
       INFLIGHT_DETAILS_INDEX_KEY = "sidekiq:patient_http:inflight_details_index"
+
+      # Redis key for the set of registered process IDs. Also the prefix for
+      # the keys that each process publishes.
       PROCESS_SET_KEY = "sidekiq:patient_http:processes"
+
+      # Redis key for the garbage collection lock.
       GC_LOCK_KEY = "sidekiq:patient_http:gc_lock"
+
+      # Redis key for the time of the last garbage collection run.
       GC_LAST_RUN_KEY = "sidekiq:patient_http:gc_last_run"
 
-      # Lua script for atomic orphan removal of a batch of request ids.
-      # For each id, checks that the task is still orphaned (timestamp <
-      # threshold) and removes it atomically, so a heartbeat cannot update the
-      # timestamp between the check and the removal. Ids that are no longer
-      # orphaned are skipped.
+      # Lua script that removes a batch of orphaned requests. For each ID, the
+      # script checks that the request is still orphaned (its heartbeat is
+      # older than the threshold) and removes it in the same atomic step, so a
+      # heartbeat can't update the request between the check and the removal.
+      # The script skips IDs that are no longer orphaned.
       #
       # KEYS[1] = index key (sorted set)
       # KEYS[2] = jobs key (hash)
@@ -40,12 +59,13 @@ module PatientHttp
       # ARGV[1] = threshold_ms
       # ARGV[2..] = request_ids
       #
-      # Every removed id is returned, even when the jobs hash no longer holds
-      # its payload, so the caller can fall back to the payload it read before
+      # The script returns every removed ID, even when the jobs Hash no longer
+      # has its payload, so that the caller can use the payload it read before
       # the script ran instead of losing the request.
       #
-      # Returns: flat array of [request_id, job_payload, request_id, job_payload, ...]
-      #   where job_payload is nil when the hash entry was already gone
+      # Returns: A flat Array of [request_id, job_payload, request_id,
+      #   job_payload, ...]. The job_payload is nil if the Hash entry was
+      #   already gone.
       REMOVE_IF_ORPHANED_SCRIPT = <<~LUA
         local index_key = KEYS[1]
         local jobs_key = KEYS[2]
@@ -70,15 +90,18 @@ module PatientHttp
 
         return removed
       LUA
+
+      # The SHA1 digest of REMOVE_IF_ORPHANED_SCRIPT.
       REMOVE_IF_ORPHANED_SHA = Digest::SHA1.hexdigest(REMOVE_IF_ORPHANED_SCRIPT).freeze
 
-      # Lua script for releasing the GC lock only when this process still owns
-      # it: a single-round-trip compare-and-delete.
+      # Lua script that releases the garbage collection lock only if this
+      # process still holds it. The check and the delete happen in one round
+      # trip.
       #
       # KEYS[1] = lock key
       # ARGV[1] = lock identifier
       #
-      # Returns: 1 if the lock was released, 0 otherwise
+      # Returns: 1 if the lock was released, otherwise 0.
       RELEASE_LOCK_SCRIPT = <<~LUA
         if redis.call('GET', KEYS[1]) == ARGV[1] then
           return redis.call('DEL', KEYS[1])
@@ -86,39 +109,44 @@ module PatientHttp
           return 0
         end
       LUA
+
+      # The SHA1 digest of RELEASE_LOCK_SCRIPT.
       RELEASE_LOCK_SHA = Digest::SHA1.hexdigest(RELEASE_LOCK_SCRIPT).freeze
 
-      # Number of orphaned request ids processed per Lua call.
+      # The number of orphaned request IDs that each Lua call processes.
       ORPHAN_BATCH_SIZE = 100
 
-      # Longest URL recorded for the Web UI, so that one enormous URL cannot
-      # take a disproportionate amount of memory.
+      # The maximum length of a URL recorded for the Web UI, so that one long
+      # URL can't use a large amount of memory.
       MAX_DISPLAY_URL_LENGTH = 500
 
-      # @return [Configuration] the configuration object
+      # @return [Configuration] The gem configuration.
       attr_reader :config
 
       class << self
-        # Get the count of inflight requests in Redis.
+        # Returns the number of in-flight requests across all processes.
         #
-        # @return [Integer] number of inflight requests
+        # @return [Integer] The number of in-flight requests.
         def inflight_count
           ::Sidekiq.redis do |redis|
             redis.zcard(INFLIGHT_INDEX_KEY)
           end
         end
 
-        # Get all inflight counts across all processes and the number of max connections.
+        # Returns the in-flight count and capacity of each running process.
+        # Also removes processes that stopped sending heartbeats from the
+        # process set.
         #
-        # The per-process inflight count comes from the shared inflight index, so
-        # it includes requests left behind by processes that have since died. The
-        # nested per-processor counts are snapshots each process publishes with
-        # its heartbeat, so they only cover processes that are still running and
-        # can lag by up to one monitor cycle.
+        # The in-flight count for each process comes from the shared registry,
+        # so it can include requests left behind by a process that died. The
+        # per-processor counts come from snapshots that each process publishes
+        # with its heartbeat. They cover only running processes and can be up
+        # to one monitor pass old.
         #
-        # @return [Hash] hash of "hostname:pid" =>
-        #   { inflight: Integer, max_capacity: Integer,
-        #     processors: { String => { inflight: Integer, max_capacity: Integer } } }
+        # @return [Hash{String => Hash}] The counts, keyed by `hostname:pid`.
+        #   Each value has `:inflight`, `:max_capacity`, and `:processors`
+        #   keys. The `:processors` value has the `:inflight` and
+        #   `:max_capacity` counts, keyed by processor name.
         def inflight_counts_by_process
           process_ids = nil
           max_connections = nil
@@ -172,12 +200,13 @@ module PatientHttp
           result
         end
 
-        # Get the inflight and capacity counts for each named processor across
-        # all running processes.
+        # Returns the in-flight count and capacity of each named processor
+        # across all running processes.
         #
-        # @param processes [Hash, nil] the result of {inflight_counts_by_process};
-        #   read from Redis when not given
-        # @return [Hash] hash of processor name => { inflight: Integer, max_capacity: Integer }
+        # @param processes [Hash, nil] The result of
+        #   {inflight_counts_by_process}. If `nil`, reads the counts from Redis.
+        # @return [Hash{String => Hash}] The `:inflight` and `:max_capacity`
+        #   counts, keyed by processor name.
         def inflight_counts_by_processor(processes = nil)
           processes ||= inflight_counts_by_process
 
@@ -188,16 +217,19 @@ module PatientHttp
           result.sort.to_h
         end
 
-        # Get the details of the requests that have been in flight the longest.
+        # Returns the details of the requests that have been in flight the
+        # longest.
         #
-        # Only requests registered while +inflight_details+ was enabled are
-        # reported. A request stays listed while its crash-recovery record
-        # exists, so a request left behind by a process that died is listed
-        # until the orphan collector re-enqueues it.
+        # The result includes only requests registered while the
+        # `inflight_details` option was enabled. A request stays listed while
+        # its crash-recovery record exists. As a result, a request left behind
+        # by a process that died stays listed until the orphan collector
+        # re-enqueues it.
         #
-        # @param limit [Integer] maximum number of requests to return
-        # @return [Array<Hash>] oldest first, each with :request_id, :process_id,
-        #   :url, :http_method, :processor, and :age in seconds
+        # @param limit [Integer] The maximum number of requests to return.
+        # @return [Array<Hash>] The requests, oldest first. Each Hash has
+        #   `:request_id`, `:process_id`, `:url`, `:http_method`, `:processor`,
+        #   and `:age` keys. The `:age` value is in seconds.
         def inflight_details(limit: 50)
           return [] if limit <= 0
 
@@ -231,12 +263,12 @@ module PatientHttp
           end
         end
 
-        # Remove the user name, password, query string, and fragment from a URL,
-        # keeping the scheme, host, and path. Used unless the configuration
-        # names its own sanitizer.
+        # Removes the user name, password, query string, and fragment from a
+        # URL, and keeps the scheme, host, and path. Used when the
+        # `inflight_url_sanitizer` option isn't set.
         #
-        # @param url [String] the request URL
-        # @return [String] the URL to display
+        # @param url [String] The request URL.
+        # @return [String] The URL to display.
         def sanitize_url(url)
           uri = URI.parse(url.to_s)
           uri.query = nil
@@ -252,26 +284,27 @@ module PatientHttp
           strip_credentials(url.to_s.split(/[?#]/, 2).first.to_s)
         end
 
-        # Get the total max connections across all processes
+        # Returns the total capacity of all running processes.
         #
-        # @return [Integer] sum of max connections from all active processes
+        # @return [Integer] The sum of `max_connections` across all running
+        #   processes.
         def total_max_connections
           inflight_counts_by_process.values.sum { |data| data[:max_capacity] }
         end
 
-        # Get all registered process IDs.
+        # Returns the IDs of all registered processes.
         #
-        # @return [Array<String>] list of process identifiers
+        # @return [Array<String>] The process IDs.
         def registered_process_ids
           ::Sidekiq.redis do |redis|
             redis.smembers(PROCESS_SET_KEY)
           end
         end
 
-        # Clear all registry data. Only allowed in test environment.
+        # Deletes all registry data. Allowed only in tests.
         #
-        # @raise [RuntimeError] if called outside of test environment
         # @return [void]
+        # @raise [RuntimeError] If called outside tests.
         # @api private
         def clear_all!
           unless PatientHttp.testing?
@@ -288,36 +321,36 @@ module PatientHttp
 
         private
 
-        # Build the max connections key for a given process identifier.
+        # Returns the Redis key for a process's capacity.
         #
-        # @param process_id [String] the process identifier
-        #
-        # @return [String] the Redis key for max connections
+        # @param process_id [String] The process ID.
+        # @return [String] The Redis key.
         def max_connections_key_for(process_id)
           "#{PROCESS_SET_KEY}:#{process_id}:max_connections"
         end
 
-        # Build the per-processor snapshot key for a given process identifier.
+        # Returns the Redis key for a process's per-processor snapshot.
         #
-        # @param process_id [String] the process identifier
-        #
-        # @return [String] the Redis key for the per-processor snapshot
+        # @param process_id [String] The process ID.
+        # @return [String] The Redis key.
         def processors_key_for(process_id)
           "#{PROCESS_SET_KEY}:#{process_id}:processors"
         end
 
-        # Remove anything between the scheme and the host of a URL.
+        # Removes the user information between the scheme and the host of a
+        # URL.
         #
-        # @param url [String] the URL
-        # @return [String] the URL without credentials
+        # @param url [String] The URL.
+        # @return [String] The URL without credentials.
         def strip_credentials(url)
           url.sub(%r{\A([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@]*@}, '\\1')
         end
 
-        # Parse one stored details record, ignoring one that cannot be read.
+        # Parses a stored details record.
         #
-        # @param record [String, nil] the serialized record
-        # @return [Hash, nil] the parsed record
+        # @param record [String, nil] The serialized record.
+        # @return [Hash, nil] The parsed record, or `nil` if the record can't be
+        #   parsed.
         def parse_details(record)
           return nil if record.nil?
 
@@ -327,14 +360,15 @@ module PatientHttp
           nil
         end
 
-        # Merge one process's published snapshot into a set of per-processor counts.
+        # Adds the counts from a process's published snapshot to per-processor
+        # counts.
         #
-        # A snapshot written by a process running a different version of the gem
-        # may not be readable; it is skipped rather than failing the whole report.
+        # A process that runs a different version of the gem might publish a
+        # snapshot that can't be read. That snapshot is skipped so that the
+        # rest of the report still works.
         #
-        # @param counts [Hash] per-processor counts to merge into
-        # @param snapshot [String, nil] the serialized snapshot
-        #
+        # @param counts [Hash] The per-processor counts to add to.
+        # @param snapshot [String, nil] The serialized snapshot.
         # @return [void]
         def merge_processor_snapshot(counts, snapshot)
           return if snapshot.nil?
@@ -356,11 +390,10 @@ module PatientHttp
           )
         end
 
-        # Add per-processor counts into an accumulator.
+        # Adds per-processor counts to a running total.
         #
-        # @param counts [Hash] per-processor counts to merge into
-        # @param additions [Hash, nil] per-processor counts to add
-        #
+        # @param counts [Hash] The per-processor counts to add to.
+        # @param additions [Hash, nil] The per-processor counts to add.
         # @return [void]
         def merge_processor_counts(counts, additions)
           additions&.each do |name, values|
@@ -371,15 +404,17 @@ module PatientHttp
         end
       end
 
-      # @param config [Configuration] the configuration object
-      # @param max_connections [#call, nil] callable returning the process's total
-      #   configured max connections; defaults to the configuration's value. Ignored
-      #   when a +processors+ source is given, which carries the same information
-      #   per processor.
-      # @param processors [#call, nil] callable returning a snapshot of the
-      #   process's processors as a hash of name => { inflight:, max_capacity: }.
-      #   The snapshot is published with each heartbeat so the Web UI can report
-      #   capacity per processor.
+      # Creates a registry for the current process.
+      #
+      # @param config [Configuration] The gem configuration.
+      # @param max_connections [#call, nil] A callable that returns the
+      #   process's total `max_connections`. If `nil`, uses the configuration
+      #   value. Ignored when `processors` is set, because the snapshot has the
+      #   same information for each processor.
+      # @param processors [#call, nil] A callable that returns a snapshot of
+      #   the process's processors: the `:inflight` and `:max_capacity` counts,
+      #   keyed by processor name. The snapshot is published with each
+      #   heartbeat so that the Web UI can report capacity for each processor.
       def initialize(config, max_connections: nil, processors: nil)
         @config = config
         @max_connections_source = max_connections || -> { config.max_connections }
@@ -389,12 +424,11 @@ module PatientHttp
         @lock_identifier = "#{hostname}:#{pid}:#{SecureRandom.hex(8)}".freeze
       end
 
-      # Register a request as inflight in Redis.
+      # Adds a request to the registry.
       #
-      # @param task [RequestTask] the request task to register
-      # @param processor_name [Symbol, String, nil] name of the processor running
-      #   the request, recorded with the request details
-      #
+      # @param task [PatientHttp::RequestTask] The request task.
+      # @param processor_name [Symbol, String, nil] The name of the processor
+      #   that runs the request. Recorded with the request details.
       # @return [void]
       def register(task, processor_name: nil)
         timestamp_ms = (Time.now.to_f * 1000).round
@@ -418,10 +452,9 @@ module PatientHttp
         end
       end
 
-      # Unregister a request from Redis (called when request completes).
+      # Removes a request from the registry.
       #
-      # @param task [RequestTask] the request task to unregister
-      #
+      # @param task [PatientHttp::RequestTask] The request task.
       # @return [void]
       def unregister(task)
         task_id = full_task_id(task.id)
@@ -436,7 +469,7 @@ module PatientHttp
         end
       end
 
-      # Remove this process's entry from the process set.
+      # Removes this process from the process set.
       #
       # @return [void]
       def remove_process
@@ -449,10 +482,9 @@ module PatientHttp
         end
       end
 
-      # Update heartbeat timestamps for multiple requests in a single operation.
+      # Updates the heartbeat times of requests in one pipelined call.
       #
-      # @param task_ids [Array<String>] the request IDs to update
-      #
+      # @param task_ids [Array<String>] The request IDs.
       # @return [void]
       def update_heartbeats(task_ids)
         return if task_ids.empty?
@@ -475,11 +507,10 @@ module PatientHttp
         end
       end
 
-      # Check if a task is registered in the inflight registry.
+      # Returns whether a request is in the registry.
       #
-      # @param task [RequestTask] the request task
-      #
-      # @return [Boolean] true if registered, false otherwise
+      # @param task [PatientHttp::RequestTask] The request task.
+      # @return [Boolean] `true` if the request is registered.
       # @api private
       def registered?(task)
         PatientHttp::Sidekiq.redis do |redis|
@@ -487,11 +518,11 @@ module PatientHttp
         end
       end
 
-      # Get the heartbeat timestamp for a task.
+      # Returns the heartbeat time of a request.
       #
-      # @param task [RequestTask] the request task
-      #
-      # @return [Integer, nil] timestamp in milliseconds, or nil if not registered
+      # @param task [PatientHttp::RequestTask] The request task.
+      # @return [Integer, nil] The time in milliseconds since the epoch, or
+      #   `nil` if the request isn't registered.
       # @api private
       def heartbeat_timestamp_for(task)
         score = PatientHttp::Sidekiq.redis do |redis|
@@ -500,9 +531,9 @@ module PatientHttp
         score&.to_i
       end
 
-      # Get all registered task IDs for this registry's process.
+      # Returns the registry IDs of all requests that this process registered.
       #
-      # @return [Array<String>] list of full task IDs
+      # @return [Array<String>] The registry IDs.
       # @api private
       def registered_task_ids
         PatientHttp::Sidekiq.redis do |redis|
@@ -510,20 +541,21 @@ module PatientHttp
         end.select { |id| id.start_with?("#{@lock_identifier}/") }
       end
 
-      # Build unique task ID for a request task that includes process identifier.
+      # Returns the registry ID for a request. The registry ID includes this
+      # process's ID.
       #
-      # @param task_id [String] the request task
-      # @return [String] the unique task ID
+      # @param task_id [String] The request ID.
+      # @return [String] The registry ID.
       def full_task_id(task_id)
         "#{@lock_identifier}/#{task_id}"
       end
 
-      # Record the current process's capacity in Redis.
+      # Registers this process and publishes its capacity.
       #
-      # This is used for monitoring purposes. The max connections key doubles as
-      # the process's liveness marker: it is refreshed on every heartbeat with a
-      # TTL shorter than the process set's, so a member of the set whose key has
-      # expired belongs to a process that is gone.
+      # The Web UI reads the capacity. The capacity key also shows that the
+      # process is alive: every heartbeat refreshes the key, and its TTL is
+      # shorter than the TTL of the process set. If a process in the set has no
+      # capacity key, the process is gone.
       #
       # @return [void]
       def ping_process
@@ -547,9 +579,9 @@ module PatientHttp
         end
       end
 
-      # Try to acquire the distributed garbage collection lock.
+      # Tries to get the distributed garbage collection lock.
       #
-      # @return [Boolean] true if lock acquired, false otherwise
+      # @return [Boolean] `true` if this process got the lock.
       def acquire_gc_lock
         PatientHttp::Sidekiq.redis do |redis|
           # Use SET with NX and EX options directly
@@ -558,12 +590,10 @@ module PatientHttp
         end
       end
 
-      # Release the garbage collection lock if held by this process.
+      # Releases the garbage collection lock if this process holds it. A Lua
+      # script checks and deletes the lock atomically in one round trip.
       #
-      # Uses a compare-and-delete Lua script so the check and deletion happen
-      # atomically in a single round trip.
-      #
-      # @return [Boolean] true if the lock was released, false otherwise
+      # @return [Boolean] `true` if the lock was released.
       def release_gc_lock
         result = PatientHttp::Sidekiq.redis do |redis|
           run_script(redis, RELEASE_LOCK_SCRIPT, RELEASE_LOCK_SHA, [GC_LOCK_KEY], [@lock_identifier])
@@ -571,12 +601,11 @@ module PatientHttp
         result == 1
       end
 
-      # Check if garbage collection should run based on the last run timestamp.
+      # Returns whether garbage collection is due. Garbage collection is due if
+      # no run is recorded or if one heartbeat interval has passed since the
+      # last run.
       #
-      # Returns true if the GC_LAST_RUN_KEY doesn't exist in Redis or if enough
-      # time has elapsed since the last GC run.
-      #
-      # @return [Boolean] true if GC should run, false otherwise
+      # @return [Boolean] `true` if garbage collection is due.
       def gc_needed?
         last_run = PatientHttp::Sidekiq.redis do |redis|
           redis.get(GC_LAST_RUN_KEY)
@@ -588,10 +617,9 @@ module PatientHttp
         Time.now - last_run_time >= config.heartbeat_interval
       end
 
-      # Record the timestamp of the last GC run in Redis.
-      #
-      # The timestamp is stored with a TTL slightly longer than the heartbeat
-      # interval to coordinate GC execution across multiple processes.
+      # Records the time of the last garbage collection run in Redis so that
+      # processes can coordinate their runs. The record expires a little after
+      # one heartbeat interval.
       #
       # @return [void]
       def record_gc_run
@@ -600,12 +628,12 @@ module PatientHttp
         end
       end
 
-      # Find and re-enqueue orphaned requests.
+      # Finds orphaned requests and re-enqueues their jobs.
       #
-      # @param orphan_threshold_seconds [Numeric] age threshold for considering a request orphaned
-      # @param logger [Logger] logger for output
-      #
-      # @return [Integer] number of orphaned requests re-enqueued
+      # @param orphan_threshold_seconds [Numeric] The number of seconds without
+      #   a heartbeat after which a request is orphaned.
+      # @param logger [Logger, nil] The logger.
+      # @return [Integer] The number of requests re-enqueued.
       def cleanup_orphaned_requests(orphan_threshold_seconds, logger)
         threshold_timestamp_ms = calculate_threshold_timestamp(orphan_threshold_seconds)
         orphaned_requests = fetch_orphaned_requests(threshold_timestamp_ms)
@@ -617,20 +645,21 @@ module PatientHttp
 
       private
 
-      # Calculate threshold timestamp in milliseconds for orphan detection.
+      # Returns the heartbeat time before which a request is orphaned.
       #
-      # @param orphan_threshold_seconds [Numeric] age threshold in seconds
-      #
-      # @return [Integer] threshold timestamp in milliseconds
+      # @param orphan_threshold_seconds [Numeric] The threshold in seconds.
+      # @return [Integer] The time in milliseconds since the epoch.
       def calculate_threshold_timestamp(orphan_threshold_seconds)
         ((Time.now.to_f - orphan_threshold_seconds) * 1000).round
       end
 
-      # Fetch orphaned request IDs and their job payloads.
+      # Returns the IDs and job payloads of orphaned requests. Skips requests
+      # from processes that are still alive.
       #
-      # @param threshold_timestamp_ms [Integer] threshold timestamp in milliseconds
-      #
-      # @return [Array<Array(String, String)>] array of [request_id, job_payload] pairs
+      # @param threshold_timestamp_ms [Integer] The heartbeat time, in
+      #   milliseconds since the epoch, before which a request is orphaned.
+      # @return [Array<Array(String, String)>] The [request_id, job_payload]
+      #   pairs.
       def fetch_orphaned_requests(threshold_timestamp_ms)
         # Find all requests older than the threshold
         all_orphaned_request_ids = PatientHttp::Sidekiq.redis do |redis|
@@ -655,18 +684,17 @@ module PatientHttp
         orphaned_request_ids.zip(job_payloads).reject { |_id, payload| payload.nil? }
       end
 
-      # Determine which of the given process IDs belong to live processes,
-      # removing dead ones from the process set.
+      # Returns the process IDs that belong to live processes, and removes dead
+      # processes from the process set.
       #
-      # Membership in the process set alone doesn't prove liveness: a crashed
-      # process never removes itself from the set. A process is only considered
-      # live if its max_connections key (refreshed on every heartbeat with a
-      # short TTL) still exists. Stale members are removed from the set so
-      # their inflight requests can be recovered.
+      # Membership in the process set doesn't prove that a process is alive,
+      # because a crashed process never removes itself. A process is alive only
+      # if its capacity key still exists. Every heartbeat refreshes the key,
+      # which has a short TTL. Removing dead processes from the set lets their
+      # in-flight requests be recovered.
       #
-      # @param process_ids [Array<String>] candidate process IDs
-      #
-      # @return [Array<String>] the subset of process IDs that are live
+      # @param process_ids [Array<String>] The process IDs to check.
+      # @return [Array<String>] The IDs of live processes.
       def prune_stale_processes(process_ids)
         registered_ids = PatientHttp::Sidekiq.redis do |redis|
           redis.smembers(PROCESS_SET_KEY)
@@ -691,17 +719,18 @@ module PatientHttp
         live_process_ids
       end
 
-      # Re-enqueue all orphaned jobs.
+      # Re-enqueues the jobs of orphaned requests.
       #
-      # Ids are processed in batches: each batch is atomically checked and
-      # removed in one Lua call, then the removed jobs are pushed back to
-      # Sidekiq one by one (preserving each job's class, queue, and jid).
+      # The IDs are processed in batches. One Lua call checks and removes each
+      # batch atomically. Then each removed job is pushed to Sidekiq with its
+      # original class, queue, and job ID.
       #
-      # @param orphaned_requests [Array<Array(String, String)>] array of [request_id, job_payload] pairs
-      # @param threshold_timestamp_ms [Integer] threshold timestamp in milliseconds
-      # @param logger [Logger] logger for output
-      #
-      # @return [Integer] number of jobs successfully re-enqueued
+      # @param orphaned_requests [Array<Array(String, String)>] The
+      #   [request_id, job_payload] pairs.
+      # @param threshold_timestamp_ms [Integer] The heartbeat time, in
+      #   milliseconds since the epoch, before which a request is orphaned.
+      # @param logger [Logger, nil] The logger.
+      # @return [Integer] The number of jobs re-enqueued.
       def reenqueue_orphaned_jobs(orphaned_requests, threshold_timestamp_ms, logger)
         reenqueued_count = 0
         # Payloads read before the script ran, used when the jobs hash entry
@@ -734,15 +763,15 @@ module PatientHttp
         reenqueued_count
       end
 
-      # Atomically check a batch of ids and remove the ones still orphaned.
+      # Removes the requests in a batch that are still orphaned. A Lua script
+      # checks and removes each request atomically, so a heartbeat can't
+      # update a request between the check and the removal.
       #
-      # Uses a Lua script so the check and removal happen in a single atomic
-      # operation, preventing race conditions with heartbeat updates.
-      #
-      # @param request_ids [Array<String>] the request IDs to check
-      # @param threshold_timestamp_ms [Integer] threshold timestamp in milliseconds
-      #
-      # @return [Array<String>] flat array of [request_id, job_payload, ...] pairs
+      # @param request_ids [Array<String>] The request IDs to check.
+      # @param threshold_timestamp_ms [Integer] The heartbeat time, in
+      #   milliseconds since the epoch, before which a request is orphaned.
+      # @return [Array<String, nil>] A flat Array of request ID and job payload
+      #   pairs.
       def remove_if_orphaned(request_ids, threshold_timestamp_ms)
         PatientHttp::Sidekiq.redis do |redis|
           run_script(
@@ -755,16 +784,15 @@ module PatientHttp
         end
       end
 
-      # Run a Lua script by its SHA, falling back to a full EVAL (which also
-      # loads the script into the server's cache) when the server does not
-      # know the script yet.
+      # Runs a Lua script by its SHA1 digest. If the server doesn't have the
+      # script cached, runs the full script with EVAL, which also caches it.
       #
-      # @param redis [Object] the Redis connection
-      # @param script [String] the Lua source
-      # @param sha [String] the precomputed SHA1 of the source
-      # @param keys [Array<String>] script KEYS
-      # @param argv [Array<String>] script ARGV
-      # @return [Object] the script's return value
+      # @param redis [Object] The Redis connection.
+      # @param script [String] The Lua source.
+      # @param sha [String] The SHA1 digest of the source.
+      # @param keys [Array<String>] The script KEYS.
+      # @param argv [Array<String>] The script ARGV.
+      # @return [Object] The return value of the script.
       def run_script(redis, script, sha, keys, argv)
         redis.call("EVALSHA", sha, keys.size, *keys, *argv)
       rescue RedisClient::CommandError => e
@@ -773,13 +801,15 @@ module PatientHttp
         redis.call("EVAL", script, keys.size, *keys, *argv)
       end
 
-      # Build the serialized details recorded for a request, or nil when the
-      # details are turned off or cannot be built. A failure here must not stop
-      # the request from being registered, so it is logged and skipped.
+      # Returns the serialized details to record for a request. A failure here
+      # must not stop the request from being registered, so the failure is
+      # logged and the details are skipped.
       #
-      # @param task [RequestTask] the request task
-      # @param processor_name [Symbol, String, nil] the processor running the request
-      # @return [String, nil] the serialized details
+      # @param task [PatientHttp::RequestTask] The request task.
+      # @param processor_name [Symbol, String, nil] The name of the processor
+      #   that runs the request.
+      # @return [String, nil] The serialized details, or `nil` if the
+      #   `inflight_details` option is off or the details can't be built.
       def request_details(task, processor_name)
         return nil unless config.inflight_details?
 
@@ -796,48 +826,50 @@ module PatientHttp
         nil
       end
 
-      # The URL to record for a request, sanitized and bounded in length.
+      # Returns the URL to record for a request, sanitized and truncated to
+      # MAX_DISPLAY_URL_LENGTH.
       #
-      # @param url [String] the request URL
-      # @return [String] the URL to display
+      # @param url [String] The request URL.
+      # @return [String] The URL to display.
       def display_url(url)
         sanitizer = config.inflight_url_sanitizer
         sanitized = sanitizer ? sanitizer.call(url) : self.class.sanitize_url(url)
         sanitized.to_s[0, MAX_DISPLAY_URL_LENGTH]
       end
 
-      # Calculate the TTL for inflight data structures.
-      # Should be significantly longer than the orphan threshold.
+      # Returns the TTL for the in-flight registry keys. The TTL is much longer
+      # than the orphan threshold.
       #
-      # @return [Integer] TTL in seconds
+      # @return [Integer] The TTL in seconds.
       def inflight_ttl
         # Set to 3x the orphan threshold, with a minimum of 1 hour
         [config.orphan_threshold * 3, 3600].max.round
       end
 
-      # Calculate the TTL for the garbage collection lock.
-      # Should be a bit longer than the heartbeat interval.
+      # Returns the TTL for the garbage collection lock. The TTL is longer than
+      # the heartbeat interval.
       #
-      # @return [Integer] TTL in seconds
+      # @return [Integer] The TTL in seconds.
       def gc_lock_ttl
         # Set to 2x the heartbeat interval, with a minimum of 120 seconds
         [config.heartbeat_interval * 2, 120].max
       end
 
-      # Calculate the TTL for the last GC run timestamp.
-      # Should be a bit longer than the heartbeat interval to ensure
-      # proper coordination across processes.
+      # Returns the TTL for the last garbage collection run record. The TTL is
+      # a little longer than the heartbeat interval so that processes can
+      # coordinate their runs.
       #
-      # @return [Integer] TTL in seconds
+      # @return [Integer] The TTL in seconds.
       def gc_last_run_ttl
         # Set to 1.5x the heartbeat interval
         (config.heartbeat_interval * 1.5).round
       end
 
-      # Calculate the TTL for the process max_connections key.
-      # Must be longer than heartbeat_interval so the key survives between heartbeats.
+      # Returns the TTL for a process's capacity key. The TTL is longer than
+      # the heartbeat interval so that the key lasts from one heartbeat to the
+      # next.
       #
-      # @return [Integer] TTL in seconds
+      # @return [Integer] The TTL in seconds.
       def process_ttl
         # Set to 2x the heartbeat interval so the key survives between heartbeats
         config.heartbeat_interval * 2
@@ -855,10 +887,11 @@ module PatientHttp
         "#{PROCESS_SET_KEY}:#{@lock_identifier}:processors"
       end
 
-      # Serialize a per-processor snapshot for publication.
+      # Serializes a per-processor snapshot for publication.
       #
-      # @param snapshot [Hash] processor name => { inflight:, max_capacity: }
-      # @return [String] the serialized snapshot
+      # @param snapshot [Hash{Symbol => Hash}] The `:inflight` and
+      #   `:max_capacity` counts, keyed by processor name.
+      # @return [String] The serialized snapshot.
       def serialize_processor_snapshot(snapshot)
         JSON.generate(
           snapshot.each_with_object({}) do |(name, counts), hash|

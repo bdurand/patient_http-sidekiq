@@ -3,26 +3,27 @@
 module PatientHttp
   module Sidekiq
     # Processor observer that records stats and maintains the crash-recovery
-    # registry for one processor. The stats aggregator and task monitor are
-    # shared across all processors in the process; the module owns them and
-    # the monitor thread.
+    # registry for one processor. All processors in a process share the stats
+    # aggregator and the task monitor. The PatientHttp::Sidekiq module owns
+    # them and the monitor thread.
     #
-    # Tasks are registered in the crash-recovery registry when the processor
-    # accepts them, before Processor#enqueue returns, so a request always has
-    # a durable record from the moment the caller hands it off. The entry is
-    # removed when the request completes or when a Sidekiq job owns the
-    # request again (the task was rejected or re-enqueued). When result
-    # delivery fails (completion_failed), the entry is kept so the orphan
-    # collector re-enqueues the request instead of losing it, unless the
-    # failure is one that trying again cannot fix; see
-    # +UNDELIVERABLE_RESULT_ERRORS+.
+    # The observer adds a request to the crash-recovery registry when the
+    # processor accepts it, before Processor#enqueue returns. As a result, a
+    # request has a durable record from the moment the caller hands it off.
+    # The observer removes the record when the request finishes, or when a
+    # Sidekiq job owns the request again because the request was rejected or
+    # re-enqueued.
+    #
+    # If a result can't be delivered, the observer keeps the record so that the
+    # orphan collector re-enqueues the request. The exception is a failure that
+    # a retry can't fix; see UNDELIVERABLE_RESULT_ERRORS.
     class ProcessorObserver < PatientHttp::ProcessorObserver
-      # Delivery failures that mean the result can never be delivered: the
-      # payload cannot be serialized, so every re-enqueue would end the same
-      # way. A request that fails with one of these is moved to the Sidekiq
-      # dead set instead of being kept for crash recovery. Every other failure
-      # is treated as temporary (Redis unavailable, for example) and keeps its
-      # crash-recovery record.
+      # Errors that mean a result can never be delivered because the payload
+      # can't be serialized. Every re-enqueue would fail the same way, so the
+      # request's job moves to the Sidekiq dead set instead of staying in the
+      # crash-recovery registry. Any other delivery failure, such as Redis
+      # being unavailable, is treated as temporary, and the crash-recovery
+      # record is kept.
       UNDELIVERABLE_RESULT_ERRORS = [
         JSON::GeneratorError,
         Encoding::UndefinedConversionError,
@@ -30,8 +31,14 @@ module PatientHttp
         Encoding::CompatibilityError
       ].freeze
 
+      # @return [TaskMonitor] The in-flight request registry.
       attr_reader :task_monitor
 
+      # Creates an observer for a processor.
+      #
+      # @param processor [PatientHttp::Processor] The processor to observe.
+      # @param stats [Stats] The stats aggregator.
+      # @param task_monitor [TaskMonitor] The in-flight request registry.
       def initialize(processor, stats:, task_monitor:)
         @processor = processor
         @stats = stats
@@ -41,19 +48,38 @@ module PatientHttp
         @requeued_mutex = Mutex.new
       end
 
+      # Records that the processor refused a request because it was at
+      # capacity.
+      #
+      # @return [void]
       def capacity_exceeded
         @stats.record_capacity_exceeded(processor_name: @processor_name)
       end
 
+      # Adds a request to the crash-recovery registry and records the
+      # processor's in-flight high-water mark.
+      #
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @return [void]
       def request_enqueued(request_task)
         task_monitor.register(request_task, processor_name: @processor_name)
         @stats.record_inflight_peak(inflight_after_enqueue, processor_name: @processor_name)
       end
 
+      # Removes a rejected request from the crash-recovery registry. A Sidekiq
+      # job owns the request again.
+      #
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @return [void]
       def request_rejected(request_task)
         task_monitor.unregister(request_task)
       end
 
+      # Removes a re-enqueued request from the crash-recovery registry. A
+      # Sidekiq job owns the request again.
+      #
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @return [void]
       def request_requeued(request_task)
         task_monitor.unregister(request_task)
         # The re-enqueue path fires request_end after request_requeued, but
@@ -66,6 +92,11 @@ module PatientHttp
         @requeued_mutex.synchronize { @requeued_task_ids << request_task.id }
       end
 
+      # Removes a finished request from the crash-recovery registry and records
+      # its stats.
+      #
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @return [void]
       def request_end(request_task)
         requeued = @requeued_mutex.synchronize { @requeued_task_ids.delete?(request_task.id) }
         return if requeued
@@ -74,11 +105,23 @@ module PatientHttp
         @stats.record_request(request_task.response&.status, request_task.duration, processor_name: @processor_name)
       end
 
+      # Records a request error.
+      #
+      # @param error [PatientHttp::Error, Exception] The error.
+      # @return [void]
       def request_error(error)
         error_type = error.is_a?(PatientHttp::Error) ? error.error_type : :exception
         @stats.record_error(error_type, processor_name: @processor_name)
       end
 
+      # Handles a failure to deliver a request's result. If the result can
+      # never be delivered, moves the request's job to the Sidekiq dead set.
+      # Otherwise, keeps the crash-recovery record so that the orphan collector
+      # re-enqueues the request.
+      #
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @param error [Exception] The delivery failure.
+      # @return [void]
       def completion_failed(request_task, error)
         if undeliverable_result?(error) && kill_job(request_task, error)
           # The request itself finished and nothing will deliver its result,
@@ -104,25 +147,26 @@ module PatientHttp
 
       private
 
-      # The number of requests the processor holds once it accepts the request
-      # being announced. The count only rises when a request is accepted, so
-      # sampling it here catches every high-water mark.
+      # Returns the number of requests that the processor holds after it
+      # accepts the request being announced. The count rises only when a
+      # request is accepted, so sampling it here catches every high-water mark.
       #
-      # The announcement is made before the task is counted, so the task itself
-      # is added. A task announced when the processor is already full is
-      # rejected right after, so the count is held to the processor's capacity.
+      # The announcement comes before the processor counts the request, so this
+      # method adds the request itself. If the processor is already full, it
+      # rejects the request right after the announcement, so the count is
+      # capped at the processor's capacity.
       #
-      # @return [Integer]
+      # @return [Integer] The number of requests.
       def inflight_after_enqueue
         [@processor.total_count + 1, @processor.config.max_connections].min
       end
 
-      # Whether an error means the result can never be delivered. The cause
-      # chain is examined as well, because the failure is usually raised while
-      # the result is being written to Redis.
+      # Returns whether an error means the result can never be delivered. Also
+      # checks the chain of causes, because the failure usually occurs while
+      # the result is written to Redis.
       #
-      # @param error [Exception] the delivery failure
-      # @return [Boolean]
+      # @param error [Exception] The delivery failure.
+      # @return [Boolean] `true` if the result can never be delivered.
       def undeliverable_result?(error)
         while error
           return true if UNDELIVERABLE_RESULT_ERRORS.any? { |error_class| error.is_a?(error_class) }
@@ -133,17 +177,17 @@ module PatientHttp
         false
       end
 
-      # Move a request's job to the Sidekiq dead set, where it can be
-      # inspected and retried by hand.
+      # Moves a request's job to the Sidekiq dead set, where you can inspect it
+      # and retry it by hand.
       #
-      # Sidekiq's API is loaded on demand because loading it eagerly fails on
-      # some supported Sidekiq versions. A job that cannot be moved reports
-      # false, so the caller keeps the crash-recovery record rather than
+      # The Sidekiq API loads on demand, because loading it at startup fails on
+      # some supported Sidekiq versions. If the job can't be moved, returns
+      # `false` so that the caller keeps the crash-recovery record instead of
       # dropping the request.
       #
-      # @param request_task [RequestTask] the request task
-      # @param error [Exception] the delivery failure
-      # @return [Boolean] whether the job was moved
+      # @param request_task [PatientHttp::RequestTask] The request task.
+      # @param error [Exception] The delivery failure.
+      # @return [Boolean] `true` if the job was moved.
       def kill_job(request_task, error)
         require "sidekiq/api"
 
@@ -157,14 +201,14 @@ module PatientHttp
         false
       end
 
-      # Build the job record for the dead set. The failure fields are the ones
-      # Sidekiq writes when a job dies on its own, so the entry reads the same
-      # in the Web UI. A directly executed request has no job id yet, so it is
-      # given one; the Web UI identifies dead entries by it.
+      # Builds the job record for the dead set. The record has the same
+      # failure fields that Sidekiq writes when a job dies, so the entry looks
+      # the same in the Web UI. A request that ran directly has no job ID, so
+      # this method assigns one. The Web UI identifies dead entries by job ID.
       #
-      # @param job [Hash] the Sidekiq job hash
-      # @param error [Exception] the delivery failure
-      # @return [Hash] the job record to store
+      # @param job [Hash] The Sidekiq job Hash.
+      # @param error [Exception] The delivery failure.
+      # @return [Hash] The job record.
       def dead_job(job, error)
         job.merge(
           "jid" => job["jid"] || SecureRandom.hex(12),
@@ -174,12 +218,12 @@ module PatientHttp
         )
       end
 
-      # An error message that is safe to serialize and to log. A message that
-      # reports a byte the result could not be serialized with holds that byte
-      # itself, which would fail the same way the result did.
+      # Returns an error message that is safe to serialize and log. The message
+      # for a serialization failure can include the invalid byte, which would
+      # fail the same way that the result did.
       #
-      # @param error [Exception] the error
-      # @return [String] the message with any invalid bytes replaced
+      # @param error [Exception] The error.
+      # @return [String] The message, with invalid bytes replaced.
       def error_message(error)
         message = error.message.to_s
         message = message.dup.force_encoding(Encoding::UTF_8) if message.encoding == Encoding::BINARY

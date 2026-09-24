@@ -2,22 +2,29 @@
 
 module PatientHttp
   module Sidekiq
-    # Provides thread-safe context for Sidekiq jobs.
+    # Stores the current Sidekiq job for each thread.
     #
-    # This class manages the current Sidekiq job context using a thread-id keyed hash,
-    # allowing async HTTP requests to access job information without it being passed explicitly.
-    # Only RequestWorker needs this context for re-enqueueing jobs.
+    # Code that runs in a job reads the job from this class instead of
+    # receiving it as an argument. RequestWorker uses the job to re-enqueue a
+    # request.
     class Context
-      # Thread-safe hash keyed by thread object_id
+      # The current job for each thread, keyed by thread object ID.
       @jobs = Concurrent::Map.new
 
-      # Sidekiq server middleware that sets the current job context.
+      # Sidekiq server middleware that sets the current job.
       #
-      # This middleware only activates for RequestWorker, which is the only
-      # worker that needs access to the job context for re-enqueueing.
+      # The middleware sets the job only for RequestWorker jobs, because no
+      # other worker needs it.
       class Middleware
         include ::Sidekiq::ServerMiddleware
 
+        # Runs a job. Sets it as the current job if it's a RequestWorker job.
+        #
+        # @param worker [Object] The worker instance.
+        # @param job [Hash] The Sidekiq job Hash.
+        # @param queue [String] The queue name.
+        # @yield The block that runs the job.
+        # @return [Object] The return value of the block.
         def call(worker, job, queue)
           # Only set context for RequestWorker (the only worker that needs it)
           if job["class"] == PatientHttp::Sidekiq::RequestWorker.name
@@ -31,18 +38,18 @@ module PatientHttp
       end
 
       class << self
-        # Returns the current Sidekiq job hash from context.
+        # Returns the current Sidekiq job for this thread.
         #
-        # @return [Hash, nil] the current job hash or nil if no job context is set
+        # @return [Hash, nil] The job Hash, or `nil` if no job is set.
         def current_job
           @jobs[Thread.current.object_id]
         end
 
-        # Sets the current job context for the duration of the block.
+        # Sets the current job for the duration of a block.
         #
-        # @param job [Hash] the Sidekiq job hash
-        # @yield executes the block with the job context set
-        # @return [Object] the return value of the block
+        # @param job [Hash] The Sidekiq job Hash.
+        # @yield The block to run.
+        # @return [Object] The return value of the block.
         def with_job(job)
           thread_id = Thread.current.object_id
           previous_job = @jobs[thread_id]

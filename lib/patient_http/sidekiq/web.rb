@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# This file exists so that the require path for the web UI can match the
-# file path in sidekiq itself: `require "patient_http/sidekiq/web"`
+# Loads the Sidekiq Web UI extension. The require path,
+# `patient_http/sidekiq/web`, matches the path of Sidekiq's own `sidekiq/web`.
 
 require_relative "web_ui"

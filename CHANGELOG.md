@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.0
+
+### Added
+
+- Install generator: `rails generate patient_http:sidekiq:install` writes a commented `config/initializers/patient_http.rb` covering the options applications actually set. It is a convenience, not an install step, since the gem works with no initializer at all.
+
+### Changed
+
+- **No setup call is required.** The request handler is registered when the gem is loaded, so `PatientHttp.get` and the other request methods work in every process that requires the gem, configured or not. Previously `PatientHttp::Sidekiq.configure` or `register_handler` had to be called first or requests raised, which made a missing or unloaded initializer fail at dispatch time.
+- `PatientHttp.configure` and `PatientHttp.configuration` resolve to this gem's configuration, so application code never has to name the integration to configure it. `PatientHttp::Sidekiq.configure` remains equivalent.
+- **`configure` now accumulates instead of replacing.** It yields the one configuration object for the process rather than building a new one each time, so several initializers can each contribute options and a second call no longer discards what an earlier one registered. Code that relied on `configure` resetting the configuration should call `reset_configuration!` first.
+- The configuration is created on first use and published to `PatientHttp` at that moment. Previously it was published only inside `configure`, so a process that started a processor without calling `configure` never received module level secrets registered with `PatientHttp.register_secret`.
+- The request handler stays registered for the life of the process. `stop` no longer unregisters it, so a request made while the process is shutting down is enqueued to Redis for another process to run instead of raising.
+- The default `shutdown_timeout` and `logger` are read from Sidekiq when they're used instead of when the configuration is built, so Sidekiq settings made in a later initializer, such as a `Sidekiq.configure_server` block, apply.
+- `payload_store_threshold` moved to `PatientHttp::Configuration`, next to `register_payload_store`. It is inherited, so `config.payload_store_threshold` is unchanged. `PatientHttp::Sidekiq::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD` now points at the base gem's constant and is deprecated.
+- A request that names a processor profile that isn't declared in the process making the request raises `PatientHttp::UnknownProcessorError` instead of being enqueued. The profile's `raise_error_responses` and `payload_store_threshold` options are applied when the request is enqueued, so a request enqueued from a process without the profile used the base options. Declare processor profiles in every process that makes requests.
+- `config.processor(name)` with no options declares the profile with every option taken from the base configuration, and declaring a profile again replaces its options. Previously a call with no options returned the profile's options and declared nothing. Use `config.processor_options(name)` to read a profile's options.
+- Minimum Ruby version is 3.3.
+
+### Fixed
+
+- `config.raise_error_responses = true` now applies to requests made through the `PatientHttp` module methods. Those methods pass `nil` when the caller does not ask for a specific behavior, and `execute` treated `nil` as `false` instead of falling back to the configuration, so a non-2xx response was delivered to `on_complete` rather than `on_error`. An explicit `raise_error_responses:` argument still wins. Jobs already enqueued without the option also fall back to the configuration of the processor that runs them.
+- A processor profile's `payload_store_threshold` override applies to requests routed to that profile. Previously the request payload and the callback result used the base configuration's `payload_store_threshold`, whatever processor ran the request.
+
 ## 1.4.1
 
 ### Fixed

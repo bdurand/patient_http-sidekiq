@@ -40,7 +40,7 @@ jobs:
             appraisal: "sidekiq_7"
           - ruby: "3.3"
             appraisal: "sidekiq_7.3.4"
-          - ruby: "3.2"
+          - ruby: "3.3"
             appraisal: "sidekiq_7.0"
     steps:
       - name: Checkout
