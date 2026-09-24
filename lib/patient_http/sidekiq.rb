@@ -309,12 +309,6 @@ module PatientHttp
         PatientHttp::CallbackValidator.validate!(callback)
         callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
-        # The PatientHttp module methods pass nil when the caller did not ask for a
-        # specific behavior, so fall back to the configured default the same way the
-        # inline handler in the base gem does.
-        if raise_error_responses.nil?
-          raise_error_responses = configuration.raise_error_responses
-        end
         request_id = SecureRandom.uuid
 
         request_json = request.as_json
@@ -328,6 +322,14 @@ module PatientHttp
 
         options = current_sidekiq_options
         processor_name = resolve_processor_name(processor, request, options)
+        # The PatientHttp module methods pass nil when the caller did not ask for a
+        # specific behavior, so fall back to the configured default for the processor
+        # the request is routed to, the same way the inline handler in the base gem does.
+        if raise_error_responses.nil?
+          config = configuration
+          config = config.processor_config(processor_name) if config.processor(processor_name)
+          raise_error_responses = config.raise_error_responses
+        end
         if options&.any?
           options = options.except("processor")
           queue = options["queue"]
