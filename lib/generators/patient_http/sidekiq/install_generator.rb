@@ -13,7 +13,7 @@ module PatientHttp
 
       desc "Creates a commented config/initializers/patient_http.rb for patient_http-sidekiq."
 
-      # Creates +config/initializers/patient_http.rb+ from the template.
+      # Creates `config/initializers/patient_http.rb` from the template.
       #
       # @return [void]
       def create_initializer

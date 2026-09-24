@@ -14,12 +14,12 @@ module PatientHttp
     # orphaned requests.
     #
     # Each entry has a registry ID in the format
-    # <tt>hostname:pid:hex/request-uuid</tt>:
+    # `hostname:pid:hex/request-uuid`:
     #
-    # - +hostname+: The host name, with colons and slashes replaced by dashes.
-    # - +pid+: The process ID.
-    # - +hex+: 16 random hex characters that make the ID unique.
-    # - +request-uuid+: The request ID.
+    # - `hostname`: The host name, with colons and slashes replaced by dashes.
+    # - `pid`: The process ID.
+    # - `hex`: 16 random hex characters that make the ID unique.
+    # - `request-uuid`: The request ID.
     class TaskMonitor
       # Redis key for the sorted set of in-flight request IDs, scored by
       # heartbeat time.
@@ -143,10 +143,10 @@ module PatientHttp
         # with its heartbeat. They cover only running processes and can be up
         # to one monitor pass old.
         #
-        # @return [Hash{String => Hash}] The counts, keyed by +hostname:pid+.
-        #   Each value has +:inflight+, +:max_capacity+, and +:processors+
-        #   keys. The +:processors+ value has the +:inflight+ and
-        #   +:max_capacity+ counts, keyed by processor name.
+        # @return [Hash{String => Hash}] The counts, keyed by `hostname:pid`.
+        #   Each value has `:inflight`, `:max_capacity`, and `:processors`
+        #   keys. The `:processors` value has the `:inflight` and
+        #   `:max_capacity` counts, keyed by processor name.
         def inflight_counts_by_process
           process_ids = nil
           max_connections = nil
@@ -204,8 +204,8 @@ module PatientHttp
         # across all running processes.
         #
         # @param processes [Hash, nil] The result of
-        #   {inflight_counts_by_process}. If +nil+, reads the counts from Redis.
-        # @return [Hash{String => Hash}] The +:inflight+ and +:max_capacity+
+        #   {inflight_counts_by_process}. If `nil`, reads the counts from Redis.
+        # @return [Hash{String => Hash}] The `:inflight` and `:max_capacity`
         #   counts, keyed by processor name.
         def inflight_counts_by_processor(processes = nil)
           processes ||= inflight_counts_by_process
@@ -221,15 +221,15 @@ module PatientHttp
         # longest.
         #
         # The result includes only requests registered while the
-        # +inflight_details+ option was enabled. A request stays listed while
+        # `inflight_details` option was enabled. A request stays listed while
         # its crash-recovery record exists. As a result, a request left behind
         # by a process that died stays listed until the orphan collector
         # re-enqueues it.
         #
         # @param limit [Integer] The maximum number of requests to return.
         # @return [Array<Hash>] The requests, oldest first. Each Hash has
-        #   +:request_id+, +:process_id+, +:url+, +:http_method+, +:processor+,
-        #   and +:age+ keys. The +:age+ value is in seconds.
+        #   `:request_id`, `:process_id`, `:url`, `:http_method`, `:processor`,
+        #   and `:age` keys. The `:age` value is in seconds.
         def inflight_details(limit: 50)
           return [] if limit <= 0
 
@@ -265,7 +265,7 @@ module PatientHttp
 
         # Removes the user name, password, query string, and fragment from a
         # URL, and keeps the scheme, host, and path. Used when the
-        # +inflight_url_sanitizer+ option isn't set.
+        # `inflight_url_sanitizer` option isn't set.
         #
         # @param url [String] The request URL.
         # @return [String] The URL to display.
@@ -286,7 +286,7 @@ module PatientHttp
 
         # Returns the total capacity of all running processes.
         #
-        # @return [Integer] The sum of +max_connections+ across all running
+        # @return [Integer] The sum of `max_connections` across all running
         #   processes.
         def total_max_connections
           inflight_counts_by_process.values.sum { |data| data[:max_capacity] }
@@ -349,7 +349,7 @@ module PatientHttp
         # Parses a stored details record.
         #
         # @param record [String, nil] The serialized record.
-        # @return [Hash, nil] The parsed record, or +nil+ if the record can't be
+        # @return [Hash, nil] The parsed record, or `nil` if the record can't be
         #   parsed.
         def parse_details(record)
           return nil if record.nil?
@@ -408,11 +408,11 @@ module PatientHttp
       #
       # @param config [Configuration] The gem configuration.
       # @param max_connections [#call, nil] A callable that returns the
-      #   process's total +max_connections+. If +nil+, uses the configuration
-      #   value. Ignored when +processors+ is set, because the snapshot has the
+      #   process's total `max_connections`. If `nil`, uses the configuration
+      #   value. Ignored when `processors` is set, because the snapshot has the
       #   same information for each processor.
       # @param processors [#call, nil] A callable that returns a snapshot of
-      #   the process's processors: the +:inflight+ and +:max_capacity+ counts,
+      #   the process's processors: the `:inflight` and `:max_capacity` counts,
       #   keyed by processor name. The snapshot is published with each
       #   heartbeat so that the Web UI can report capacity for each processor.
       def initialize(config, max_connections: nil, processors: nil)
@@ -510,7 +510,7 @@ module PatientHttp
       # Returns whether a request is in the registry.
       #
       # @param task [PatientHttp::RequestTask] The request task.
-      # @return [Boolean] +true+ if the request is registered.
+      # @return [Boolean] `true` if the request is registered.
       # @api private
       def registered?(task)
         PatientHttp::Sidekiq.redis do |redis|
@@ -522,7 +522,7 @@ module PatientHttp
       #
       # @param task [PatientHttp::RequestTask] The request task.
       # @return [Integer, nil] The time in milliseconds since the epoch, or
-      #   +nil+ if the request isn't registered.
+      #   `nil` if the request isn't registered.
       # @api private
       def heartbeat_timestamp_for(task)
         score = PatientHttp::Sidekiq.redis do |redis|
@@ -581,7 +581,7 @@ module PatientHttp
 
       # Tries to get the distributed garbage collection lock.
       #
-      # @return [Boolean] +true+ if this process got the lock.
+      # @return [Boolean] `true` if this process got the lock.
       def acquire_gc_lock
         PatientHttp::Sidekiq.redis do |redis|
           # Use SET with NX and EX options directly
@@ -593,7 +593,7 @@ module PatientHttp
       # Releases the garbage collection lock if this process holds it. A Lua
       # script checks and deletes the lock atomically in one round trip.
       #
-      # @return [Boolean] +true+ if the lock was released.
+      # @return [Boolean] `true` if the lock was released.
       def release_gc_lock
         result = PatientHttp::Sidekiq.redis do |redis|
           run_script(redis, RELEASE_LOCK_SCRIPT, RELEASE_LOCK_SHA, [GC_LOCK_KEY], [@lock_identifier])
@@ -605,7 +605,7 @@ module PatientHttp
       # no run is recorded or if one heartbeat interval has passed since the
       # last run.
       #
-      # @return [Boolean] +true+ if garbage collection is due.
+      # @return [Boolean] `true` if garbage collection is due.
       def gc_needed?
         last_run = PatientHttp::Sidekiq.redis do |redis|
           redis.get(GC_LAST_RUN_KEY)
@@ -808,8 +808,8 @@ module PatientHttp
       # @param task [PatientHttp::RequestTask] The request task.
       # @param processor_name [Symbol, String, nil] The name of the processor
       #   that runs the request.
-      # @return [String, nil] The serialized details, or +nil+ if the
-      #   +inflight_details+ option is off or the details can't be built.
+      # @return [String, nil] The serialized details, or `nil` if the
+      #   `inflight_details` option is off or the details can't be built.
       def request_details(task, processor_name)
         return nil unless config.inflight_details?
 
@@ -889,8 +889,8 @@ module PatientHttp
 
       # Serializes a per-processor snapshot for publication.
       #
-      # @param snapshot [Hash{Symbol => Hash}] The +:inflight+ and
-      #   +:max_capacity+ counts, keyed by processor name.
+      # @param snapshot [Hash{Symbol => Hash}] The `:inflight` and
+      #   `:max_capacity` counts, keyed by processor name.
       # @return [String] The serialized snapshot.
       def serialize_processor_snapshot(snapshot)
         JSON.generate(

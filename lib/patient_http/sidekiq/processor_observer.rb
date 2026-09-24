@@ -166,7 +166,7 @@ module PatientHttp
       # the result is written to Redis.
       #
       # @param error [Exception] The delivery failure.
-      # @return [Boolean] +true+ if the result can never be delivered.
+      # @return [Boolean] `true` if the result can never be delivered.
       def undeliverable_result?(error)
         while error
           return true if UNDELIVERABLE_RESULT_ERRORS.any? { |error_class| error.is_a?(error_class) }
@@ -182,12 +182,12 @@ module PatientHttp
       #
       # The Sidekiq API loads on demand, because loading it at startup fails on
       # some supported Sidekiq versions. If the job can't be moved, returns
-      # +false+ so that the caller keeps the crash-recovery record instead of
+      # `false` so that the caller keeps the crash-recovery record instead of
       # dropping the request.
       #
       # @param request_task [PatientHttp::RequestTask] The request task.
       # @param error [Exception] The delivery failure.
-      # @return [Boolean] +true+ if the job was moved.
+      # @return [Boolean] `true` if the job was moved.
       def kill_job(request_task, error)
         require "sidekiq/api"
 

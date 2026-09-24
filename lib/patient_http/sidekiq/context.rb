@@ -40,7 +40,7 @@ module PatientHttp
       class << self
         # Returns the current Sidekiq job for this thread.
         #
-        # @return [Hash, nil] The job Hash, or +nil+ if no job is set.
+        # @return [Hash, nil] The job Hash, or `nil` if no job is set.
         def current_job
           @jobs[Thread.current.object_id]
         end

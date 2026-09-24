@@ -9,20 +9,20 @@ module PatientHttp
     #   enqueued.
     # - A retry pushes the original Sidekiq job again.
     class TaskHandler < PatientHttp::TaskHandler
-      # @return [Hash] The Sidekiq job Hash, with +class+, +jid+, +args+, and
+      # @return [Hash] The Sidekiq job Hash, with `class`, `jid`, `args`, and
       #   other keys. TaskMonitor saves it for crash recovery.
       attr_reader :sidekiq_job
 
       # Creates a task handler for a Sidekiq job.
       #
-      # @param sidekiq_job [Hash] The Sidekiq job Hash, with +class+, +jid+,
-      #   +args+, and other keys.
+      # @param sidekiq_job [Hash] The Sidekiq job Hash, with `class`, `jid`,
+      #   `args`, and other keys.
       def initialize(sidekiq_job)
         @sidekiq_job = sidekiq_job
       end
 
       # Enqueues a CallbackWorker job that calls the callback service's
-      # +on_complete+ method. A large response is written to external storage
+      # `on_complete` method. A large response is written to external storage
       # first.
       #
       # @param response [PatientHttp::Response] The HTTP response.
@@ -37,7 +37,7 @@ module PatientHttp
       end
 
       # Enqueues a CallbackWorker job that calls the callback service's
-      # +on_error+ method. A large error is written to external storage first.
+      # `on_error` method. A large error is written to external storage first.
       #
       # @param error [PatientHttp::Error] The error.
       # @param callback [String] The callback service class name.
@@ -76,7 +76,7 @@ module PatientHttp
       private
 
       # Returns the job class for the callback job. If a queue was set with
-      # +with_sidekiq_options+, returns a job setter that uses that queue.
+      # `with_sidekiq_options`, returns a job setter that uses that queue.
       #
       # @return [Object] CallbackWorker, or a job setter for it.
       def callback_worker
@@ -109,7 +109,7 @@ module PatientHttp
       end
 
       # Encrypts data and writes it to external storage if storage is enabled
-      # and the data is larger than the +payload_store_threshold+ option.
+      # and the data is larger than the `payload_store_threshold` option.
       #
       # @param data [Hash] The data.
       # @return [Hash] The encrypted data, or a reference to it in external

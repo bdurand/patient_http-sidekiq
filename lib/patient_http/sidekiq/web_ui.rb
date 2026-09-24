@@ -30,8 +30,8 @@ module PatientHttp
       class << self
         # Returns the ERB template for the dashboard page.
         #
-        # Sidekiq versions before 8.1 resolve a symbol view name to a +.erb+
-        # file, and later versions resolve it to a +.html.erb+ file. Rendering
+        # Sidekiq versions before 8.1 resolve a symbol view name to a `.erb`
+        # file, and later versions resolve it to a `.html.erb` file. Rendering
         # the template from a string works with every version.
         #
         # @return [String] The template source.

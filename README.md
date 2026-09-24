@@ -108,7 +108,7 @@ The gem enqueues the request as a Sidekiq job, which runs the request on a [Pati
 
 The `response.callback_args` and `error.callback_args` methods return the arguments that you passed with the `callback_args` option.
 
-For other HTTP methods, use `PatientHttp.post`, `PatientHttp.put`, `PatientHttp.patch`, and `PatientHttp.delete`. For the full API reference, see the [patient_http documentation](https://github.com/bdurand/patient_http).
+For other HTTP methods, use `PatientHttp.post`, `PatientHttp.put`, `PatientHttp.patch`, `PatientHttp.delete`, `PatientHttp.head`, and `PatientHttp.query`. For the full API reference, see the [patient_http documentation](https://github.com/bdurand/patient_http).
 
 > [!IMPORTANT]
 > Don't raise an error in `on_error` to retry the request. Sidekiq retries the callback job, not the request. To retry the request, make a new request from `on_error`. Make sure that the retries stop if the error persists, or they can loop forever.
@@ -153,12 +153,14 @@ The methods take these options:
 | `callback:` | Required. The callback service class, or its name. |
 | `callback_args:` | A Hash of arguments that the callback reads from the response or error. See [Callback arguments](#callback-arguments). |
 | `headers:` | The request headers. |
-| `body:` | The request body, for POST, PUT, and PATCH requests. |
+| `body:` | The request body. GET, HEAD, and DELETE requests can't have a body. |
 | `json:` | An object to send as a JSON body. Can't be combined with `body:`. |
 | `params:` | Query parameters to add to the URL. |
 | `timeout:` | The request timeout in seconds. |
 | `raise_error_responses:` | Whether to treat non-2xx responses as errors. See [Handle HTTP error responses](#handle-http-error-responses). |
 | `processor:` | The name of the processor that runs the request. See [Named processors](#named-processors). |
+
+For all options, see the [patient_http documentation](https://github.com/bdurand/patient_http#make-requests).
 
 For more control, build a `PatientHttp::Request` object and pass it to `PatientHttp.execute`:
 
@@ -345,9 +347,11 @@ class ApiService
 end
 ```
 
+If the template doesn't set a `timeout`, the configured `request_timeout` applies.
+
 ### Use the RequestHelper module
 
-For a class that makes many requests, include `PatientHttp::RequestHelper`. The module adds the `async_get`, `async_post`, `async_put`, `async_patch`, and `async_delete` instance methods. To set shared options such as `base_url`, `headers`, and `timeout`, use the `request_template` class method:
+For a class that makes many requests, include `PatientHttp::RequestHelper`. The module adds the `async_get`, `async_head`, `async_post`, `async_put`, `async_patch`, `async_delete`, `async_query`, and `async_request` instance methods. To set shared options such as `base_url`, `headers`, and `timeout`, use the `request_template` class method:
 
 ```ruby
 class NotificationService
@@ -376,7 +380,7 @@ end
 
 The `async_*` methods take the same options as `PatientHttp.get`, `PatientHttp.post`, and the other module methods. Paths are relative to the template's `base_url`.
 
-For the full `RequestHelper` documentation, see the [patient_http documentation](https://github.com/bdurand/patient_http).
+For the full `RequestHelper` documentation, see the [patient_http documentation](https://github.com/bdurand/patient_http#use-the-requesthelper-module).
 
 ### Callback arguments
 
@@ -421,6 +425,7 @@ The `callback_args` value follows these rules:
 - It must be a Hash, or respond to `to_h`, and contain only JSON-native types: `nil`, `true`, `false`, `String`, `Integer`, `Float`, `Array`, and `Hash`.
 - Hash keys are converted to strings, including the keys of nested hashes and of hashes in arrays.
 - You can read the arguments with symbol or string keys: `callback_args[:user_id]` or `callback_args["user_id"]`.
+- Reading a key that isn't set raises a `KeyError`. To get a default value instead, use `callback_args.fetch(:user_id, nil)`.
 
 ### Protect sensitive data
 
@@ -465,6 +470,8 @@ PatientHttp.configure do |config|
   config.decryption(->(bytes) { MyEncryption.decrypt(bytes) })
 end
 ```
+
+To keep API tokens out of the queue entirely, use secrets instead. For secrets, request preprocessors, and payload stores for large payloads, see the [patient_http documentation](https://github.com/bdurand/patient_http#sensitive-and-large-payloads).
 
 ## Configuration
 
@@ -595,11 +602,13 @@ For all options, see the [Configuration](lib/patient_http/sidekiq/configuration.
 - `connection_pool_size`: Sets the maximum number of hosts whose connections are kept open. Increase it if your application calls many different hosts.
 - `connection_timeout`: Limits only the TCP connect and the TLS handshake. Set it to fail fast when a host doesn't answer. It doesn't limit the wait for a response, because `request_timeout` controls the full exchange.
 - `retries`: Sets the number of times to retry a failed request before the gem calls the error callback.
-- `max_response_size`: Limits the size of HTTP responses to prevent high memory use from unexpectedly large responses. Responses are serialized to Redis in Sidekiq jobs, and very large responses can slow Redis down. Text response bodies are compressed to save space in Redis. Binary bodies are Base64 encoded, which increases their size by about 33%.
+- `max_response_size`: Limits the size of HTTP responses to prevent high memory use from unexpectedly large responses. Responses are serialized in Sidekiq job arguments, and very large responses can slow Redis down. Text response bodies are compressed to save space. Binary bodies are Base64 encoded, which increases their size by about 33%.
+- `payload_store_threshold`: Lower this if large payloads slow your queue down. Higher values avoid extra reads and writes to the payload store.
 - `max_connections_per_host`: Limits the sockets open to each host. Make sure that the process file descriptor limit covers `max_connections`, plus idle pooled connections, plus the application's own connections. Raise the limit if needed.
 - `shutdown_timeout`: Must be less than the process supervisor's stop timeout, so that in-flight requests finish before a hard kill. The default is based on Sidekiq's shutdown timeout. If a container orchestrator or init system also stops the process, check its stop timeout as well.
 - `completion_threads`: Increase this when result delivery does heavy work, such as serialization or encryption, and finished requests wait for a thread.
 - `redis_pool_size`: The automatic size covers the gem's own threads. Increase it if a high request rate makes request registration or result delivery wait for a connection.
+- `heartbeat_interval` and `orphan_threshold`: For high-volume workloads, set `heartbeat_interval` as high as your recovery objective allows, while you keep it less than `orphan_threshold`. Fewer heartbeats mean fewer writes to Redis.
 
 > [!WARNING]
 > Don't install `hiredis-client` in processes that run the async processor. The hiredis driver does blocking I/O that doesn't yield to the fiber scheduler. A Redis call on the reactor thread, for example from a custom processor observer, stalls every in-flight HTTP request. The gem logs a warning at startup if it detects the hiredis driver.

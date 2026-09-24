@@ -5,14 +5,14 @@ module PatientHttp
     # Dedicated Redis connection pool for threads that the gem owns.
     #
     # The completion worker threads and the monitor thread have no Sidekiq
-    # capsule, so their <tt>Sidekiq.redis</tt> calls use Sidekiq's small
+    # capsule, so their `Sidekiq.redis` calls use Sidekiq's small
     # internal pool, which has 10 connections and a 1-second checkout timeout.
     # Under load, threads wait on that pool, and checkout timeouts can lose
     # work. This pool uses the application's Sidekiq Redis configuration. It
     # handles all registry writes, stats writes, and job pushes from threads
     # that the gem owns.
     class RedisPool
-      # The minimum pool size when the +redis_pool_size+ option isn't set.
+      # The minimum pool size when the `redis_pool_size` option isn't set.
       DEFAULT_MINIMUM_SIZE = 10
 
       # Creates a pool. The connections open on first use.
@@ -41,12 +41,12 @@ module PatientHttp
       end
 
       # Checks out a connection and yields it. The checkout uses the
-      # +redis_pool_timeout+ option. After a connection failure, runs the block
+      # `redis_pool_timeout` option. After a connection failure, runs the block
       # once more with a new connection, as Sidekiq does.
       #
       # The retry runs the whole block again. If the block isn't idempotent,
       # such as counter increments that the server might already have applied,
-      # pass <tt>retry_on_connection_error: false</tt> and handle the failure.
+      # pass `retry_on_connection_error: false` and handle the failure.
       #
       # @param retry_on_connection_error [Boolean] Whether to run the block
       #   again after a connection failure.
@@ -79,7 +79,7 @@ module PatientHttp
 
       private
 
-      # Returns the pool size. Uses the +redis_pool_size+ option if it's set.
+      # Returns the pool size. Uses the `redis_pool_size` option if it's set.
       # Otherwise, allows one connection for each completion thread plus
       # connections for the monitor thread and request registration, with a
       # minimum of DEFAULT_MINIMUM_SIZE.

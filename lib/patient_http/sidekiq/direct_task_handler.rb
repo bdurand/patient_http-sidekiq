@@ -4,14 +4,14 @@ module PatientHttp
   module Sidekiq
     # Task handler for requests that run directly on a processor in the
     # current process, without a Sidekiq job. Requests made in a
-    # +with_sidekiq_options+ block always go through the queue, so this
+    # `with_sidekiq_options` block always go through the queue, so this
     # handler uses only the default RequestWorker options.
     #
     # A retry enqueues a RequestWorker job with the original arguments, so a
     # direct request behaves the same as an enqueued one when it's retried.
-    # The +sidekiq_job+ Hash is a minimal job record for the crash-recovery
+    # The `sidekiq_job` Hash is a minimal job record for the crash-recovery
     # registry. The record has no job ID because no Sidekiq job exists until
-    # the request is re-enqueued, so +job_id+ returns +nil+.
+    # the request is re-enqueued, so `job_id` returns `nil`.
     class DirectTaskHandler < TaskHandler
       # Creates a task handler for a request that runs directly.
       #
@@ -37,7 +37,7 @@ module PatientHttp
       # TaskMonitor writes the record to Redis. The orphan collector pushes the
       # record to Sidekiq as is, possibly from another process, so the record
       # can't depend on this handler. The record includes the worker options
-      # because <tt>Sidekiq::Client.push</tt> doesn't apply them when +class+ is
+      # because `Sidekiq::Client.push` doesn't apply them when `class` is
       # a String.
       #
       # @return [Hash] The job record.

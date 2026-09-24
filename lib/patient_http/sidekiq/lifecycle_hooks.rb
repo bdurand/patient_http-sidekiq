@@ -6,10 +6,10 @@ module PatientHttp
     #
     # The hooks do the following:
     #
-    # - Start the processors when the Sidekiq server starts (+:startup+ event).
-    # - Drain the processors when Sidekiq receives the TSTP signal (+:quiet+
+    # - Start the processors when the Sidekiq server starts (`:startup` event).
+    # - Drain the processors when Sidekiq receives the TSTP signal (`:quiet`
     #   event).
-    # - Stop the processors when the Sidekiq server shuts down (+:shutdown+
+    # - Stop the processors when the Sidekiq server shuts down (`:shutdown`
     #   event).
     class LifecycleHooks
       @registered = false

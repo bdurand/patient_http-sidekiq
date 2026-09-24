@@ -6,7 +6,7 @@ module PatientHttp
     # request.
     #
     # The job receives a serialized Response or Error and calls the callback
-    # service's +on_complete+ or +on_error+ method. A callback service is a
+    # service's `on_complete` or `on_error` method. A callback service is a
     # Ruby class that defines both methods as instance methods.
     #
     # @example Callback service
@@ -27,7 +27,7 @@ module PatientHttp
       include ::Sidekiq::Job
 
       # When the job uses up all of its retries, calls the
-      # +on_retries_exhausted+ handler for an error result. Then deletes the
+      # `on_retries_exhausted` handler for an error result. Then deletes the
       # externally stored payload so that it isn't left behind.
       sidekiq_retries_exhausted do |job, _exception|
         data = job["args"][0]
@@ -64,11 +64,11 @@ module PatientHttp
       #
       # @param data [Hash] The serialized Response or Error, or a reference to
       #   it in external storage. The data can be encrypted.
-      # @param result_type [String] The result type: +"response"+ or +"error"+.
+      # @param result_type [String] The result type: `"response"` or `"error"`.
       # @param callback_service_name [String] The fully qualified callback
       #   service class name.
       # @return [void]
-      # @raise [ArgumentError] If +result_type+ isn't valid.
+      # @raise [ArgumentError] If `result_type` isn't valid.
       def perform(data, result_type, callback_service_name)
         callback_service_class = PatientHttp::ClassHelper.resolve_class_name(callback_service_name)
         callback_service = callback_service_class.new

@@ -70,7 +70,7 @@ module PatientHttp
 
       # Returns whether the thread is running.
       #
-      # @return [Boolean] +true+ if the thread is running.
+      # @return [Boolean] `true` if the thread is running.
       def running?
         @running.true?
       end

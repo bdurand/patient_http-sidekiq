@@ -7,7 +7,7 @@ module PatientHttp
     # Tracks processor stats with local aggregation.
     #
     # Each process adds up counters in memory and flushes them to a Redis Hash
-    # at the interval set by the +stats_flush_interval+ option. As a result,
+    # at the interval set by the `stats_flush_interval` option. As a result,
     # recording a request costs a Hash increment instead of a Redis round
     # trip, and processes don't write the shared totals key on every request.
     # The counters are increments, so concurrent flushes from many processes
@@ -57,7 +57,7 @@ module PatientHttp
       # Creates a stats aggregator.
       #
       # @param config [Configuration, nil] The gem configuration. The Web UI
-      #   passes +nil+ because it only reads and clears the totals.
+      #   passes `nil` because it only reads and clears the totals.
       def initialize(config = nil)
         @hostname = ::Socket.gethostname.force_encoding("UTF-8").freeze
         @pid = ::Process.pid
@@ -113,7 +113,7 @@ module PatientHttp
       #
       # @param count [Integer] The number of requests in flight.
       # @param processor_name [String, Symbol, nil] The processor name. Nothing
-      #   is recorded if this is +nil+ or only one processor is configured.
+      #   is recorded if this is `nil` or only one processor is configured.
       # @return [void]
       def record_inflight_peak(count, processor_name:)
         processor = processor_field_prefix(processor_name)
@@ -205,10 +205,10 @@ module PatientHttp
       # Returns the totals from Redis. Flushes this process's pending counters
       # first.
       #
-      # @return [Hash] The totals, with +requests+, +duration+, +errors+,
-      #   +max_capacity_exceeded+, +http_status_counts+, and
-      #   +error_type_counts+ keys. When per-processor counters exist, a
-      #   +processors+ key holds them, keyed by processor name.
+      # @return [Hash] The totals, with `requests`, `duration`, `errors`,
+      #   `max_capacity_exceeded`, `http_status_counts`, and
+      #   `error_type_counts` keys. When per-processor counters exist, a
+      #   `processors` key holds them, keyed by processor name.
       def get_totals
         # Flush first so this process's own recorded events are visible.
         # Other processes' unflushed deltas are stale by at most their flush
@@ -270,7 +270,7 @@ module PatientHttp
       private
 
       # Applies counter increments under the mutex. If the flush interval is
-      # +0+, flushes right away so that every event is written to Redis
+      # `0`, flushes right away so that every event is written to Redis
       # immediately.
       #
       # @yield [pending] The block that applies the increments.
@@ -307,7 +307,7 @@ module PatientHttp
         @config&.stats_flush_interval || 5
       end
 
-      # Returns the field name prefix for a processor's counters. Returns +nil+
+      # Returns the field name prefix for a processor's counters. Returns `nil`
       # when only one processor profile is declared, because its counters
       # would duplicate the totals.
       #
@@ -315,7 +315,7 @@ module PatientHttp
       # name are replaced with dashes.
       #
       # @param processor_name [String, Symbol, nil] The processor name.
-      # @return [String, nil] The prefix, or +nil+ to skip per-processor
+      # @return [String, nil] The prefix, or `nil` to skip per-processor
       #   counters.
       def processor_field_prefix(processor_name)
         return nil if processor_name.nil?
