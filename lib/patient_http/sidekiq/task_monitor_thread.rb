@@ -2,28 +2,30 @@
 
 module PatientHttp
   module Sidekiq
-    # Background thread that maintains heartbeats and performs garbage collection
-    # for in-flight HTTP requests.
+    # Background thread that updates heartbeats for in-flight requests and
+    # re-enqueues orphaned requests. The thread also publishes this process's
+    # capacity and flushes stats.
     class TaskMonitorThread
       include PatientHttp::TimeHelper
 
-      # Minimum seconds to sleep between monitor thread checks
+      # The maximum number of seconds to sleep between monitor passes.
       MAX_MONITOR_SLEEP = 5.0
 
-      # @return [Configuration] the configuration object
+      # @return [Configuration] The gem configuration.
       attr_reader :config
 
-      # @return [TaskMonitor] the inflight request registry
+      # @return [TaskMonitor] The in-flight request registry.
       attr_reader :task_monitor
 
-      # Initialize the monitor thread.
+      # Creates a monitor thread. The thread doesn't run until {#start} is
+      # called.
       #
-      # @param config [Configuration] the configuration object
-      # @param task_monitor [TaskMonitor] the inflight request registry
-      # @param tracked_ids_callback [Proc] callback to get the IDs of all requests the
-      #   processors are tracking (queued, pending, and in-flight)
-      # @param stats [Stats, nil] stats aggregator to flush on the monitor cadence
-      # @return [void]
+      # @param config [Configuration] The gem configuration.
+      # @param task_monitor [TaskMonitor] The in-flight request registry.
+      # @param tracked_ids_callback [Proc] A callable that returns the IDs of
+      #   all requests that the processors track: queued, pending, and in
+      #   flight.
+      # @param stats [Stats, nil] The stats aggregator to flush on each pass.
       def initialize(config, task_monitor, tracked_ids_callback, stats: nil)
         @config = config
         @task_monitor = task_monitor
@@ -34,7 +36,7 @@ module PatientHttp
         @stop_signal = Concurrent::Event.new
       end
 
-      # Start the monitor thread.
+      # Starts the thread. Has no effect if the thread is running.
       #
       # @return [void]
       def start
@@ -54,7 +56,8 @@ module PatientHttp
         @thread.name = "patient-http-monitor"
       end
 
-      # Stop the monitor thread.
+      # Stops the thread. Waits up to 1 second for the thread to finish, and
+      # then kills it.
       #
       # @return [void]
       def stop
@@ -65,16 +68,16 @@ module PatientHttp
         @thread = nil
       end
 
-      # Check if monitor thread is running.
+      # Returns whether the thread is running.
       #
-      # @return [Boolean]
+      # @return [Boolean] +true+ if the thread is running.
       def running?
         @running.true?
       end
 
       private
 
-      # Run the monitor loop.
+      # Runs the monitor loop until the thread is stopped.
       #
       # @return [void]
       def run
@@ -121,7 +124,7 @@ module PatientHttp
         @config.logger&.info("[PatientHttp::Sidekiq] Monitor thread stopped")
       end
 
-      # Register this process and publish its capacity.
+      # Registers this process and publishes its capacity.
       #
       # @return [void]
       def ping_process
@@ -131,7 +134,7 @@ module PatientHttp
         raise if PatientHttp.testing?
       end
 
-      # Flush locally aggregated stats when their interval has elapsed.
+      # Flushes local stats if the flush interval has passed.
       #
       # @return [void]
       def flush_stats
@@ -141,7 +144,7 @@ module PatientHttp
         raise if PatientHttp.testing?
       end
 
-      # Update heartbeats for all tracked requests.
+      # Updates the heartbeats of all tracked requests.
       #
       # @return [void]
       def update_heartbeats
@@ -156,7 +159,8 @@ module PatientHttp
         raise if PatientHttp.testing?
       end
 
-      # Attempt to acquire GC lock and clean up orphaned requests.
+      # Re-enqueues orphaned requests if garbage collection is due and this
+      # process gets the garbage collection lock.
       #
       # @return [void]
       def attempt_garbage_collection

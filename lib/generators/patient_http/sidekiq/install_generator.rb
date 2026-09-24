@@ -4,20 +4,25 @@ require "rails/generators/base"
 
 module PatientHttp
   module Sidekiq
-    # Generates a commented initializer for applications that want to change the
-    # defaults. The gem works without it, so this is a convenience rather than an
-    # install step.
+    # Rails generator that creates a commented initializer for applications
+    # that want to change the defaults. The gem works without the initializer.
     #
-    #   rails generate patient_http:sidekiq:install
+    #   bin/rails generate patient_http:sidekiq:install
     class InstallGenerator < ::Rails::Generators::Base
       source_root File.expand_path("templates", __dir__)
 
       desc "Creates a commented config/initializers/patient_http.rb for patient_http-sidekiq."
 
+      # Creates +config/initializers/patient_http.rb+ from the template.
+      #
+      # @return [void]
       def create_initializer
         template("initializer.rb", "config/initializers/patient_http.rb")
       end
 
+      # Prints the next steps.
+      #
+      # @return [void]
       def show_next_steps
         say("")
         say("patient_http-sidekiq is ready to use.", :green)

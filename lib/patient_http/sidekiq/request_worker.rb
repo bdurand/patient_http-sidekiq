@@ -2,22 +2,20 @@
 
 module PatientHttp
   module Sidekiq
-    # Sidekiq worker for executing HTTP requests asynchronously.
+    # Sidekiq job that runs an HTTP request on a processor.
     #
-    # This worker is enqueued when calling +PatientHttp::Sidekiq.get+, +PatientHttp::Sidekiq.post+,
-    # etc. It allows HTTP requests to be made from anywhere in your code (not just Sidekiq jobs)
-    # while still processing them through the async HTTP processor.
-    #
-    # When the request completes, the specified callback service's +on_complete+ or +on_error+
-    # method is invoked via CallbackWorker.
+    # The +PatientHttp+ module methods, such as +PatientHttp.get+, enqueue this
+    # job unless the request runs directly on a processor in the current
+    # process. When the request finishes, a CallbackWorker job calls the
+    # callback service's +on_complete+ or +on_error+ method.
     #
     # @api private
     class RequestWorker
       include ::Sidekiq::Job
 
-      # Clean up the externally stored request payload when the job exhausts all
-      # retries. The payload is normally deleted by TaskHandler when the request
-      # completes, so this only fires for requests that never made it that far.
+      # Deletes the externally stored request payload when the job uses up all
+      # of its retries. TaskHandler deletes the payload when the request
+      # finishes, so this hook matters only for requests that never finish.
       sidekiq_retries_exhausted do |job, _exception|
         Sidekiq.external_storage.delete(job["args"][0])
       rescue => e
@@ -26,22 +24,19 @@ module PatientHttp
         )
       end
 
-      # Perform the HTTP request.
+      # Runs the HTTP request on a processor.
       #
-      # @param data [Hash] Request data (possibly a storage reference) with keys:
-      #   - "http_method" [String] HTTP method (get, post, put, patch, delete)
-      #   - "url" [String] The request URL
-      #   - "headers" [Hash] Request headers
-      #   - "body" [String, nil] Request body
-      #   - "timeout" [Numeric, nil] Request timeout
-      #   - "max_redirects" [Integer, nil] Maximum redirects to follow
-      # @param callback_service_name [String] Fully qualified callback service class name
-      # @param raise_error_responses [Boolean, nil] Whether to treat non-2xx responses as errors;
-      #   nil is treated as false
-      # @param callback_args [Hash, nil] Arguments to pass to the callback
-      # @param request_id [String, nil] Unique request ID for tracking
-      # @param processor_name [String, nil] Name of the processor profile to run the request
-      #   on; nil (jobs enqueued by older versions) runs on the default processor
+      # @param data [Hash] The serialized request, or a reference to it in
+      #   external storage. The request can be encrypted.
+      # @param callback_service_name [String] The fully qualified callback
+      #   service class name.
+      # @param raise_error_responses [Boolean, nil] Whether to treat non-2xx
+      #   responses as errors. +nil+ is the same as +false+.
+      # @param callback_args [Hash, nil] The arguments to pass to the callback.
+      # @param request_id [String, nil] The request ID.
+      # @param processor_name [String, nil] The name of the processor profile
+      #   that runs the request. If +nil+, uses the default processor. Jobs
+      #   enqueued by earlier versions of the gem don't have this argument.
       # @return [void]
       def perform(data, callback_service_name, raise_error_responses, callback_args, request_id, processor_name = nil)
         # Fetch from external storage if needed

@@ -2,19 +2,22 @@
 
 module PatientHttp
   module Sidekiq
-    # Dedicated Redis connection pool for the gem's own threads.
+    # Dedicated Redis connection pool for threads that the gem owns.
     #
-    # The processor's completion worker threads and the task monitor thread
-    # carry no Sidekiq capsule state, so plain `Sidekiq.redis` calls from them
-    # fall through to Sidekiq's small internal pool (10 connections, 1 second
-    # checkout timeout). Under load that pool becomes a serialization point
-    # and checkout timeouts can lose work. This pool is built from the
-    # application's own Sidekiq Redis configuration and is used for all
-    # registry, stats, and job pushes made from gem-owned threads.
+    # The completion worker threads and the monitor thread have no Sidekiq
+    # capsule, so their <tt>Sidekiq.redis</tt> calls use Sidekiq's small
+    # internal pool, which has 10 connections and a 1-second checkout timeout.
+    # Under load, threads wait on that pool, and checkout timeouts can lose
+    # work. This pool uses the application's Sidekiq Redis configuration. It
+    # handles all registry writes, stats writes, and job pushes from threads
+    # that the gem owns.
     class RedisPool
+      # The minimum pool size when the +redis_pool_size+ option isn't set.
       DEFAULT_MINIMUM_SIZE = 10
 
-      # @param config [Configuration] the gem configuration
+      # Creates a pool. The connections open on first use.
+      #
+      # @param config [Configuration] The gem configuration.
       def initialize(config)
         @config = config
         @pid = nil
@@ -22,10 +25,11 @@ module PatientHttp
         @mutex = Mutex.new
       end
 
-      # The underlying ConnectionPool, created lazily and rebuilt after a
-      # process fork so child processes never share parent connections.
+      # Returns the connection pool. Creates the pool on first use. Creates a
+      # new pool after a fork so that a child process doesn't share its
+      # parent's connections.
       #
-      # @return [ConnectionPool]
+      # @return [ConnectionPool] The connection pool.
       def pool
         @mutex.synchronize do
           if @pool.nil? || @pid != ::Process.pid
@@ -36,19 +40,19 @@ module PatientHttp
         end
       end
 
-      # Check out a connection with the gem's checkout timeout and yield it.
-      # A connection-level failure is retried once on a fresh checkout,
-      # mirroring the retry Sidekiq itself performs.
+      # Checks out a connection and yields it. The checkout uses the
+      # +redis_pool_timeout+ option. After a connection failure, runs the block
+      # once more with a new connection, as Sidekiq does.
       #
-      # The retry replays the whole block, so callers whose block is not
-      # idempotent (counter increments, anything the server may already have
-      # applied before the connection dropped) must pass
-      # +retry_on_connection_error: false+ and handle the failure themselves.
+      # The retry runs the whole block again. If the block isn't idempotent,
+      # such as counter increments that the server might already have applied,
+      # pass <tt>retry_on_connection_error: false</tt> and handle the failure.
       #
-      # @param retry_on_connection_error [Boolean] whether to replay the block
-      #   once after a connection-level failure
-      # @yield [conn] the Redis connection
-      # @return [Object] the block's return value
+      # @param retry_on_connection_error [Boolean] Whether to run the block
+      #   again after a connection failure.
+      # @yield [conn] The block that uses the connection.
+      # @yieldparam conn [Object] The Redis connection.
+      # @return [Object] The return value of the block.
       def with(retry_on_connection_error: true, &block)
         retryable = retry_on_connection_error
         begin
@@ -62,7 +66,7 @@ module PatientHttp
         end
       end
 
-      # Close all connections and drop the pool.
+      # Closes all connections and removes the pool.
       #
       # @return [void]
       def shutdown
@@ -75,11 +79,12 @@ module PatientHttp
 
       private
 
-      # Pool size: explicit configuration wins; otherwise size it to cover the
-      # completion worker threads plus the monitor thread and request
-      # registration, with a sane floor.
+      # Returns the pool size. Uses the +redis_pool_size+ option if it's set.
+      # Otherwise, allows one connection for each completion thread plus
+      # connections for the monitor thread and request registration, with a
+      # minimum of DEFAULT_MINIMUM_SIZE.
       #
-      # @return [Integer]
+      # @return [Integer] The pool size.
       def size
         @config.redis_pool_size || [DEFAULT_MINIMUM_SIZE, @config.completion_threads + 3].max
       end

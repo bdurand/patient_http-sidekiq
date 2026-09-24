@@ -2,13 +2,12 @@
 
 module PatientHttp
   module Sidekiq
-    # Sidekiq worker that invokes callback services for HTTP request results.
+    # Sidekiq job that calls a callback service with the result of an HTTP
+    # request.
     #
-    # This worker receives serialized Response or Error data and invokes the
-    # appropriate callback service method (+on_complete+ or +on_error+).
-    #
-    # Callback services are plain Ruby classes that define +on_complete+ and +on_error+
-    # instance methods:
+    # The job receives a serialized Response or Error and calls the callback
+    # service's +on_complete+ or +on_error+ method. A callback service is a
+    # Ruby class that defines both methods as instance methods.
     #
     # @example Callback service
     #   class MyCallback
@@ -27,9 +26,9 @@ module PatientHttp
     class CallbackWorker
       include ::Sidekiq::Job
 
-      # Clean up externally stored payloads when job exhausts all retries.
-      # This prevents orphaned payload files when callbacks fail permanently.
-      # Also invokes the on_retries_exhausted handler if configured.
+      # When the job uses up all of its retries, calls the
+      # +on_retries_exhausted+ handler for an error result. Then deletes the
+      # externally stored payload so that it isn't left behind.
       sidekiq_retries_exhausted do |job, _exception|
         data = job["args"][0]
         result_type = job["args"][1]
@@ -61,11 +60,15 @@ module PatientHttp
         end
       end
 
-      # Perform the callback invocation.
+      # Calls the callback service with the result.
       #
-      # @param data [Hash] Response or Error data (possibly a storage reference)
-      # @param result_type [String] "response" or "error" indicating the type of result
-      # @param callback_service_name [String] Fully qualified callback service class name
+      # @param data [Hash] The serialized Response or Error, or a reference to
+      #   it in external storage. The data can be encrypted.
+      # @param result_type [String] The result type: +"response"+ or +"error"+.
+      # @param callback_service_name [String] The fully qualified callback
+      #   service class name.
+      # @return [void]
+      # @raise [ArgumentError] If +result_type+ isn't valid.
       def perform(data, result_type, callback_service_name)
         callback_service_class = PatientHttp::ClassHelper.resolve_class_name(callback_service_name)
         callback_service = callback_service_class.new

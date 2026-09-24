@@ -6,54 +6,60 @@ module PatientHttp
   module Sidekiq
     # Configuration for the Sidekiq integration.
     #
-    # Wraps PatientHttp::Configuration with Sidekiq-aware defaults and adds
-    # Sidekiq-specific options like worker queue/retry settings.
-    #
-    # Access the underlying pool configuration via the +http_pool+ attribute.
+    # Extends PatientHttp::Configuration with Sidekiq defaults and adds options
+    # for Sidekiq jobs, crash recovery, direct execution, the Web UI, and named
+    # processor profiles.
     class Configuration < PatientHttp::Configuration
-      # Default threshold in bytes above which payloads are stored externally.
+      # The default size in bytes above which payloads are stored externally.
       #
       # @deprecated Use {PatientHttp::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD}.
-      #   `payload_store_threshold` now lives on the base configuration, next to
-      #   `register_payload_store`.
+      #   The +payload_store_threshold+ option is defined on the base
+      #   configuration, next to +register_payload_store+.
       DEFAULT_PAYLOAD_STORE_THRESHOLD = PatientHttp::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD
 
-      # @return [Numeric] Orphan detection threshold in seconds
+      # @return [Numeric] The number of seconds without a heartbeat after which
+      #   an in-flight request is considered orphaned and re-enqueued.
       attr_reader :orphan_threshold
 
-      # @return [Numeric] Heartbeat update interval in seconds
+      # @return [Numeric] The number of seconds between heartbeat updates for
+      #   in-flight requests.
       attr_reader :heartbeat_interval
 
-      # @return [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
+      # @return [Hash, nil] The Sidekiq options for RequestWorker and
+      #   CallbackWorker.
       attr_reader :sidekiq_options
 
-      # @return [Boolean] Whether requests execute directly on a processor running in the
-      #   current process instead of being enqueued through Sidekiq
+      # @return [Boolean] Whether requests made in a process with a running
+      #   processor go straight to the processor instead of through the Sidekiq
+      #   queue.
       attr_reader :direct_execution
 
-      # @return [Boolean] Whether the URL, HTTP method, and processor of each in-flight
-      #   request are recorded so the Web UI can list them
+      # @return [Boolean] Whether the URL, HTTP method, and processor of each
+      #   in-flight request are recorded so that the Web UI can list them.
       attr_reader :inflight_details
 
-      # @return [Integer, nil] Size of the gem's dedicated Redis pool; nil sizes it
-      #   automatically from completion_threads
+      # @return [Integer, nil] The size of the gem's dedicated Redis pool. If
+      #   +nil+, the size is based on +completion_threads+.
       attr_reader :redis_pool_size
 
-      # @return [Numeric] Checkout timeout in seconds for the gem's dedicated Redis pool
+      # @return [Numeric] The checkout timeout in seconds for the gem's
+      #   dedicated Redis pool.
       attr_reader :redis_pool_timeout
 
-      # @return [Numeric] Seconds between flushes of locally aggregated stats to Redis
-      #   (0 flushes synchronously on every recorded event)
+      # @return [Numeric] The number of seconds between flushes of local stats
+      #   to Redis. If +0+, every event is written to Redis immediately.
       attr_reader :stats_flush_interval
 
-      # @return [#call, nil] Handler invoked when a CallbackWorker job exhausts all retries.
+      # Returns or sets the handler that runs when a CallbackWorker job uses up
+      # all of its retries.
+      #
       # @overload on_retries_exhausted
       #   Returns the current handler.
-      #   @return [#call, nil]
+      #   @return [#call, nil] The handler, or +nil+ if none is set.
       # @overload on_retries_exhausted(&block)
       #   Sets a block as the handler.
-      #   @yield [error] block to execute when retries are exhausted
-      #   @yieldparam error [PatientHttp::Error] information about the error
+      #   @yield [error] The block to run when a job uses up its retries.
+      #   @yieldparam error [PatientHttp::Error] The error from the request.
       def on_retries_exhausted(&block)
         if block
           @on_retries_exhausted = block
@@ -62,22 +68,35 @@ module PatientHttp
         end
       end
 
-      # @return [Array<PatientHttp::ProcessorObserver>] Registered processor observers
-      #   Observers will be registered with the processor when it is started, allowing them to
-      #   receive lifecycle callbacks for PatientHttp requests.
+      # @return [Array<PatientHttp::ProcessorObserver>] The registered processor
+      #   observers. Each processor adds these observers when it starts, so they
+      #   receive lifecycle events for every request.
       attr_reader :observers
 
-      # Initializes a new Configuration with the specified options.
+      # Creates a configuration.
       #
-      # @param heartbeat_interval [Integer] Interval for updating inflight request heartbeats in seconds
-      # @param orphan_threshold [Integer] Age threshold for detecting orphaned requests in seconds
-      # @param sidekiq_options [Hash, nil] Sidekiq options to apply to RequestWorker and CallbackWorker
-      # @param on_retries_exhausted [#call, nil] Handler called when a CallbackWorker job exhausts retries
-      # @param direct_execution [Boolean] Whether requests execute directly on a processor
-      #   running in the current process instead of being enqueued through Sidekiq
-      # @param pool_options [Hash] Options passed through to PatientHttp::Configuration.
-      #   Sidekiq-aware defaults are applied for shutdown_timeout and logger
-      #   if not explicitly provided.
+      # @param heartbeat_interval [Numeric] The number of seconds between
+      #   heartbeat updates for in-flight requests.
+      # @param orphan_threshold [Numeric] The number of seconds without a
+      #   heartbeat after which an in-flight request is considered orphaned.
+      # @param sidekiq_options [Hash, nil] The Sidekiq options for RequestWorker
+      #   and CallbackWorker.
+      # @param on_retries_exhausted [#call, nil] The handler that runs when a
+      #   CallbackWorker job uses up all of its retries.
+      # @param direct_execution [Boolean] Whether requests made in a process with
+      #   a running processor go straight to the processor.
+      # @param redis_pool_size [Integer, nil] The size of the gem's dedicated
+      #   Redis pool. If +nil+, the size is based on +completion_threads+.
+      # @param redis_pool_timeout [Numeric] The checkout timeout in seconds for
+      #   the gem's dedicated Redis pool.
+      # @param stats_flush_interval [Numeric] The number of seconds between
+      #   flushes of local stats to Redis.
+      # @param inflight_details [Boolean] Whether to record the details of each
+      #   in-flight request for the Web UI.
+      # @param pool_options [Hash] Options for PatientHttp::Configuration. If
+      #   +shutdown_timeout+ isn't set, it defaults to the Sidekiq shutdown
+      #   timeout minus 2 seconds. If +logger+ isn't set, it defaults to the
+      #   Sidekiq logger.
       def initialize(
         heartbeat_interval: 60,
         orphan_threshold: 300,
@@ -108,13 +127,15 @@ module PatientHttp
         self.inflight_details = inflight_details
       end
 
-      # Set the on_retries_exhausted handler.
+      # Sets the handler that runs when a CallbackWorker job uses up all of its
+      # retries. The handler receives the same error object as the +on_error+
+      # callback.
       #
-      # This handler is called when a CallbackWorker job exhausts all retries.
-      # It receives the same arguments as the on_error callback.
-      #
-      # @param value [#call, nil] A callable object or nil to clear the handler
-      # @raise [ArgumentError] If value is not callable and not nil
+      # @param value [#call, nil] A callable object, or +nil+ to remove the
+      #   handler.
+      # @return [void]
+      # @raise [ArgumentError] If +value+ isn't +nil+ and doesn't respond to
+      #   +call+.
       def on_retries_exhausted=(value)
         if value && !value.respond_to?(:call)
           raise ArgumentError.new("on_retries_exhausted must respond to #call, got: #{value.class}")
@@ -123,10 +144,14 @@ module PatientHttp
         @on_retries_exhausted = value
       end
 
-      # Set the heartbeat interval for crash recovery.
+      # Sets the number of seconds between heartbeat updates for in-flight
+      # requests.
       #
-      # @param value [Numeric] interval in seconds (must be positive)
-      # @raise [ArgumentError] if value is not positive or not less than orphan_threshold
+      # @param value [Numeric] The interval in seconds. Must be positive and less
+      #   than +orphan_threshold+.
+      # @return [void]
+      # @raise [ArgumentError] If +value+ isn't positive or isn't less than
+      #   +orphan_threshold+.
       def heartbeat_interval=(value)
         raise ArgumentError.new("heartbeat_interval must be positive, got: #{value.inspect}") unless value.positive?
 
@@ -134,10 +159,14 @@ module PatientHttp
         validate_heartbeat_and_threshold
       end
 
-      # Set the orphan detection threshold for crash recovery.
+      # Sets the number of seconds without a heartbeat after which an in-flight
+      # request is considered orphaned and re-enqueued.
       #
-      # @param value [Numeric] threshold in seconds (must be positive and greater than heartbeat_interval)
-      # @raise [ArgumentError] if value is not positive or not greater than heartbeat_interval
+      # @param value [Numeric] The threshold in seconds. Must be positive and
+      #   greater than +heartbeat_interval+.
+      # @return [void]
+      # @raise [ArgumentError] If +value+ isn't positive or isn't greater than
+      #   +heartbeat_interval+.
       def orphan_threshold=(value)
         raise ArgumentError.new("orphan_threshold must be positive, got: #{value.inspect}") unless value.positive?
 
@@ -145,12 +174,13 @@ module PatientHttp
         validate_heartbeat_and_threshold
       end
 
-      # Set Sidekiq worker options and apply them to RequestWorker and CallbackWorker.
-      # The options will be applied to both workers. If you want to customize just
-      # one of them, set the options directly on that worker class.
+      # Sets the Sidekiq options for RequestWorker and CallbackWorker. To set
+      # options for only one of them, call +sidekiq_options+ on that worker
+      # class.
       #
-      # @param options [Hash, nil] Sidekiq options hash
+      # @param options [Hash, nil] The Sidekiq options.
       # @return [void]
+      # @raise [ArgumentError] If +options+ isn't +nil+ or a Hash.
       def sidekiq_options=(options)
         if options.nil?
           @sidekiq_options = nil
@@ -165,28 +195,29 @@ module PatientHttp
         apply_sidekiq_options(options)
       end
 
-      # Set whether requests execute directly on a processor running in the current
-      # process. When enabled, requests made in a process with a running processor
-      # skip the Sidekiq queue and go straight to the processor. The value is
-      # coerced to a boolean.
+      # Sets whether requests made in a process with a running processor go
+      # straight to the processor instead of through the Sidekiq queue.
       #
-      # @param value [Boolean] true to enable direct execution
+      # @param value [Boolean] +true+ to enable direct execution. Other values
+      #   are converted to a Boolean.
       # @return [void]
       def direct_execution=(value)
         @direct_execution = !!value
       end
 
-      # Check if direct execution is enabled.
+      # Returns whether direct execution is enabled.
       #
-      # @return [Boolean]
+      # @return [Boolean] +true+ if direct execution is enabled.
       def direct_execution?
         @direct_execution
       end
 
-      # Set the size of the gem's dedicated Redis pool.
+      # Sets the size of the gem's dedicated Redis pool.
       #
-      # @param value [Integer, nil] pool size; nil sizes the pool automatically
+      # @param value [Integer, nil] The pool size. If +nil+, the size is based on
+      #   +completion_threads+.
       # @return [void]
+      # @raise [ArgumentError] If +value+ isn't +nil+ or a positive Integer.
       def redis_pool_size=(value)
         if value.nil?
           @redis_pool_size = nil
@@ -197,10 +228,11 @@ module PatientHttp
         @redis_pool_size = value
       end
 
-      # Set the checkout timeout for the gem's dedicated Redis pool.
+      # Sets the checkout timeout for the gem's dedicated Redis pool.
       #
-      # @param value [Numeric] timeout in seconds
+      # @param value [Numeric] The timeout in seconds.
       # @return [void]
+      # @raise [ArgumentError] If +value+ isn't a positive number.
       def redis_pool_timeout=(value)
         unless value.is_a?(Numeric) && value.positive?
           raise ArgumentError.new("redis_pool_timeout must be a positive number, got: #{value.inspect}")
@@ -209,11 +241,12 @@ module PatientHttp
         @redis_pool_timeout = value
       end
 
-      # Set the flush interval for locally aggregated stats.
+      # Sets the number of seconds between flushes of local stats to Redis.
       #
-      # @param value [Numeric] seconds between flushes; 0 flushes synchronously on
-      #   every recorded event
+      # @param value [Numeric] The interval in seconds. If +0+, every event is
+      #   written to Redis immediately.
       # @return [void]
+      # @raise [ArgumentError] If +value+ is negative or isn't a number.
       def stats_flush_interval=(value)
         unless value.is_a?(Numeric) && value >= 0
           raise ArgumentError.new("stats_flush_interval must be a non-negative number, got: #{value.inspect}")
@@ -222,41 +255,45 @@ module PatientHttp
         @stats_flush_interval = value
       end
 
-      # Set whether the details of each in-flight request are recorded.
+      # Sets whether the details of each in-flight request are recorded.
       #
-      # The URL (see +inflight_url_sanitizer+), HTTP method, and processor name are
-      # written next to the crash-recovery record so the Web UI can list the requests
-      # that are in flight. Turn this off to keep URLs out of Redis entirely.
+      # The URL, HTTP method, and processor name are written next to the
+      # crash-recovery record so that the Web UI can list the in-flight
+      # requests. The URL is sanitized first; see {#inflight_url_sanitizer}.
+      # Turn this option off to keep URLs out of Redis.
       #
-      # @param value [Boolean] true to record the details
+      # @param value [Boolean] +true+ to record the details. Other values are
+      #   converted to a Boolean.
       # @return [void]
       def inflight_details=(value)
         @inflight_details = !!value
       end
 
-      # Check if in-flight request details are recorded.
+      # Returns whether in-flight request details are recorded.
       #
-      # @return [Boolean]
+      # @return [Boolean] +true+ if the details are recorded.
       def inflight_details?
         @inflight_details
       end
 
-      # Set the sanitizer applied to a request URL before it is recorded for the
-      # Web UI, or read the current one.
+      # Returns or sets the sanitizer that runs on a request URL before the URL
+      # is recorded for the Web UI.
       #
-      # The sanitizer receives the full URL and returns what to display. Without
-      # one, the user name, password, query string, and fragment are removed and
-      # the scheme, host, and path are kept. Use it to redact more, such as an
-      # identifier in the path.
+      # The sanitizer receives the full URL and returns the URL to display. If no
+      # sanitizer is set, the user name, password, query string, and fragment
+      # are removed, and the scheme, host, and path are kept. Use a sanitizer to
+      # remove more, such as an identifier in the path.
       #
       # @example
       #   config.inflight_url_sanitizer { |url| url.sub(%r{/users/\d+}, "/users/:id") }
       #
       # @overload inflight_url_sanitizer
-      #   @return [#call, nil] the current sanitizer
+      #   Returns the current sanitizer.
+      #   @return [#call, nil] The sanitizer, or +nil+ if none is set.
       # @overload inflight_url_sanitizer(&block)
-      #   @yield [url] block that returns the URL to display
-      #   @yieldparam url [String] the full request URL
+      #   Sets a block as the sanitizer.
+      #   @yield [url] The block that returns the URL to display.
+      #   @yieldparam url [String] The full request URL.
       def inflight_url_sanitizer(&block)
         if block
           @inflight_url_sanitizer = block
@@ -265,10 +302,14 @@ module PatientHttp
         end
       end
 
-      # Set the sanitizer applied to a request URL before it is recorded.
+      # Sets the sanitizer that runs on a request URL before the URL is
+      # recorded.
       #
-      # @param value [#call, nil] a callable object, or nil to use the default
-      # @raise [ArgumentError] If value is not callable and not nil
+      # @param value [#call, nil] A callable object, or +nil+ to use the default
+      #   sanitizer.
+      # @return [void]
+      # @raise [ArgumentError] If +value+ isn't +nil+ and doesn't respond to
+      #   +call+.
       def inflight_url_sanitizer=(value)
         if value && !value.respond_to?(:call)
           raise ArgumentError.new("inflight_url_sanitizer must respond to #call, got: #{value.class}")
@@ -277,24 +318,26 @@ module PatientHttp
         @inflight_url_sanitizer = value
       end
 
-      # Declare a named processor profile, or read one back.
+      # Declares a named processor profile, or returns the options for one.
       #
-      # Each profile becomes an independent processor with its own capacity,
-      # timeouts, and threads. Options are overrides applied on top of this
-      # configuration's HTTP pool options. Requests select a processor with the
-      # +processor:+ option on +PatientHttp::Sidekiq.execute+ (or on the
-      # request itself). The +:default+ profile always exists; declaring it
-      # overrides options for the default processor.
+      # Each profile runs as an independent processor with its own capacity,
+      # timeouts, and threads. The options override this configuration's
+      # options for that processor. A request selects a processor with the
+      # +processor:+ option. The +:default+ profile always exists. Declare it to
+      # override options for the default processor.
       #
       # @example
-      #   PatientHttp::Sidekiq.configure do |config|
+      #   PatientHttp.configure do |config|
       #     config.processor(:llm, max_connections: 200, request_timeout: 120)
       #     config.processor(:webhooks, max_connections: 64, request_timeout: 10)
       #   end
       #
-      # @param name [Symbol, String] the processor name
-      # @param options [Hash] overrides for PatientHttp::Configuration options
-      # @return [Hash] the stored options for the profile
+      # @param name [Symbol, String] The processor name.
+      # @param options [Hash] The PatientHttp::Configuration options to
+      #   override. If empty, the profile isn't changed.
+      # @return [Hash, nil] The options for the profile, or +nil+ if the
+      #   profile isn't declared.
+      # @raise [ArgumentError] If +name+ is empty or an option isn't valid.
       def processor(name, **options)
         key = normalize_processor_name(name)
 
@@ -306,28 +349,31 @@ module PatientHttp
         @processor_profiles[key]
       end
 
-      # All declared processor profiles. Always includes :default.
+      # Returns all declared processor profiles, including +:default+.
       #
-      # @return [Hash{Symbol => Hash}] profile options by processor name
+      # @return [Hash{Symbol => Hash}] The profile options, keyed by processor
+      #   name.
       def processor_profiles
         @processor_profiles.dup
       end
 
-      # Whether more than one processor profile is declared.
+      # Returns whether more than one processor profile is declared.
       #
-      # @return [Boolean]
+      # @return [Boolean] +true+ if more than one profile is declared.
       def multiple_processors?
         @processor_profiles.size > 1
       end
 
-      # Build the effective configuration for a named processor. The default
-      # profile with no overrides is this configuration itself; other profiles
-      # get a view of this configuration with their overrides applied, so they
-      # share secrets, preprocessors, payload stores, and encryption.
+      # Returns the configuration for a named processor.
       #
-      # @param name [Symbol, String] the processor name
-      # @return [PatientHttp::Configuration] the configuration for the processor
-      # @raise [ArgumentError] if the profile is not declared
+      # A profile without overrides uses this configuration. Other profiles use
+      # a view of this configuration with their overrides applied, so all
+      # processors share secrets, preprocessors, payload stores, and
+      # encryption.
+      #
+      # @param name [Symbol, String] The processor name.
+      # @return [PatientHttp::Configuration] The configuration for the processor.
+      # @raise [ArgumentError] If the profile isn't declared.
       def processor_config(name)
         key = normalize_processor_name(name)
         profile = @processor_profiles[key]
@@ -338,8 +384,10 @@ module PatientHttp
         ProfileConfiguration.new(self, profile)
       end
 
-      # Convert to hash for inspection
-      # @return [Hash] hash representation with string keys
+      # Returns the configuration as a Hash for inspection.
+      #
+      # @return [Hash{String => Object}] The option values, keyed by option
+      #   name.
       def to_h
         super.merge(
           "heartbeat_interval" => heartbeat_interval,
@@ -355,21 +403,27 @@ module PatientHttp
         )
       end
 
-      # View of a base configuration with a profile's option overrides applied.
-      # Everything not overridden (secrets, preprocessors, payload stores,
-      # logging) delegates to the base configuration, so all processors share
-      # those registries.
+      # A view of a base configuration with a processor profile's overrides
+      # applied. Options that the profile doesn't override, such as secrets,
+      # preprocessors, payload stores, and the logger, come from the base
+      # configuration, so all processors share them.
       #
-      # Overrides are applied through a real PatientHttp::Configuration so that
-      # each option's writer performs its own normalization. Readers whose
-      # value a writer derives from an overridden option are taken from that
-      # configuration as well, so an override cannot be half applied.
+      # The overrides are applied to a separate PatientHttp::Configuration so
+      # that each option's writer normalizes its own value. Readers whose values
+      # a writer derives from an overridden option come from that configuration
+      # as well, so an override is never partly applied.
       class ProfileConfiguration < SimpleDelegator
-        # Readers populated as a side effect of another option's writer.
+        # Readers whose values are set by the writer for another option.
         DERIVED_READERS = {
           encryption_key: [:encryption, :decryption, :encryptor]
         }.freeze
 
+        # Creates a view of a configuration with overrides applied.
+        #
+        # @param base_configuration [Configuration] The configuration that
+        #   provides the options that aren't overridden.
+        # @param overrides [Hash] The PatientHttp::Configuration options to
+        #   override.
         def initialize(base_configuration, overrides)
           super(base_configuration)
           normalized = PatientHttp::Configuration.new(**overrides)
@@ -386,8 +440,14 @@ module PatientHttp
 
       private
 
-      # Profile options must be valid PatientHttp::Configuration options. A
-      # throwaway configuration exercises each option's own validation.
+      # Validates processor profile options. Each option must be a valid
+      # PatientHttp::Configuration option. The options are applied to a
+      # temporary configuration so that each option's writer validates its
+      # own value.
+      #
+      # @param options [Hash] The profile options.
+      # @return [void]
+      # @raise [ArgumentError] If an option isn't valid.
       def validate_profile_options!(options)
         PatientHttp::Configuration.new(**options)
       rescue ArgumentError => e

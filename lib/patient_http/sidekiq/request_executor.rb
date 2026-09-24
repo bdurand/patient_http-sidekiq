@@ -2,41 +2,51 @@
 
 module PatientHttp
   module Sidekiq
-    # Helper methods for executing HTTP requests asynchronously.
+    # Runs HTTP requests on a processor in the current process.
     class RequestExecutor
       class << self
-        # Execute the request directly on the async processor.
+        # Hands a request to a processor in the current process. RequestWorker
+        # and direct execution call this method.
         #
-        # This method enqueues the request directly to the async processor. Used internally
-        # by RequestWorker.
+        # When the request finishes, the callback service's +on_complete+ method
+        # receives a Response. If the request fails, the +on_error+ method
+        # receives an Error. A failure is a network error, a timeout, or a
+        # non-2xx response when +raise_error_responses+ is +true+.
         #
-        # When the request completes, the callback's +on_complete+ method is called with
-        # a Response object. If an error occurs (network error, timeout, or non-2xx response
-        # if raise_error_responses is true), the +on_error+ method is called with an Error object.
+        # When jobs run inline with <tt>Sidekiq::Testing.inline!</tt>, the
+        # request runs synchronously instead.
         #
-        # @param request [Request] the HTTP request to execute
-        # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
-        #   instance methods, or its fully qualified class name.
-        # @param sidekiq_job [Hash, nil] Sidekiq job hash with "class" and "args" keys.
-        #   If not provided, uses PatientHttp::Sidekiq::Context.current_job.
-        #   This requires the PatientHttp::Sidekiq::Context::Middleware to be added
-        #   to the Sidekiq server middleware chain.
-        # @param task_handler [PatientHttp::TaskHandler, nil] A prebuilt task handler.
-        #   When provided, the sidekiq_job parameter is ignored and no handler is
-        #   built from it. Used for direct execution on the local processor.
-        # @param synchronous [Boolean] If true, runs the request inline (for testing).
-        # @param callback_args [#to_h, nil] Arguments to pass to callback via the
-        #   Response/Error object. Must respond to +to_h+ and contain only JSON-native types
-        #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
-        #   converted to strings for serialization. Access via +response.callback_args+ or
-        #   +error.callback_args+ using symbol or string keys.
-        # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
-        #   and calls +on_error+ instead of +on_complete+. Defaults to false.
-        # @param request_id [String, nil] Unique request ID for tracking. If nil, a new UUID
-        #   will be generated.
-        # @param processor_name [Symbol, String, nil] Name of the processor profile to run
-        #   the request on. Defaults to the request's own processor name or :default.
-        # @return [String] the request ID
+        # @param request [PatientHttp::Request] The HTTP request.
+        # @param callback [Class, String] The callback service class, or its
+        #   fully qualified name. The class must define +on_complete+ and
+        #   +on_error+ instance methods.
+        # @param sidekiq_job [Hash, nil] The Sidekiq job Hash, with +class+ and
+        #   +args+ keys. If +nil+, uses Context.current_job, which requires
+        #   Context::Middleware in the Sidekiq server middleware chain.
+        # @param task_handler [PatientHttp::TaskHandler, nil] A task handler to
+        #   use instead of one built from +sidekiq_job+. Direct execution passes
+        #   a handler.
+        # @param synchronous [Boolean] Whether to run the request synchronously.
+        #   Intended for tests.
+        # @param callback_args [#to_h, nil] The arguments to pass to the
+        #   callback. Values must be JSON-native types: +nil+, +true+, +false+,
+        #   String, Integer, Float, Array, or Hash. Hash keys are converted to
+        #   strings. The callback reads the arguments from
+        #   +response.callback_args+ or +error.callback_args+ with symbol or
+        #   string keys.
+        # @param raise_error_responses [Boolean] Whether to treat non-2xx
+        #   responses as errors and call +on_error+ instead of +on_complete+.
+        # @param request_id [String, nil] The request ID. If +nil+, a new UUID
+        #   is generated.
+        # @param processor_name [Symbol, String, nil] The name of the processor
+        #   profile that runs the request. If +nil+, uses the processor set on
+        #   the request, then +:default+.
+        # @return [String] The request ID.
+        # @raise [PatientHttp::UnknownProcessorError] If the processor profile
+        #   isn't configured.
+        # @raise [PatientHttp::NotRunningError] If the processor isn't running.
+        # @raise [PatientHttp::MaxCapacityError] If the processor is at
+        #   capacity.
         # @api private
         def execute(
           request,

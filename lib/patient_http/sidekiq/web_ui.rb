@@ -13,35 +13,45 @@ require "sidekiq/web"
 
 module PatientHttp
   module Sidekiq
-    # Web UI extension for Sidekiq
-    # Adds an "Async HTTP" tab to the main Sidekiq dashboard
-    # Works with Sidekiq 7.3+ and 8.0+
+    # Sidekiq Web UI extension that adds an Async HTTP tab to the dashboard.
+    # Requires Sidekiq 7.3 or later.
     class WebUI
+      # The directory that holds the extension's views, locales, and assets.
       ROOT = File.join(__dir__, "web_ui")
+
+      # The directory that holds the extension's views.
       VIEWS = File.join(ROOT, "views")
 
-      # Number of in-flight requests listed on the dashboard. The oldest are
-      # listed, because those are the ones worth looking at.
+      # The number of in-flight requests that the dashboard lists. The
+      # dashboard lists the oldest requests, because those are the most likely
+      # to need attention.
       INFLIGHT_LIMIT = 50
 
       class << self
-        # Sidekiq resolves symbol view names to different file names depending
-        # on the version (*.erb before 8.1, *.html.erb from 8.1 on), so the
-        # template is rendered from a string instead.
+        # Returns the ERB template for the dashboard page.
+        #
+        # Sidekiq versions before 8.1 resolve a symbol view name to a +.erb+
+        # file, and later versions resolve it to a +.html.erb+ file. Rendering
+        # the template from a string works with every version.
+        #
+        # @return [String] The template source.
         def template
           @template ||= File.read(File.join(VIEWS, "patient_http.html.erb"))
         end
 
-        # Build the per-processor rows for the dashboard by combining the
-        # cumulative counters with the live capacity each processor reports.
+        # Builds the rows of the processor table on the dashboard. Each row
+        # combines a processor's cumulative counters with the live capacity
+        # that the processor reports.
         #
-        # Statistics are not recorded per processor when only one is
-        # configured, because they would duplicate the overall totals, so the
-        # breakdown is empty in that case.
+        # When only one processor is configured, per-processor stats aren't
+        # recorded because they would duplicate the totals. In that case, this
+        # method returns an empty Array.
         #
-        # @param stats_by_processor [Hash, nil] cumulative counters by processor name
-        # @param capacity_by_processor [Hash] inflight and capacity by processor name
-        # @return [Array<Hash>] one row per processor, sorted by name
+        # @param stats_by_processor [Hash, nil] The cumulative counters, keyed
+        #   by processor name.
+        # @param capacity_by_processor [Hash] The in-flight and capacity counts,
+        #   keyed by processor name.
+        # @return [Array<Hash>] One row for each processor, sorted by name.
         def processor_rows(stats_by_processor, capacity_by_processor)
           stats_by_processor ||= {}
           return [] if stats_by_processor.empty? && capacity_by_processor.size < 2
@@ -68,7 +78,11 @@ module PatientHttp
           end
         end
 
-        # This method is called by Sidekiq::Web when registering the extension
+        # Adds the dashboard routes to the Sidekiq Web application.
+        # Sidekiq::Web calls this method when it registers the extension.
+        #
+        # @param app [Class] The Sidekiq Web application.
+        # @return [void]
         def registered(app)
           # GET route for the main PatientHttp dashboard page
           app.get "/patient-http" do
