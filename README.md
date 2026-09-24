@@ -635,8 +635,8 @@ mount Sidekiq::Web => "/sidekiq"
 
 The tab shows the following information:
 
-- Total requests, errors, average duration, and current capacity utilization.
-- Capacity, utilization, requests, errors, average duration, and the in-flight high-water mark for each processor, when more than one [named processor](#named-processors) is configured.
+- Total requests, errors, times at capacity, average duration, and current capacity utilization.
+- Capacity, utilization, requests, errors, times at capacity, average duration, and the in-flight high-water mark for each processor, when more than one [named processor](#named-processors) is configured.
 - The requests that have been in flight the longest, with their URL, HTTP method, processor, and age.
 - The number of in-flight requests in each process.
 

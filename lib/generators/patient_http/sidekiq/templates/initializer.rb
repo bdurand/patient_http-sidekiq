@@ -2,9 +2,10 @@
 
 # Configuration for patient_http running on Sidekiq.
 #
-# Every option below is optional and shown with its default. The gem works with
-# no configuration at all: requiring it registers the request handler, and the
-# async processor starts and stops with your Sidekiq server.
+# Every option below is optional. Each is shown with its default value or with
+# an example value. The gem works with no configuration at all: requiring it
+# registers the request handler, and the async processor starts and stops with
+# your Sidekiq server.
 #
 # Make requests from anywhere in your application:
 #
