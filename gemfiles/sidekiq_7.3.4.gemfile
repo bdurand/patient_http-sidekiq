@@ -10,6 +10,5 @@ gem "irb"
 gem "rake"
 gem "rspec", "~> 3.11"
 gem "sidekiq", "= 7.3.4"
-gem "async-http", "=0.94.2"
 
 gemspec path: "../"
