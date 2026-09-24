@@ -46,14 +46,18 @@ The async processor runs in a dedicated thread within your Sidekiq process, usin
 
 ## Quick Start
 
-### 1. Configure The Gem
-
-Configure the gem in an initializer (see the Configuration section below for all available options):
+### 1. Install The Gem
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
-  config.max_connections = 256
-end
+gem "patient_http-sidekiq"
+```
+
+That is the whole setup. Loading the gem registers the request handler and hooks the processor into Sidekiq's startup and shutdown, so there is no initializer to write and no method you have to remember to call. Every option has a working default; see [Configuration](#configuration) to change any of them.
+
+For a commented initializer to start from, generate one:
+
+```bash
+bin/rails generate patient_http:sidekiq:install
 ```
 
 ### 2. Create a Callback Service
@@ -265,7 +269,7 @@ You can turn this off with `config.direct_execution = false`. Do this if you rou
 By default all requests share one processor and one `max_connections` cap. When one process serves workload classes with very different profiles (for example, large slow API calls and small fast webhook deliveries), a burst of one class can consume all of the capacity the other class needs. Named processor profiles isolate them:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.processor(:llm, max_connections: 200, request_timeout: 120)
   config.processor(:webhooks, max_connections: 64, request_timeout: 10)
 end
@@ -276,10 +280,10 @@ Each profile runs as an independent processor in the process, with its own capac
 Route a request to a processor in any of these ways:
 
 ```ruby
-# Explicit option on execute
-PatientHttp::Sidekiq.execute(request, callback: MyCallback, processor: :llm)
+# Explicit option on the request
+PatientHttp.get(url, callback: MyCallback, processor: :llm)
 
-# On the request itself (survives serialization, retries, and crash recovery)
+# On a request object (survives serialization, retries, and crash recovery)
 request = PatientHttp::Request.new(:get, url, processor: :llm)
 
 # Through a request template
@@ -287,7 +291,7 @@ template = PatientHttp::RequestTemplate.new(base_url: url, processor: :llm)
 
 # Scoped for a block
 PatientHttp::Sidekiq.with_sidekiq_options("processor" => "webhooks") do
-  PatientHttp::Sidekiq.execute(request, callback: MyCallback)
+  PatientHttp.get(url, callback: MyCallback)
 end
 ```
 
@@ -418,7 +422,7 @@ You can configure encryption so that all request and response data is automatica
 The simplest option is `encryption_key=`, which sets up [ActiveSupport::MessageEncryptor](https://api.rubyonrails.org/classes/ActiveSupport/MessageEncryptor.html) using AES-256-GCM:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.encryption_key = ENV["PATIENT_HTTP_ENCRYPTION_KEY"]
 end
 ```
@@ -426,7 +430,7 @@ end
 Pass an array to support key rotation (first key encrypts, all keys attempt decryption):
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.encryption_key = [ENV["PATIENT_HTTP_ENCRYPTION_KEY"], ENV["PATIENT_HTTP_OLD_KEY"]]
 end
 ```
@@ -436,7 +440,7 @@ end
 For custom encryption libraries, provide callables that accept and return raw bytes (String):
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.encryption { |bytes| MyEncryption.encrypt(bytes) }
   config.decryption { |bytes| MyEncryption.decrypt(bytes) }
 end
@@ -445,7 +449,7 @@ end
 You can also pass any object that responds to `call`:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.encryption(->(bytes) { MyEncryption.encrypt(bytes) })
   config.decryption(->(bytes) { MyEncryption.decrypt(bytes) })
 end
@@ -453,10 +457,12 @@ end
 
 ## Configuration
 
-The gem can be configured globally in an initializer:
+All configuration is optional. Set options in an initializer through `PatientHttp.configure`, which yields this gem's configuration when it is loaded. `PatientHttp::Sidekiq.configure` is equivalent; using `PatientHttp.configure` keeps the initializer free of any reference to the job system.
+
+The same configuration object is yielded every time, so options accumulate and several initializers can each contribute without overwriting one another.
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   # Maximum concurrent HTTP requests (default: 256)
   config.max_connections = 256
 
@@ -466,8 +472,23 @@ PatientHttp::Sidekiq.configure do |config|
   # Maximum number of host clients to pool (default: 100)
   config.connection_pool_size = 100
 
-  # Connection timeout in seconds (default: nil, uses request_timeout)
+  # The seconds to make a connection (default: nil, no limit). This includes the
+  # TCP connect and the TLS handshake. It does not limit the time that a request
+  # waits for a response. The request_timeout setting does that.
   config.connection_timeout = 10
+
+  # TCP keepalive for pooled connections (default: nil, the kernel sends no
+  # probes). A number sets the idle seconds before the first probe. A Hash also
+  # sets the interval and the probe count, for example
+  # {idle: 30, interval: 10, count: 3}. The Hash must contain :idle. The
+  # :interval default is 10 seconds and the :count default is 3 probes.
+  config.tcp_keepalive = 30
+
+  # The seconds that sent data can stay unacknowledged (default: nil, the kernel
+  # default applies). The kernel then ends the connection. This sets
+  # TCP_USER_TIMEOUT, which is available on Linux only. Other platforms keep
+  # their own retransmission limits.
+  config.tcp_user_timeout = 30
 
   # Number of retries for failed requests (default: 3)
   config.retries = 3
@@ -557,17 +578,14 @@ PatientHttp::Sidekiq.configure do |config|
 end
 ```
 
-See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all available options.
-
-> [!NOTE]
-> You **must** call `PatientHttp::Sidekiq.configure` or `PatientHttp::Sidekiq.register_handler` in order to register the request handler and start processing requests. If you do not call either method, you will get errors making HTTP requests with `PatientHttp.execute`.
+See the [Configuration](lib/patient_http/sidekiq/configuration.rb) class for all available options, and the [patient_http docs](https://github.com/bdurand/patient_http#configuration) for the HTTP options this gem inherits.
 
 ### Tuning Tips
 
 - `max_connections`: Adjust this based on your system's resources. Each connection uses memory and file descriptors. A tuned system with sufficient resources can handle thousands of concurrent connections.
 - `request_timeout`: Set this based on the expected response times of the APIs you are calling. AI APIs might sometimes take minutes to respond as they generate content.
 - `connection_pool_size`: Controls how many connections to different hosts are kept alive. Increase for applications calling many different API endpoints.
-- `connection_timeout`: Set this if you need to fail fast on connection establishment. Useful for detecting network issues quickly.
+- `connection_timeout`: This limits only the TCP connect and the TLS handshake. Set it to fail quickly when a host does not answer. It does not limit the time for a response, because `request_timeout` controls the full exchange.
 - `retries`: Number of times to retry a failed request before calling the error callback.
 - `max_response_size`: Set this to limit the maximum size of HTTP responses. This helps prevent excessive memory usage from unexpectedly large responses. Responses need to be serialized to Redis as Sidekiq jobs and very large responses may cause performance issues in Redis. If a response body is text content, it will be compressed to save space in Redis. However, binary content needs to be Base64 encoded which increases size by ~33%.
 - `max_connections_per_host`: Bounds sockets per host. Verify the process file descriptor limit covers `max_connections` plus pooled idle host connections plus the application's own connections; raise the limit if needed.
@@ -626,7 +644,7 @@ removed and the scheme, host, and path are kept. Paths can still carry identifie
 redact more, or record nothing at all:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   # Redact more of the URL.
   config.inflight_url_sanitizer { |url| url.sub(%r{/users/\d+}, "/users/:id") }
 
@@ -658,7 +676,7 @@ You can register multiple callbacks; they will be called in the order registered
 When a callback worker job exhausts all of its Sidekiq retries, you can configure an `on_retries_exhausted` handler to be notified. This is useful for alerting or recording when a callback has permanently failed. The handler receives the same error object as the `on_error` callback:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.on_retries_exhausted do |error|
     Sentry.capture_message("Callback permanently failed: #{error.message}")
     DeadLetterRecord.create!(
@@ -672,7 +690,7 @@ end
 You can also assign any object that responds to `call`:
 
 ```ruby
-PatientHttp::Sidekiq.configure do |config|
+PatientHttp.configure do |config|
   config.on_retries_exhausted = ->(error) { MyAlertService.notify(error) }
 end
 ```

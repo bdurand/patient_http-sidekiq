@@ -90,7 +90,6 @@ module PatientHttp
     autoload :WebUI, File.join(__dir__, "sidekiq/web_ui")
 
     @processors = {}
-    @configuration = nil
     @after_completion_callbacks = []
     @after_error_callbacks = []
     @external_storage = nil
@@ -102,39 +101,65 @@ module PatientHttp
     @monitor_thread = nil
 
     class << self
-      attr_writer :configuration
+      # Replace the configuration (useful for testing). The configuration is
+      # stored by PatientHttp, so this assigns it there.
+      #
+      # @param config [Configuration, nil] the configuration to use
+      # @return [void]
+      def configuration=(config)
+        PatientHttp.default_configuration = config
+      end
 
-      # Configure the gem with a block. The built configuration is also set as the
-      # `PatientHttp.default_configuration` so that secrets registered at the module
-      # level with `PatientHttp.register_secret` are applied to the configuration the
-      # processor runs with, regardless of boot order.
+      # Configure the gem with a block.
+      #
+      # The same configuration object is yielded every time, so options
+      # accumulate and several initializers can each contribute without
+      # overwriting one another. `PatientHttp.configure` delegates here, so
+      # application code can use either entry point.
+      #
+      # @example
+      #   PatientHttp.configure do |config|
+      #     config.max_connections = 512
+      #   end
       #
       # @yield [Configuration] the configuration object
       # @return [Configuration]
       def configure
-        configuration = Configuration.new
-        yield(configuration) if block_given?
-        @configuration = configuration
+        config = configuration
+        yield(config) if block_given?
         @external_storage = nil
         # Rebuild the stats aggregator from the new configuration unless a
         # running processor already owns it.
         @stats = nil unless running?
-        register_handler
-        PatientHttp.default_configuration = configuration
-        configuration
+        config
       end
 
-      # Ensure configuration is initialized
+      # The configuration for this process, created on first use.
+      #
+      # The configuration object is stored by `PatientHttp`, so this and
+      # `PatientHttp.configuration` are the same object. That is what lets
+      # secrets registered at the module level with `PatientHttp.register_secret`
+      # reach the configuration the processor runs with, regardless of boot order.
+      #
       # @return [Configuration]
       def configuration
-        @configuration ||= Configuration.new
+        PatientHttp.configuration
+      end
+
+      # Build a new configuration instance. Called by `PatientHttp` when it needs
+      # to create the configuration for this process.
+      #
+      # @return [Configuration]
+      # @api private
+      def new_configuration
+        Configuration.new
       end
 
       # Reset configuration to defaults (useful for testing)
       # @return [Configuration]
       def reset_configuration!
-        @configuration = nil
         @external_storage = nil
+        PatientHttp.default_configuration = nil
         configuration
       end
 
@@ -254,6 +279,14 @@ module PatientHttp
 
       # Execute an async HTTP request.
       #
+      # Application code should normally use the `PatientHttp` module methods
+      # (`PatientHttp.get`, `PatientHttp.post`, `PatientHttp.request`, or the
+      # `PatientHttp::RequestHelper` mixin) instead of calling this directly.
+      # Those methods take the same options, including `processor:`, and keep
+      # application code free of any reference to the job system. This method is
+      # the integration's own entry point and remains available for dispatching
+      # a request object that has already been built.
+      #
       # @param request [PatientHttp::Request] the HTTP request to execute
       # @param callback [Class, String] Callback service class with +on_complete+ and +on_error+
       #   instance methods, or its fully qualified class name.
@@ -262,16 +295,23 @@ module PatientHttp
       #   (nil, true, false, String, Integer, Float, Array, Hash). All hash keys will be
       #   converted to strings for serialization. Access via +response.callback_args+ or
       #   +error.callback_args+ using symbol or string keys.
-      # @param raise_error_responses [Boolean] If true, treats non-2xx responses as errors
-      #   and calls +on_error+ instead of +on_complete+. Defaults to false.
+      # @param raise_error_responses [Boolean, nil] If true, treats non-2xx responses as errors
+      #   and calls +on_error+ instead of +on_complete+. Defaults to the configuration's
+      #   +raise_error_responses+ setting when nil.
       # @param processor [Symbol, String, nil] Name of the processor profile that should
       #   execute the request. Defaults to the request's own processor name, a
       #   "processor" value from with_sidekiq_options, or :default.
       # @return [String] the request ID
-      def execute(request, callback:, callback_args: nil, raise_error_responses: false, processor: nil)
+      def execute(request, callback:, callback_args: nil, raise_error_responses: nil, processor: nil)
         PatientHttp::CallbackValidator.validate!(callback)
         callback_name = callback.is_a?(Class) ? callback.name : callback.to_s
         callback_args = PatientHttp::CallbackValidator.validate_callback_args(callback_args)
+        # The PatientHttp module methods pass nil when the caller did not ask for a
+        # specific behavior, so fall back to the configured default the same way the
+        # inline handler in the base gem does.
+        if raise_error_responses.nil?
+          raise_error_responses = configuration.raise_error_responses
+        end
         request_id = SecureRandom.uuid
 
         request_json = request.as_json
@@ -311,8 +351,13 @@ module PatientHttp
         request_id
       end
 
-      # Register Sidekiq as the request handler for processing HTTP requests. This is called
-      # automatically when the processor starts or you call PatientHttp::Sidekiq.configure.
+      # Register Sidekiq as the request handler for processing HTTP requests.
+      #
+      # This is called automatically when the gem is loaded, so requests made
+      # through the `PatientHttp` module work in every process that requires it,
+      # whether or not the application configures the gem or runs a processor.
+      # It stays registered for the life of the process: after the processor
+      # stops, requests are enqueued to Redis for another process to run.
       #
       # @return [void]
       def register_handler
@@ -388,10 +433,9 @@ module PatientHttp
       # @param timeout [Float, nil] maximum time to wait for in-flight requests to complete
       # @return [void]
       def stop(timeout: nil)
-        if @request_handler
-          PatientHttp.unregister_handler(@request_handler)
-        end
-
+        # The request handler stays registered. A request made while the process
+        # is shutting down is enqueued to Redis and run by another process,
+        # which is better than raising because no handler is registered.
         @lifecycle_mutex.synchronize do
           # Shared services can outlive the processors when a start failed part
           # way through, so tear them down whenever any of them exist.
@@ -411,11 +455,13 @@ module PatientHttp
           stop_processors(0)
           shutdown_shared_services
         end
-        @configuration = nil
         @external_storage = nil
         @after_completion_callbacks = []
         @after_error_callbacks = []
-        PatientHttp.unregister_handler(@request_handler) if @request_handler
+        PatientHttp.default_configuration = nil
+        # Restore the state a freshly loaded process is in: the handler is
+        # registered, the configuration is not built yet.
+        register_handler
       end
 
       # Invoke the registered completion callbacks
@@ -670,5 +716,15 @@ module PatientHttp
     end
   end
 
+  # Wire the gem up as soon as it is loaded so that no setup step is required
+  # to start making requests:
+  #
+  # - the request handler is registered, so PatientHttp.get and friends work in
+  #   every process that requires the gem, configured or not;
+  # - PatientHttp.configure and PatientHttp.configuration resolve to this gem's
+  #   configuration, so applications never have to name the integration;
+  # - the Sidekiq lifecycle hooks start and stop the processor with the server.
+  PatientHttp::Sidekiq.register_handler
+  PatientHttp.register_configuration_provider(PatientHttp::Sidekiq)
   PatientHttp::Sidekiq::LifecycleHooks.register
 end

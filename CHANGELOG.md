@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.0
+
+### Added
+
+- Install generator: `rails generate patient_http:sidekiq:install` writes a commented `config/initializers/patient_http.rb` covering the options applications actually set. It is a convenience, not an install step, since the gem works with no initializer at all.
+
+### Changed
+
+- **No setup call is required.** The request handler is registered when the gem is loaded, so `PatientHttp.get` and the other request methods work in every process that requires the gem, configured or not. Previously `PatientHttp::Sidekiq.configure` or `register_handler` had to be called first or requests raised, which made a missing or unloaded initializer fail at dispatch time.
+- `PatientHttp.configure` and `PatientHttp.configuration` resolve to this gem's configuration, so application code never has to name the integration to configure it. `PatientHttp::Sidekiq.configure` remains equivalent.
+- **`configure` now accumulates instead of replacing.** It yields the one configuration object for the process rather than building a new one each time, so several initializers can each contribute options and a second call no longer discards what an earlier one registered. Code that relied on `configure` resetting the configuration should call `reset_configuration!` first.
+- The configuration is created on first use and published to `PatientHttp` at that moment. Previously it was published only inside `configure`, so a process that started a processor without calling `configure` never received module level secrets registered with `PatientHttp.register_secret`.
+- The request handler stays registered for the life of the process. `stop` no longer unregisters it, so a request made while the process is shutting down is enqueued to Redis for another process to run instead of raising.
+- `payload_store_threshold` moved to `PatientHttp::Configuration`, next to `register_payload_store`. It is inherited, so `config.payload_store_threshold` is unchanged. `PatientHttp::Sidekiq::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD` now points at the base gem's constant and is deprecated.
+
+### Fixed
+
+- `config.raise_error_responses = true` now applies to requests made through the `PatientHttp` module methods. Those methods pass `nil` when the caller does not ask for a specific behavior, and `execute` treated `nil` as `false` instead of falling back to the configuration, so a non-2xx response was delivered to `on_complete` rather than `on_error`. An explicit `raise_error_responses:` argument still wins, and jobs already enqueued without the option continue to be treated as `false`.
+
 ## 1.4.0
 
 ### Added

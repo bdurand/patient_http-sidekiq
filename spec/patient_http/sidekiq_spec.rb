@@ -9,6 +9,32 @@ RSpec.describe PatientHttp::Sidekiq do
     end
   end
 
+  describe "setup" do
+    it "registers the request handler when the gem is loaded" do
+      expect(PatientHttp.handler_registered?).to be(true)
+    end
+
+    it "registers itself as the PatientHttp configuration provider" do
+      expect(PatientHttp.configuration_provider).to be(described_class)
+      expect(PatientHttp.configuration).to be_a(PatientHttp::Sidekiq::Configuration)
+    end
+
+    it "enqueues requests made through PatientHttp without any configure call" do
+      described_class.reset!
+
+      PatientHttp.get("https://example.com/unconfigured", callback: TestCallback)
+
+      expect(PatientHttp::Sidekiq::RequestWorker.jobs.size).to eq(1)
+    end
+
+    it "keeps the handler registered after the processor stops" do
+      described_class.start
+      described_class.stop(timeout: 0)
+
+      expect(PatientHttp.handler_registered?).to be(true)
+    end
+  end
+
   describe ".configure" do
     after do
       described_class.reset_configuration!
@@ -32,6 +58,29 @@ RSpec.describe PatientHttp::Sidekiq do
 
     it "yields a Configuration instance" do
       expect { |b| described_class.configure(&b) }.to yield_with_args(PatientHttp::Sidekiq::Configuration)
+    end
+
+    it "yields the same configuration on every call so options accumulate" do
+      described_class.configure { |c| c.max_connections = 512 }
+      described_class.configure { |c| c.request_timeout = 120 }
+
+      expect(described_class.configuration.max_connections).to eq(512)
+      expect(described_class.configuration.request_timeout).to eq(120)
+    end
+
+    it "is reachable through PatientHttp.configure without naming the integration" do
+      config = PatientHttp.configure { |c| c.max_connections = 321 }
+
+      expect(config).to be_a(PatientHttp::Sidekiq::Configuration)
+      expect(described_class.configuration.max_connections).to eq(321)
+    end
+
+    it "applies module-level secrets registered after the configuration exists" do
+      described_class.configure { |c| }
+
+      PatientHttp.register_secret("late_secret", "s3cret")
+
+      expect(described_class.configuration.secret_manager.include?("late_secret")).to be(true)
     end
 
     it "builds and stores a Configuration" do
@@ -570,6 +619,60 @@ RSpec.describe PatientHttp::Sidekiq do
         expect(raise_error_responses).to eq(true)
         expect(callback_args).to eq({"info" => "data"})
         expect(req_id).to eq(request_id)
+      end
+
+      context "raise_error_responses" do
+        after { described_class.reset_configuration! }
+
+        def enqueued_raise_error_responses
+          PatientHttp::Sidekiq::RequestWorker.jobs.last["args"][2]
+        end
+
+        it "falls back to the configured default when not specified" do
+          described_class.configure { |c| c.raise_error_responses = true }
+
+          described_class.execute(PatientHttp::Request.new(:get, "https://example.com"), callback: TestCallback)
+
+          expect(enqueued_raise_error_responses).to be(true)
+        end
+
+        it "falls back to the configured default when explicitly nil" do
+          described_class.configure { |c| c.raise_error_responses = true }
+
+          described_class.execute(
+            PatientHttp::Request.new(:get, "https://example.com"),
+            callback: TestCallback,
+            raise_error_responses: nil
+          )
+
+          expect(enqueued_raise_error_responses).to be(true)
+        end
+
+        it "lets an explicit false override a true default" do
+          described_class.configure { |c| c.raise_error_responses = true }
+
+          described_class.execute(
+            PatientHttp::Request.new(:get, "https://example.com"),
+            callback: TestCallback,
+            raise_error_responses: false
+          )
+
+          expect(enqueued_raise_error_responses).to be(false)
+        end
+
+        it "resolves the configured default for requests made through PatientHttp" do
+          PatientHttp.configure { |c| c.raise_error_responses = true }
+
+          PatientHttp.get("https://example.com", callback: TestCallback)
+
+          expect(enqueued_raise_error_responses).to be(true)
+        end
+
+        it "defaults to false when the configuration leaves it unset" do
+          described_class.execute(PatientHttp::Request.new(:get, "https://example.com"), callback: TestCallback)
+
+          expect(enqueued_raise_error_responses).to be(false)
+        end
       end
 
       context "with encryption configured" do

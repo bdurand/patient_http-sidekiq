@@ -11,11 +11,12 @@ module PatientHttp
     #
     # Access the underlying pool configuration via the +http_pool+ attribute.
     class Configuration < PatientHttp::Configuration
-      # Default threshold in bytes above which payloads are stored externally
-      DEFAULT_PAYLOAD_STORE_THRESHOLD = 64 * 1024 # 64KB
-
-      # @return [Integer] Size threshold in bytes for external payload storage
-      attr_reader :payload_store_threshold
+      # Default threshold in bytes above which payloads are stored externally.
+      #
+      # @deprecated Use {PatientHttp::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD}.
+      #   `payload_store_threshold` now lives on the base configuration, next to
+      #   `register_payload_store`.
+      DEFAULT_PAYLOAD_STORE_THRESHOLD = PatientHttp::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD
 
       # @return [Numeric] Orphan detection threshold in seconds
       attr_reader :orphan_threshold
@@ -81,7 +82,6 @@ module PatientHttp
         heartbeat_interval: 60,
         orphan_threshold: 300,
         sidekiq_options: nil,
-        payload_store_threshold: DEFAULT_PAYLOAD_STORE_THRESHOLD,
         on_retries_exhausted: nil,
         direct_execution: true,
         redis_pool_size: nil,
@@ -100,7 +100,6 @@ module PatientHttp
         self.sidekiq_options = sidekiq_options
         self.heartbeat_interval = heartbeat_interval
         self.orphan_threshold = orphan_threshold
-        self.payload_store_threshold = payload_store_threshold || DEFAULT_PAYLOAD_STORE_THRESHOLD
         self.on_retries_exhausted = on_retries_exhausted
         self.direct_execution = direct_execution
         self.redis_pool_size = redis_pool_size
@@ -122,18 +121,6 @@ module PatientHttp
         end
 
         @on_retries_exhausted = value
-      end
-
-      # Set the threshold size for external payload storage.
-      #
-      # Payloads larger than this size (in bytes) will be stored externally
-      # when a payload store is configured.
-      #
-      # @param value [Integer] Threshold in bytes
-      # @raise [ArgumentError] If value is not a positive integer
-      def payload_store_threshold=(value)
-        validate_positive_integer(:payload_store_threshold, value)
-        @payload_store_threshold = value
       end
 
       # Set the heartbeat interval for crash recovery.
@@ -355,7 +342,6 @@ module PatientHttp
       # @return [Hash] hash representation with string keys
       def to_h
         super.merge(
-          "payload_store_threshold" => payload_store_threshold,
           "heartbeat_interval" => heartbeat_interval,
           "orphan_threshold" => orphan_threshold,
           "sidekiq_options" => sidekiq_options,
