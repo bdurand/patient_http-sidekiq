@@ -421,6 +421,14 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect { config.processor(:bad, no_such_option: 1) }.to raise_error(ArgumentError, /Invalid processor profile options/)
     end
 
+    it "rejects an encryption_key override because processors share encryption" do
+      config = described_class.new
+      expect { config.processor(:pii, encryption_key: "secret") }.to raise_error(
+        ArgumentError, /encryption_key can't be set for a processor profile/
+      )
+      expect(config.processor(:pii)).to be_nil
+    end
+
     it "rejects an empty name" do
       config = described_class.new
       expect { config.processor("", max_connections: 1) }.to raise_error(ArgumentError, /processor name cannot be empty/)
@@ -485,6 +493,25 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect(llm_config.secret_manager.resolve_headers("authorization" => PatientHttp.secret(:token))).to eq(
         "authorization" => "secret-value"
       )
+    end
+
+    it "returns the same configuration on repeated calls" do
+      config = described_class.new
+      config.processor(:llm, max_connections: 200)
+
+      expect(config.processor_config(:llm)).to be(config.processor_config("llm"))
+    end
+
+    it "builds a new configuration after the profile is declared again" do
+      config = described_class.new
+      config.processor(:llm, max_connections: 200)
+      original = config.processor_config(:llm)
+
+      config.processor(:llm, max_connections: 50)
+      updated = config.processor_config(:llm)
+
+      expect(updated).not_to be(original)
+      expect(updated.max_connections).to eq(50)
     end
 
     it "raises for an unknown profile" do

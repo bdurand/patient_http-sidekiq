@@ -146,6 +146,7 @@ RSpec.describe "Direct Execution", :integration do
         c.register_payload_store(:test_store, adapter: :test_store)
         c.payload_store_threshold = 1
       end
+      config.payload_store_threshold = 1
     end
 
     after do

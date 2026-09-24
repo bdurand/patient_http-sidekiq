@@ -34,8 +34,10 @@ module PatientHttp
         #   strings. The callback reads the arguments from
         #   `response.callback_args` or `error.callback_args` with symbol or
         #   string keys.
-        # @param raise_error_responses [Boolean] Whether to treat non-2xx
+        # @param raise_error_responses [Boolean, nil] Whether to treat non-2xx
         #   responses as errors and call `on_error` instead of `on_complete`.
+        #   If `nil`, uses the processor profile's `raise_error_responses`
+        #   option.
         # @param request_id [String, nil] The request ID. If `nil`, a new UUID
         #   is generated.
         # @param processor_name [Symbol, String, nil] The name of the processor
@@ -66,8 +68,12 @@ module PatientHttp
           # A running processor already holds the built profile configuration.
           name = (processor_name || request.processor || :default).to_sym
           processor = PatientHttp::Sidekiq.processor(name)
-          profile_declared = config.processor_profiles.key?(name)
-          task_config = processor&.config || (profile_declared ? config.processor_config(name) : config)
+          profile_declared = !config.processor(name).nil?
+          task_config = PatientHttp::Sidekiq.processor_config_for(name)
+
+          # Jobs enqueued by earlier versions of the gem can carry nil, which
+          # means the caller did not ask for a specific behavior.
+          raise_error_responses = task_config.raise_error_responses if raise_error_responses.nil?
 
           task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job), config: task_config)
 

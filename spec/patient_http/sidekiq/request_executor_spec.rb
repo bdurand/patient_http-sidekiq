@@ -46,6 +46,23 @@ RSpec.describe PatientHttp::Sidekiq::RequestExecutor do
         )
       end
 
+      it "uses the configured raise_error_responses when the value is nil" do
+        PatientHttp::Sidekiq.configuration.raise_error_responses = true
+        captured_task = nil
+        allow(processor).to receive(:enqueue) { |task| captured_task = task }
+
+        described_class.execute(
+          request,
+          sidekiq_job: job_hash,
+          callback: TestCallback,
+          raise_error_responses: nil
+        )
+
+        expect(captured_task.raise_error_responses).to be(true)
+      ensure
+        PatientHttp::Sidekiq.reset_configuration!
+      end
+
       it "sets enqueued_at on the task" do
         captured_task = nil
         allow(processor).to receive(:enqueue) do |task|

@@ -54,6 +54,10 @@ module PatientHttp
       # The SHA1 digest of RECORD_MAXIMA_SCRIPT.
       RECORD_MAXIMA_SHA = Digest::SHA1.hexdigest(RECORD_MAXIMA_SCRIPT).freeze
 
+      # @return [Configuration, nil] The gem configuration, or `nil` for an
+      #   aggregator that only reads and clears the totals.
+      attr_reader :config
+
       # Creates a stats aggregator.
       #
       # @param config [Configuration, nil] The gem configuration. The Web UI

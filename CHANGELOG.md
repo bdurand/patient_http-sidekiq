@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The configuration is created on first use and published to `PatientHttp` at that moment. Previously it was published only inside `configure`, so a process that started a processor without calling `configure` never received module level secrets registered with `PatientHttp.register_secret`.
 - The request handler stays registered for the life of the process. `stop` no longer unregisters it, so a request made while the process is shutting down is enqueued to Redis for another process to run instead of raising.
 - `payload_store_threshold` moved to `PatientHttp::Configuration`, next to `register_payload_store`. It is inherited, so `config.payload_store_threshold` is unchanged. `PatientHttp::Sidekiq::Configuration::DEFAULT_PAYLOAD_STORE_THRESHOLD` now points at the base gem's constant and is deprecated.
+- A request that names a processor profile that isn't declared in the process making the request raises `PatientHttp::UnknownProcessorError` instead of being enqueued. The profile's `raise_error_responses` and `payload_store_threshold` options are applied when the request is enqueued, so a request enqueued from a process without the profile used the base options. Declare processor profiles in every process that makes requests.
 - Minimum Ruby version is 3.3.
 
 ### Fixed

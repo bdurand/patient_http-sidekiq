@@ -311,6 +311,8 @@ PatientHttp::Sidekiq.with_sidekiq_options("processor" => "webhooks") do
 end
 ```
 
+A request that names a processor that isn't declared in the process making the request raises `PatientHttp::UnknownProcessorError`, so a misspelled name fails where the request is made. Declare processors in every process that makes requests, not only in the Sidekiq server, for example by declaring them outside a `Sidekiq.configure_server` block.
+
 The processor name is saved in the job arguments, so Sidekiq retries and crash recovery send the request to the same processor. If a job names a processor that isn't configured in the process that runs it, the job raises `PatientHttp::UnknownProcessorError`, and Sidekiq retries it. As a result, you can roll out a new profile name gradually. Jobs enqueued by earlier versions of the gem run on the `:default` processor.
 
 ### Use request templates

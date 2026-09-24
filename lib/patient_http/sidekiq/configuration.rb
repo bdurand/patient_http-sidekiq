@@ -117,6 +117,7 @@ module PatientHttp
 
         @observers = []
         @processor_profiles = {default: {}}
+        @processor_configs = {}
         self.sidekiq_options = sidekiq_options
         self.heartbeat_interval = heartbeat_interval
         self.orphan_threshold = orphan_threshold
@@ -335,7 +336,8 @@ module PatientHttp
       #
       # @param name [Symbol, String] The processor name.
       # @param options [Hash] The PatientHttp::Configuration options to
-      #   override. If empty, the profile isn't changed.
+      #   override. If empty, the profile isn't changed. `encryption_key` can't
+      #   be overridden, because all processors share encryption.
       # @return [Hash, nil] The options for the profile, or `nil` if the
       #   profile isn't declared.
       # @raise [ArgumentError] If `name` is empty or an option isn't valid.
@@ -345,6 +347,7 @@ module PatientHttp
         if options.any?
           validate_profile_options!(options)
           @processor_profiles[key] = options
+          @processor_configs.delete(key)
         end
 
         @processor_profiles[key]
@@ -382,7 +385,7 @@ module PatientHttp
 
         return self if profile.empty?
 
-        ProfileConfiguration.new(self, profile)
+        @processor_configs[key] ||= ProfileConfiguration.new(self, profile)
       end
 
       # Returns the configuration as a Hash for inspection.
@@ -410,15 +413,8 @@ module PatientHttp
       # configuration, so all processors share them.
       #
       # The overrides are applied to a separate PatientHttp::Configuration so
-      # that each option's writer normalizes its own value. Readers whose values
-      # a writer derives from an overridden option come from that configuration
-      # as well, so an override is never partly applied.
+      # that each option's writer normalizes its own value.
       class ProfileConfiguration < SimpleDelegator
-        # Readers whose values are set by the writer for another option.
-        DERIVED_READERS = {
-          encryption_key: [:encryption, :decryption, :encryptor]
-        }.freeze
-
         # Creates a view of a configuration with overrides applied.
         #
         # @param base_configuration [Configuration] The configuration that
@@ -428,8 +424,8 @@ module PatientHttp
         def initialize(base_configuration, overrides)
           super(base_configuration)
           normalized = PatientHttp::Configuration.new(**overrides)
-          readers = overrides.keys.flat_map { |key| [key.to_sym, *DERIVED_READERS[key.to_sym]] }.uniq
-          readers.each do |reader|
+          overrides.each_key do |key|
+            reader = key.to_sym
             next unless normalized.respond_to?(reader)
 
             define_singleton_method(reader) do |*args, &block|
@@ -442,14 +438,18 @@ module PatientHttp
       private
 
       # Validates processor profile options. Each option must be a valid
-      # PatientHttp::Configuration option. The options are applied to a
-      # temporary configuration so that each option's writer validates its
-      # own value.
+      # PatientHttp::Configuration option other than `encryption_key`. The
+      # options are applied to a temporary configuration so that each option's
+      # writer validates its own value.
       #
       # @param options [Hash] The profile options.
       # @return [void]
       # @raise [ArgumentError] If an option isn't valid.
       def validate_profile_options!(options)
+        if options.key?(:encryption_key)
+          raise ArgumentError.new("encryption_key can't be set for a processor profile")
+        end
+
         PatientHttp::Configuration.new(**options)
       rescue ArgumentError => e
         raise ArgumentError.new("Invalid processor profile options: #{e.message}")

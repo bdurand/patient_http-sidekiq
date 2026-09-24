@@ -31,7 +31,8 @@ module PatientHttp
       # @param callback_service_name [String] The fully qualified callback
       #   service class name.
       # @param raise_error_responses [Boolean, nil] Whether to treat non-2xx
-      #   responses as errors. `nil` is the same as `false`.
+      #   responses as errors. If `nil`, uses the processor profile's
+      #   `raise_error_responses` option.
       # @param callback_args [Hash, nil] The arguments to pass to the callback.
       # @param request_id [String, nil] The request ID.
       # @param processor_name [String, nil] The name of the processor profile

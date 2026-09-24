@@ -18,7 +18,8 @@
 PatientHttp.configure do |config|
   # --- HTTP behavior -------------------------------------------------------
 
-  # Maximum concurrent HTTP requests per process.
+  # Maximum concurrent HTTP requests per processor. Each named processor below
+  # has its own limit and uses this value unless it sets max_connections.
   # config.max_connections = 256
 
   # Default request timeout in seconds. Raise it for slow APIs; LLM APIs can

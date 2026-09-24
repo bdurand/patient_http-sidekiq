@@ -121,7 +121,8 @@ module PatientHttp
         encrypted = Sidekiq.encrypt(data)
         external_storage = PatientHttp::Sidekiq.external_storage
         if external_storage.enabled?
-          external_storage.store(encrypted, max_size: (@config || PatientHttp::Sidekiq.configuration).payload_store_threshold)
+          max_size = (@config || PatientHttp::Sidekiq.configuration).payload_store_threshold
+          external_storage.store(encrypted, max_size: max_size)
         else
           encrypted
         end

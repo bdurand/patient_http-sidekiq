@@ -180,6 +180,47 @@ RSpec.describe PatientHttp::Sidekiq do
       expect(config).to be_a(PatientHttp::Sidekiq::Configuration)
       expect(config.max_connections).to eq(256)
     end
+
+    it "rebuilds the stats aggregator and external storage from the new configuration" do
+      stats = described_class.stats
+      external_storage = described_class.external_storage
+
+      config = described_class.reset_configuration!
+
+      expect(described_class.stats).not_to be(stats)
+      expect(described_class.external_storage).not_to be(external_storage)
+      expect(described_class.external_storage.config).to be(config)
+    end
+  end
+
+  describe ".configuration=" do
+    after do
+      described_class.reset_configuration!
+    end
+
+    it "rebuilds the stats aggregator and external storage from the assigned configuration" do
+      stats = described_class.stats
+      expect(described_class.external_storage.enabled?).to be(false)
+
+      config = PatientHttp::Sidekiq::Configuration.new
+      config.register_payload_store(:test_store, adapter: :test_store)
+      described_class.configuration = config
+
+      expect(described_class.stats).not_to be(stats)
+      expect(described_class.external_storage.config).to be(config)
+      expect(described_class.external_storage.enabled?).to be(true)
+    end
+
+    it "rebuilds the stats aggregator and external storage when PatientHttp replaces the configuration" do
+      stats = described_class.stats
+      described_class.external_storage
+
+      PatientHttp.default_configuration = nil
+
+      expect(described_class.stats).not_to be(stats)
+      expect(described_class.stats.config).to be(described_class.configuration)
+      expect(described_class.external_storage.config).to be(described_class.configuration)
+    end
   end
 
   describe ".processor" do
@@ -321,6 +362,25 @@ RSpec.describe PatientHttp::Sidekiq do
 
     it "returns early if not running" do
       expect { described_class.stop }.not_to raise_error
+    end
+
+    it "logs a processor stop error and still shuts down the shared services" do
+      logger = Logger.new(StringIO.new)
+      described_class.configure { |c| c.logger = logger }
+      described_class.start
+      allow(described_class.processor).to receive(:stop).and_wrap_original do |original, **options|
+        original.call(**options)
+        raise "boom"
+      end
+      expect(logger).to receive(:error).with(/Failed to stop processor default: .*boom/)
+
+      expect { described_class.stop(timeout: 0) }.not_to raise_error
+
+      expect(described_class.processor).to be_nil
+      expect(described_class.redis_pool).to be_nil
+      expect(described_class.instance_variable_get(:@monitor_thread)).to be_nil
+    ensure
+      described_class.reset_configuration!
     end
 
     it "keeps the request handler registered so requests made while stopping are enqueued" do
@@ -827,6 +887,31 @@ RSpec.describe PatientHttp::Sidekiq do
           expect(jobs.size).to eq(1)
           expect(jobs.first["class"]).to eq("PatientHttp::Sidekiq::RequestWorker")
           expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+        end
+
+        it "hands the request to the local processor when processor is the only scoped option" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          described_class.with_sidekiq_options(processor: :default) do
+            described_class.execute(request, callback: TestCallback)
+          end
+
+          expect(PatientHttp::Sidekiq::RequestExecutor).to have_received(:execute)
+            .with(anything, hash_including(processor_name: "default"))
+          expect(enqueued_jobs.size).to eq(0)
+        end
+
+        it "raises without running or enqueuing the request when the processor is not declared" do
+          allow(PatientHttp::Sidekiq::RequestExecutor).to receive(:execute)
+
+          request = PatientHttp::Request.new(:get, "https://example.com")
+          expect do
+            described_class.execute(request, callback: TestCallback, processor: :reports)
+          end.to raise_error(PatientHttp::UnknownProcessorError, /reports/)
+
+          expect(PatientHttp::Sidekiq::RequestExecutor).not_to have_received(:execute)
+          expect(enqueued_jobs).to be_empty
         end
 
         it "enqueues the job through Sidekiq when the processor is at max capacity" do

@@ -47,11 +47,51 @@ RSpec.describe "Named processors" do
       expect(PatientHttp::Sidekiq.processor).to be_nil
     end
 
+    it "stops the other processors when one of them fails to stop" do
+      PatientHttp::Sidekiq.start
+      llm_processor = PatientHttp::Sidekiq.processor(:llm)
+      other_processors = [:default, :webhooks].map { |name| PatientHttp::Sidekiq.processor(name) }
+      allow(llm_processor).to receive(:stop).and_wrap_original do |original, **options|
+        original.call(**options)
+        raise "boom"
+      end
+
+      expect { PatientHttp::Sidekiq.stop(timeout: 0) }.not_to raise_error
+
+      expect(other_processors).to all(be_stopped)
+      expect(PatientHttp::Sidekiq.redis_pool).to be_nil
+    end
+
     it "reports the summed max connections through the process registry" do
       PatientHttp::Sidekiq.start
 
       counts = PatientHttp::Sidekiq::TaskMonitor.inflight_counts_by_process
       expect(counts.values.sum { |data| data[:max_capacity] }).to eq(80)
+    end
+  end
+
+  describe ".processor_config_for" do
+    before do
+      PatientHttp::Sidekiq.configure do |config|
+        config.processor(:llm, max_connections: 20)
+      end
+    end
+
+    it "returns the running processor's configuration" do
+      PatientHttp::Sidekiq.start
+
+      expect(PatientHttp::Sidekiq.processor_config_for(:llm)).to be(PatientHttp::Sidekiq.processor(:llm).config)
+    end
+
+    it "returns the declared profile configuration when no processor is running" do
+      config = PatientHttp::Sidekiq.processor_config_for("llm")
+
+      expect(config).to be(PatientHttp::Sidekiq.configuration.processor_config(:llm))
+      expect(config.max_connections).to eq(20)
+    end
+
+    it "returns the base configuration for a name without a declared profile" do
+      expect(PatientHttp::Sidekiq.processor_config_for(:undeclared)).to be(PatientHttp::Sidekiq.configuration)
     end
   end
 
@@ -119,16 +159,29 @@ RSpec.describe "Named processors" do
       expect(job["args"][2]).to be(true)
     end
 
-    it "enqueues a processor name without a declared profile using the base configuration" do
-      PatientHttp::Sidekiq.configuration.raise_error_responses = true
+    it "raises for a processor profile that is not declared" do
+      request = PatientHttp::Request.new(:get, "https://example.com")
+
+      expect do
+        PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :undeclared)
+      end.to raise_error(PatientHttp::UnknownProcessorError, /undeclared/)
+      expect(PatientHttp::Sidekiq::RequestWorker.jobs).to be_empty
+    end
+
+    it "raises for an undeclared processor set on the request or in with_sidekiq_options" do
+      request = PatientHttp::Request.new(:get, "https://example.com", processor: :on_request)
+      expect do
+        PatientHttp::Sidekiq.execute(request, callback: TestCallback)
+      end.to raise_error(PatientHttp::UnknownProcessorError, /on_request/)
 
       request = PatientHttp::Request.new(:get, "https://example.com")
-      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :undeclared)
+      expect do
+        PatientHttp::Sidekiq.with_sidekiq_options("processor" => "in_block") do
+          PatientHttp::Sidekiq.execute(request, callback: TestCallback)
+        end
+      end.to raise_error(PatientHttp::UnknownProcessorError, /in_block/)
 
-      job = PatientHttp::Sidekiq::RequestWorker.jobs.last
-      expect(job["args"][2]).to be(true)
-      expect(job["args"].last).to eq("undeclared")
-      expect(PatientHttp::Sidekiq.configuration.processor_profiles).not_to have_key(:undeclared)
+      expect(PatientHttp::Sidekiq::RequestWorker.jobs).to be_empty
     end
 
     it "uses the processor profile payload_store_threshold" do
