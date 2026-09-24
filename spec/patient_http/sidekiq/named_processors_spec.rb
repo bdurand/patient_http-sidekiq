@@ -90,8 +90,9 @@ RSpec.describe "Named processors" do
       expect(config.max_connections).to eq(20)
     end
 
-    it "returns the base configuration for a name without a declared profile" do
-      expect(PatientHttp::Sidekiq.processor_config_for(:undeclared)).to be(PatientHttp::Sidekiq.configuration)
+    it "returns nil for a name without a declared profile" do
+      expect(PatientHttp::Sidekiq.processor_config_for(:undeclared)).to be_nil
+      expect(PatientHttp::Sidekiq.processor_config_for("")).to be_nil
     end
   end
 
@@ -138,6 +139,24 @@ RSpec.describe "Named processors" do
       expect(job["args"].last).to eq("default")
     end
 
+    it "routes to a profile declared with no options" do
+      PatientHttp::Sidekiq.configure { |config| config.processor(:bulk) }
+
+      request = PatientHttp::Request.new(:get, "https://example.com")
+      PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: :bulk)
+
+      job = PatientHttp::Sidekiq::RequestWorker.jobs.last
+      expect(job["args"].last).to eq("bulk")
+    end
+
+    it "raises UnknownProcessorError for an empty processor name" do
+      request = PatientHttp::Request.new(:get, "https://example.com")
+
+      expect {
+        PatientHttp::Sidekiq.execute(request, callback: TestCallback, processor: "")
+      }.to raise_error(PatientHttp::UnknownProcessorError)
+    end
+
     it "uses the processor profile raise_error_responses when none is given" do
       PatientHttp::Sidekiq.configure { |config| config.processor(:strict, raise_error_responses: true) }
 
@@ -146,7 +165,7 @@ RSpec.describe "Named processors" do
 
       job = PatientHttp::Sidekiq::RequestWorker.jobs.last
       expect(job["args"][2]).to be(true)
-      expect(PatientHttp::Sidekiq.configuration.processor(:strict)).to eq(raise_error_responses: true)
+      expect(PatientHttp::Sidekiq.configuration.processor_options(:strict)).to eq(raise_error_responses: true)
     end
 
     it "uses the base raise_error_responses for a profile that does not override it" do

@@ -80,7 +80,6 @@ module PatientHttp
       # @return [void]
       def configuration=(config)
         PatientHttp.default_configuration = config
-        clear_configuration_state
       end
 
       # Yields the configuration to a block.
@@ -89,6 +88,13 @@ module PatientHttp
       # Several initializers can each set options without overwriting one
       # another. `PatientHttp.configure` calls this method, so application code
       # can use either one.
+      #
+      # Configure the gem before the processors start. Running processors use
+      # this same configuration object, so an option changed while they run
+      # takes effect partway through the requests they're handling, and a
+      # processor profile declared while they run isn't started until the
+      # next restart. Changing the configuration while processors run logs a
+      # warning.
       #
       # @example
       #   PatientHttp.configure do |config|
@@ -100,8 +106,15 @@ module PatientHttp
       # @return [Configuration] The configuration.
       def configure
         config = configuration
-        yield(config) if block_given?
-        clear_configuration_state
+        if block_given?
+          if running?
+            config.logger&.warn(
+              "[PatientHttp::Sidekiq] Configuration changed while processors are running; " \
+              "configure the gem before the Sidekiq server starts."
+            )
+          end
+          yield(config)
+        end
         config
       end
 
@@ -131,7 +144,6 @@ module PatientHttp
       # @return [Configuration] The new configuration.
       def reset_configuration!
         PatientHttp.default_configuration = nil
-        clear_configuration_state
         configuration
       end
 
@@ -258,8 +270,8 @@ module PatientHttp
       # that queue as well. Requests made in the block go through the Sidekiq
       # queue, even when direct execution is enabled, so that Sidekiq applies
       # the options. A block whose only option is `processor` doesn't change
-      # this, because it has no Sidekiq options to apply. The options have no effect when jobs run inline
-      # with `Sidekiq::Testing.inline!`.
+      # this, because it has no Sidekiq options to apply. The options have no
+      # effect when jobs run inline with `Sidekiq::Testing.inline!`.
       #
       # @example
       #   PatientHttp::Sidekiq.with_sidekiq_options(queue: "high_priority") do
@@ -326,13 +338,12 @@ module PatientHttp
         # that names a processor the running process doesn't declare is retried
         # instead, which covers rolling deploys where the executing process is
         # older than the enqueuing one.
-        unless configuration.processor(processor_name)
+        profile_config = processor_config_for(processor_name)
+        unless profile_config
           raise PatientHttp::UnknownProcessorError.new(
             "No processor profile configured for #{processor_name.inspect}"
           )
         end
-
-        profile_config = processor_config_for(processor_name)
 
         # The PatientHttp module methods pass nil when the caller did not ask for a
         # specific behavior, so fall back to the configured default for the processor
@@ -540,19 +551,22 @@ module PatientHttp
       end
 
       # Returns the configuration for a processor profile. Uses the running
-      # processor's configuration if there is one. A name without a declared
-      # profile uses the base configuration.
+      # processor's configuration if there is one.
       #
       # @param name [Symbol, String] The processor name.
-      # @return [PatientHttp::Configuration] The configuration for the profile.
+      # @return [PatientHttp::Configuration, nil] The configuration for the
+      #   profile, or `nil` if no processor has that name and the profile isn't
+      #   declared.
       # @api private
       def processor_config_for(name)
-        key = name.to_sym
-        running = @processors[key]
+        key = name.to_s
+        return nil if key.empty?
+
+        running = @processors[key.to_sym]
         return running.config if running
 
         config = configuration
-        config.processor(key) ? config.processor_config(key) : config
+        config.processor_config(key) if config.processor_options(key)
       end
 
       # Returns the gem's dedicated Redis pool.
@@ -565,19 +579,19 @@ module PatientHttp
       # Returns the stats aggregator for this process. The aggregator exists
       # before the processors start, so any code path can record rejected
       # requests. The aggregator is rebuilt when the configuration is replaced,
-      # unless a running processor uses it.
+      # unless a running processor uses it. The replaced aggregator is flushed
+      # so that the counts it recorded aren't lost.
       #
       # @return [Stats] The stats aggregator.
       # @api private
       def stats
         config = configuration
         current = @stats
-        reusable = current && (current.config.equal?(config) || running?)
-        unless reusable
-          current = Stats.new(config)
-          @stats = current
-        end
-        current
+        return current if current && (current.config.equal?(config) || running?)
+
+        @stats = Stats.new(config)
+        current&.flush
+        @stats
       end
 
       # Yields a Redis connection from the gem's dedicated pool. Uses Sidekiq's
@@ -658,7 +672,8 @@ module PatientHttp
           return
         end
 
-        processors.map { |processor| Thread.new { stop_processor(processor, timeout) } }.each(&:join)
+        threads = processors.map { |processor| Thread.new { stop_processor(processor, timeout) } }
+        threads.each(&:join)
       end
 
       # Stops a processor and logs any error instead of raising it.
@@ -738,16 +753,6 @@ module PatientHttp
       def resolve_processor_name(explicit, request, options)
         name = explicit || request.processor || options&.[]("processor") || :default
         name.to_s
-      end
-
-      # Clears the state that is built from the configuration, so that it is
-      # rebuilt from the current configuration on next use. The stats
-      # aggregator is kept while a running processor owns it.
-      #
-      # @return [void]
-      def clear_configuration_state
-        @external_storage = nil
-        @stats = nil unless running?
       end
 
       # Returns whether a request can go directly to a processor in the current

@@ -291,7 +291,7 @@ PatientHttp.configure do |config|
 end
 ```
 
-Each profile runs as an independent processor in the process, with its own capacity, timeouts, and threads. Profile options override the top-level configuration. The profiles share every option that they don't override, such as secrets, preprocessors, payload stores, encryption, and the logger. The `:default` processor always exists. To override its options, declare `config.processor(:default, ...)`.
+Each profile runs as an independent processor in the process, with its own capacity, timeouts, and threads. Profile options override the top-level configuration. The profiles share every option that they don't override, such as secrets, preprocessors, payload stores, encryption, and the logger. Declare a profile with no options, such as `config.processor(:bulk)`, to run a separate processor that uses the top-level options. The `:default` processor always exists. To override its options, declare `config.processor(:default, ...)`.
 
 To send a request to a processor, use any of these methods:
 

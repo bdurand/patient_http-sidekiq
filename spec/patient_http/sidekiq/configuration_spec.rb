@@ -39,6 +39,43 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
         expect(config.raise_error_responses).to eq(true)
       end
     end
+
+    context "with Sidekiq settings changed after the configuration is built" do
+      it "follows the Sidekiq shutdown timeout" do
+        original = Sidekiq.default_configuration[:timeout]
+        config = described_class.new
+        Sidekiq.default_configuration[:timeout] = 12
+
+        expect(config.shutdown_timeout).to eq(10)
+      ensure
+        Sidekiq.default_configuration[:timeout] = original
+      end
+
+      it "follows the Sidekiq logger" do
+        original = Sidekiq.logger
+        config = described_class.new
+        logger = Logger.new(File::NULL)
+        Sidekiq.default_configuration.logger = logger
+
+        expect(config.logger).to be(logger)
+      ensure
+        Sidekiq.default_configuration.logger = original
+      end
+
+      it "keeps values set on the configuration" do
+        original = Sidekiq.default_configuration[:timeout]
+        logger = Logger.new(File::NULL)
+        config = described_class.new
+        config.shutdown_timeout = 7
+        config.logger = logger
+        Sidekiq.default_configuration[:timeout] = 12
+
+        expect(config.shutdown_timeout).to eq(7)
+        expect(config.logger).to be(logger)
+      ensure
+        Sidekiq.default_configuration[:timeout] = original
+      end
+    end
   end
 
   describe "validation" do
@@ -412,7 +449,26 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       config.processor(:webhooks, max_connections: 64)
 
       expect(config.processor_profiles.keys).to eq([:default, :llm, :webhooks])
-      expect(config.processor(:llm)).to eq(max_connections: 200, request_timeout: 120)
+      expect(config.processor_options(:llm)).to eq(max_connections: 200, request_timeout: 120)
+    end
+
+    it "declares a profile with no options that uses the base configuration" do
+      config = described_class.new
+      config.max_connections = 42
+      config.processor(:bulk)
+
+      expect(config.processor_profiles.keys).to eq([:default, :bulk])
+      expect(config.processor_options(:bulk)).to eq({})
+      expect(config.processor_config(:bulk).max_connections).to eq(42)
+    end
+
+    it "replaces the options when a profile is declared again" do
+      config = described_class.new
+      config.processor(:llm, max_connections: 200)
+      config.processor(:llm, request_timeout: 120)
+
+      expect(config.processor_options(:llm)).to eq(request_timeout: 120)
+      expect(config.processor_config(:llm).max_connections).to eq(256)
     end
 
     it "rejects invalid profile options" do
@@ -426,12 +482,18 @@ RSpec.describe PatientHttp::Sidekiq::Configuration do
       expect { config.processor(:pii, encryption_key: "secret") }.to raise_error(
         ArgumentError, /encryption_key can't be set for a processor profile/
       )
-      expect(config.processor(:pii)).to be_nil
+      expect(config.processor_options(:pii)).to be_nil
     end
 
     it "rejects an empty name" do
       config = described_class.new
       expect { config.processor("", max_connections: 1) }.to raise_error(ArgumentError, /processor name cannot be empty/)
+    end
+
+    it "returns nil for the options of an undeclared or empty name" do
+      config = described_class.new
+      expect(config.processor_options(:missing)).to be_nil
+      expect(config.processor_options("")).to be_nil
     end
 
     it "records in-flight request details by default and can turn them off" do

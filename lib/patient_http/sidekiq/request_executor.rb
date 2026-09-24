@@ -57,22 +57,22 @@ module PatientHttp
           task_handler: nil,
           synchronous: false,
           callback_args: nil,
-          raise_error_responses: false,
+          raise_error_responses: nil,
           request_id: nil,
           processor_name: nil
         )
-          config = PatientHttp::Sidekiq.configuration
-
           # Look up the named processor and the effective configuration for its
           # profile, so per-processor overrides apply to the request itself.
           # A running processor already holds the built profile configuration.
+          # An unknown name uses the base configuration here and is reported
+          # below.
           name = (processor_name || request.processor || :default).to_sym
           processor = PatientHttp::Sidekiq.processor(name)
-          profile_declared = !config.processor(name).nil?
-          task_config = PatientHttp::Sidekiq.processor_config_for(name)
+          profile_config = PatientHttp::Sidekiq.processor_config_for(name)
+          task_config = profile_config || PatientHttp::Sidekiq.configuration
 
-          # Jobs enqueued by earlier versions of the gem can carry nil, which
-          # means the caller did not ask for a specific behavior.
+          # A nil value means the caller did not ask for a specific behavior.
+          # Jobs enqueued by earlier versions of the gem can also carry nil.
           raise_error_responses = task_config.raise_error_responses if raise_error_responses.nil?
 
           task_handler ||= TaskHandler.new(validate_sidekiq_job(sidekiq_job), config: task_config)
@@ -101,7 +101,7 @@ module PatientHttp
           # An unknown name raises so the job lands in Sidekiq's retry
           # mechanism instead of being dropped; this covers rolling deploys
           # where an old process has not configured a new profile yet.
-          if processor.nil? && !profile_declared
+          if profile_config.nil?
             raise PatientHttp::UnknownProcessorError.new("No processor profile configured for #{name.inspect}")
           end
 

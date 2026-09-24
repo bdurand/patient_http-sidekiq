@@ -110,14 +110,19 @@ module PatientHttp
         inflight_details: true,
         **pool_options
       )
-        pool_options[:shutdown_timeout] ||= (::Sidekiq.default_configuration[:timeout] || 25) - 2
-        pool_options[:logger] ||= ::Sidekiq.logger
+        # The Sidekiq defaults for these options are read when the options are
+        # used, so settings that Sidekiq gets after this configuration is built
+        # still apply.
+        pool_options = pool_options.compact
 
         super(**pool_options)
 
+        @shutdown_timeout_set = pool_options.key?(:shutdown_timeout)
+        @logger_set = pool_options.key?(:logger)
         @observers = []
         @processor_profiles = {default: {}}
         @processor_configs = {}
+        @processor_configs_mutex = Mutex.new
         self.sidekiq_options = sidekiq_options
         self.heartbeat_interval = heartbeat_interval
         self.orphan_threshold = orphan_threshold
@@ -320,37 +325,51 @@ module PatientHttp
         @inflight_url_sanitizer = value
       end
 
-      # Declares a named processor profile, or returns the options for one.
+      # Declares a named processor profile.
       #
       # Each profile runs as an independent processor with its own capacity,
       # timeouts, and threads. The options override this configuration's
-      # options for that processor. A request selects a processor with the
-      # `processor:` option. The `:default` profile always exists. Declare it to
-      # override options for the default processor.
+      # options for that processor. With no options, the profile uses every
+      # option from this configuration. Declaring a profile again replaces its
+      # options. A request selects a processor with the `processor:` option.
+      # The `:default` profile always exists. Declare it to override options
+      # for the default processor.
       #
       # @example
       #   PatientHttp.configure do |config|
       #     config.processor(:llm, max_connections: 200, request_timeout: 120)
       #     config.processor(:webhooks, max_connections: 64, request_timeout: 10)
+      #     config.processor(:bulk)
       #   end
       #
       # @param name [Symbol, String] The processor name.
       # @param options [Hash] The PatientHttp::Configuration options to
-      #   override. If empty, the profile isn't changed. `encryption_key` can't
-      #   be overridden, because all processors share encryption.
-      # @return [Hash, nil] The options for the profile, or `nil` if the
-      #   profile isn't declared.
+      #   override. `encryption_key` can't be overridden, because all
+      #   processors share encryption.
+      # @return [Hash] The options for the profile.
       # @raise [ArgumentError] If `name` is empty or an option isn't valid.
       def processor(name, **options)
         key = normalize_processor_name(name)
+        validate_profile_options!(options) if options.any?
 
-        if options.any?
-          validate_profile_options!(options)
+        @processor_configs_mutex.synchronize do
           @processor_profiles[key] = options
           @processor_configs.delete(key)
         end
 
-        @processor_profiles[key]
+        options
+      end
+
+      # Returns the options declared for a named processor profile.
+      #
+      # @param name [Symbol, String] The processor name.
+      # @return [Hash, nil] The options for the profile, or `nil` if the
+      #   profile isn't declared.
+      def processor_options(name)
+        key = name.to_s
+        return nil if key.empty?
+
+        @processor_profiles[key.to_sym]
       end
 
       # Returns all declared processor profiles, including `:default`.
@@ -385,7 +404,48 @@ module PatientHttp
 
         return self if profile.empty?
 
-        @processor_configs[key] ||= ProfileConfiguration.new(self, profile)
+        @processor_configs_mutex.synchronize do
+          @processor_configs[key] ||= ProfileConfiguration.new(self, profile)
+        end
+      end
+
+      # Returns the graceful shutdown timeout in seconds. If it isn't set,
+      # returns the Sidekiq shutdown timeout minus 2 seconds, so that the
+      # processor stops before Sidekiq gives up on the worker.
+      #
+      # @return [Numeric] The timeout in seconds.
+      def shutdown_timeout
+        return super if @shutdown_timeout_set
+
+        (::Sidekiq.default_configuration[:timeout] || 25) - 2
+      end
+
+      # Sets the graceful shutdown timeout in seconds.
+      #
+      # @param value [Numeric] The timeout in seconds. Must be positive.
+      # @return [void]
+      # @raise [ArgumentError] If `value` isn't positive.
+      def shutdown_timeout=(value)
+        super
+        @shutdown_timeout_set = true
+      end
+
+      # Returns the logger. If it isn't set, returns the Sidekiq logger.
+      #
+      # @return [Logger] The logger.
+      def logger
+        return super if @logger_set
+
+        ::Sidekiq.logger || super
+      end
+
+      # Sets the logger.
+      #
+      # @param value [Logger, nil] The logger.
+      # @return [void]
+      def logger=(value)
+        super
+        @logger_set = true
       end
 
       # Returns the configuration as a Hash for inspection.

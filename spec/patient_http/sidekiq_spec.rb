@@ -100,12 +100,34 @@ RSpec.describe PatientHttp::Sidekiq do
       expect(described_class.configuration).to eq(config)
     end
 
-    it "resets the memoized external storage so it picks up the new configuration" do
-      original_storage = described_class.external_storage
+    it "enables external storage for a payload store registered after first use" do
+      expect(described_class.external_storage.enabled?).to be(false)
 
-      described_class.configure { |c| }
+      described_class.configure do |c|
+        c.register_payload_store(:test_store, adapter: :test_store)
+      end
 
-      expect(described_class.external_storage).not_to be(original_storage)
+      expect(described_class.external_storage.enabled?).to be(true)
+    end
+
+    it "keeps the stats aggregator when the configuration is changed in place" do
+      stats = described_class.stats
+
+      described_class.configure { |c| c.max_connections = 128 }
+
+      expect(described_class.stats).to be(stats)
+    end
+
+    it "logs a warning when the configuration changes while processors run" do
+      output = StringIO.new
+      described_class.configuration.logger = Logger.new(output)
+      described_class.start
+
+      described_class.configure { |c| c.max_connections = 128 }
+
+      expect(output.string).to include("Configuration changed while processors are running")
+    ensure
+      described_class.reset!
     end
 
     it "validates configuration during build" do
@@ -179,6 +201,16 @@ RSpec.describe PatientHttp::Sidekiq do
 
       expect(config).to be_a(PatientHttp::Sidekiq::Configuration)
       expect(config.max_connections).to eq(256)
+    end
+
+    it "flushes the replaced stats aggregator" do
+      stats = described_class.stats
+      allow(stats).to receive(:flush)
+
+      described_class.reset_configuration!
+      described_class.stats
+
+      expect(stats).to have_received(:flush)
     end
 
     it "rebuilds the stats aggregator and external storage from the new configuration" do
