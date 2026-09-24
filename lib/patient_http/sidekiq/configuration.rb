@@ -399,12 +399,13 @@ module PatientHttp
       # @raise [ArgumentError] If the profile isn't declared.
       def processor_config(name)
         key = normalize_processor_name(name)
-        profile = @processor_profiles[key]
-        raise ArgumentError.new("Unknown processor profile: #{name.inspect}") unless profile
-
-        return self if profile.empty?
 
         @processor_configs_mutex.synchronize do
+          profile = @processor_profiles[key]
+          raise ArgumentError.new("Unknown processor profile: #{name.inspect}") unless profile
+
+          return self if profile.empty?
+
           @processor_configs[key] ||= ProfileConfiguration.new(self, profile)
         end
       end
